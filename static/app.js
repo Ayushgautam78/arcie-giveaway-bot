@@ -2,7 +2,7 @@
 
 // API_BASE: Auto-detect Vercel host vs NexCloud host
 const API_BASE = window.location.hostname.includes('vercel.app')
-  ? (window.ARCIE_API_BASE || 'http://89.106.84.246:3000')
+  ? (window.ARCIE_API_BASE || 'http://n3.nccloud.sbs:2005')
   : (window.ARCIE_API_BASE || '');
 
 let currentUser = null;
