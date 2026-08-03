@@ -3549,6 +3549,39 @@ async def on_message(message: discord.Message):
     await bot.process_commands(message)
 
 
+def build_giveaway_embed(g_data: dict):
+    """Build a rich Discord Embed object and optional discord.File attachment for a giveaway."""
+    embed = discord.Embed(
+        title=f"🎁 {g_data.get('title', 'Giveaway')}",
+        description=g_data.get("description", ""),
+        color=discord.Color.gold()
+    )
+    
+    banner_url = str(g_data.get("banner_url", "")).strip()
+    file_to_send = None
+
+    if banner_url:
+        if banner_url.startswith("data:image"):
+            # Handle Base64 Data URL images uploaded via browser
+            try:
+                header, encoded = banner_url.split(",", 1)
+                img_bytes = base64.b64decode(encoded)
+                fp = io.BytesIO(img_bytes)
+                file_to_send = discord.File(fp, filename="banner.png")
+                embed.set_image(url="attachment://banner.png")
+            except Exception as img_e:
+                print(f"[BASE64 IMAGE DECODE ERROR] {img_e}")
+        elif (banner_url.startswith("http://") or banner_url.startswith("https://")) and len(banner_url) <= 2048:
+            embed.set_image(url=banner_url)
+
+    embed.add_field(name="Hosted by", value=g_data.get("hosted_by", "Admin"), inline=True)
+    embed.add_field(name="Network", value=g_data.get("network", "Ethereum"), inline=True)
+    embed.add_field(name="Ends At", value=f"<t:{int(g_data.get('ends_at', time.time()))}:R>", inline=True)
+    embed.set_footer(text="Click [Join Giveaway] below to participate!")
+
+    return embed, file_to_send
+
+
 async def sync_and_post_giveaways():
     """Sync Discord channels to Firebase AND post embeds for active giveaways missing message_id."""
     if not FIREBASE_URL:
@@ -3602,21 +3635,13 @@ async def sync_and_post_giveaways():
 
                     if channel:
                         try:
-                            embed = discord.Embed(
-                                title=f"🎁 {g_data.get('title', 'Giveaway')}",
-                                description=g_data.get("description", ""),
-                                color=discord.Color.gold()
-                            )
-                            if g_data.get("banner_url"):
-                                embed.set_image(url=g_data["banner_url"])
-
-                            embed.add_field(name="Hosted by", value=g_data.get("hosted_by", "Admin"), inline=True)
-                            embed.add_field(name="Network", value=g_data.get("network", "Ethereum"), inline=True)
-                            embed.add_field(name="Ends At", value=f"<t:{int(g_data.get('ends_at', time.time()))}:R>", inline=True)
-                            embed.set_footer(text="Click [Join Giveaway] below to participate!")
-
+                            embed, file_to_send = build_giveaway_embed(g_data)
                             view = GiveawayView(g_id, web_url)
-                            msg = await channel.send(embed=embed, view=view)
+                            if file_to_send:
+                                msg = await channel.send(embed=embed, view=view, file=file_to_send)
+                            else:
+                                msg = await channel.send(embed=embed, view=view)
+
                             g_data["message_id"] = str(msg.id)
                             g_data["channel_id"] = str(channel.id)
                             giveaways[g_id] = g_data
@@ -3984,11 +4009,14 @@ async def start_health_server():
 
         if channel:
             try:
-                embed = build_giveaway_embed(g_data)
+                embed, file_to_send = build_giveaway_embed(g_data)
                 port = os.getenv("PORT", "3000")
                 web_url = os.getenv("APP_URL", f"http://localhost:{port}")
                 view = GiveawayView(g_id, web_url)
-                msg = await channel.send(embed=embed, view=view)
+                if file_to_send:
+                    msg = await channel.send(embed=embed, view=view, file=file_to_send)
+                else:
+                    msg = await channel.send(embed=embed, view=view)
                 g_data["message_id"] = str(msg.id)
                 g_data["channel_id"] = str(channel.id)
                 giveaways[g_id] = g_data
