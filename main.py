@@ -99,7 +99,7 @@ def save_user_profiles():
             json.dump(user_profiles, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"[PROFILES ERROR] Failed to save user profiles: {e}")
-    if FIREBASE_URL:
+    if FIREBASE_URL and user_profiles:
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
@@ -122,7 +122,7 @@ def save_giveaways():
             json.dump(giveaways, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"[GIVEAWAYS ERROR] Failed to save giveaways: {e}")
-    if FIREBASE_URL:
+    if FIREBASE_URL and giveaways:
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
@@ -145,7 +145,7 @@ def save_giveaway_entries():
             json.dump(giveaway_entries, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"[GIVEAWAY ENTRIES ERROR] Failed to save giveaway entries: {e}")
-    if FIREBASE_URL:
+    if FIREBASE_URL and giveaway_entries:
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
@@ -217,6 +217,13 @@ def save_reaction_roles():
             json.dump(reaction_roles, f, indent=2)
     except Exception as e:
         print(f"[RR ERROR] Failed to save reaction roles: {e}")
+    if FIREBASE_URL and reaction_roles:
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(firebase_put("reaction_roles", reaction_roles))
+        except Exception:
+            pass
 
     try:
         loop = asyncio.get_event_loop()
