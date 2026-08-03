@@ -1119,6 +1119,40 @@ async def ai_reply(message: discord.Message) -> str:
                 print(f"[GROQ ERROR] {e}")
                 await asyncio.sleep(1)
 
+    # Smart conversational fallback if Groq API key is missing or encounters network errors
+    lower_text = message.content.lower().strip()
+    author_name = message.author.display_name
+
+    if any(greeting in lower_text for greeting in ["hi", "hello", "hey", "sup", "yo", "gm", "gn"]):
+        fallback_replies = [
+            f"Hey {author_name}! 👋 How's your day going?",
+            f"Hello {author_name}! ✨ Happy to see you around here!",
+            f"Hey there {author_name}! What's on your mind today? 😊",
+            f"Yo {author_name}! Ready for some giveaways and alpha calls today? 🚀"
+        ]
+    elif any(q in lower_text for q in ["who are you", "what is your name", "your name"]):
+        fallback_replies = [
+            f"I'm **Arcie**! 💖 Your real Web3 community assistant & giveaway host!",
+            f"Hey! My name is **Arcie**! ✨ Here to help with giveaways, alpha, and chat!"
+        ]
+    elif any(q in lower_text for q in ["how are you", "how r u", "how u doing"]):
+        fallback_replies = [
+            f"I'm feeling great today, {author_name}! Thanks for asking! ❤️ How about you?",
+            f"Super good! Ready to dish out more giveaway spots to everyone! 🎉"
+        ]
+    else:
+        fallback_replies = [
+            f"Hey {author_name}! I hear you! ✨ Always around if you need giveaway info or help!",
+            f"That's interesting, {author_name}! Tell me more! 😊",
+            f"Got it, {author_name}! Let's keep the vibe going in the server! 🚀"
+        ]
+
+    fallback_text = random.choice(fallback_replies)
+    history.append({"role": "assistant", "content": fallback_text})
+    channel_memories[channel_id] = history
+    save_memories()
+    return fallback_text
+
 # -------- Multi-Theme Anime Welcome Card Generator -------- #
 DEFAULT_WELCOME_CHANNEL_ID = 1530133805351047261
 welcome_channel_config: Dict[str, int] = {}

@@ -87,30 +87,46 @@
       </div>
       <div class="modal-body">
         <form id="createGiveawayForm">
-          <div class="form-group">
-            <label class="form-label">Giveaway Title *</label>
-            <input type="text" id="gTitle" class="form-input" placeholder="e.g. Wizard GTD" required>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">Description *</label>
-            <textarea id="gDesc" class="form-textarea" rows="3" placeholder="A web3 community for alpha calls..." required></textarea>
-          </div>
-
-          <div class="form-row">
+          <!-- Step 1: Basic Information -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <span class="form-section-number">1</span>
+              <span>📝 Basic Details</span>
+            </div>
+            
             <div class="form-group">
-              <label class="form-label">📷 Banner Image (Upload File or Paste URL)</label>
-              <input type="file" id="gBannerFile" accept="image/*" class="form-input" style="padding: 6px; margin-bottom: 6px;" onchange="handleBannerFileUpload(this, 'gBanner', 'gBannerPreview')">
-              <input type="url" id="gBanner" class="form-input" placeholder="https://i.imgur.com/example.png or uploaded URL">
-              <div id="gBannerPreview" style="margin-top: 6px; display: none;">
-                <img src="" style="max-height: 100px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);" alt="preview">
+              <label class="form-label">Giveaway Title *</label>
+              <input type="text" id="gTitle" class="form-input" placeholder="e.g. Wizard GTD" required>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Description *</label>
+              <textarea id="gDesc" class="form-textarea" rows="3" placeholder="A web3 community for alpha calls..." required></textarea>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">📷 Banner Image (Upload or Paste URL)</label>
+                <input type="file" id="gBannerFile" accept="image/*" class="form-input" style="padding: 6px; margin-bottom: 6px;" onchange="handleBannerFileUpload(this, 'gBanner', 'gBannerPreview')">
+                <input type="url" id="gBanner" class="form-input" placeholder="https://i.imgur.com/example.png or uploaded URL">
+                <div id="gBannerPreview" style="margin-top: 6px; display: none;">
+                  <img src="" style="max-height: 100px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);" alt="preview">
+                </div>
               </div>
+              <div class="form-group">
+                <label class="form-label">🌐 Network / Blockchain Name</label>
+                <input type="text" id="gNetwork" class="form-input" placeholder="e.g. Ethereum, Solana, Base" value="Ethereum" required>
+              </div>
+            </div>
           </div>
 
-          <!-- Web3 Discord Target & Role Notification Panel -->
+          <!-- Step 2: Discord Integration & Role Notifications -->
           <div class="discord-config-card">
             <div class="discord-config-header">
-              <div>🤖 Discord Server Attachment & Role Pings</div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="form-section-number">2</span>
+                <span>🤖 Discord Target & Role Notifications</span>
+              </div>
               <div class="discord-config-header-tag">Live Server Sync</div>
             </div>
 
@@ -142,58 +158,70 @@
             </div>
           </div>
 
-          <!-- Dynamic Spot Tier Builder Section -->
-          <div style="margin-top: 0.5rem; margin-bottom: 0.75rem;">
-            <label class="form-label" style="font-size: 1rem; color: var(--primary);">💎 Spot Tiers & Categories Builder</label>
-            <p class="form-hint" style="margin-bottom: 10px;">Add your own custom spot tiers and quantities (e.g. GTD, FCFS, VIP, WL Tier 1, etc.).</p>
+          <!-- Step 3: Spot Tiers & Limits -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <span class="form-section-number">3</span>
+              <span>💎 Spot Tiers & Limits Builder</span>
+            </div>
+            <p class="form-hint" style="margin-bottom: 8px;">Add custom spot tiers and quantities (e.g. GTD, FCFS, VIP, WL Tier 1, etc.).</p>
             
             <div id="spotTiersList" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;">
-              <!-- Dynamic spot tiers will be rendered here -->
+              <!-- Dynamic spot tiers rendered here -->
             </div>
 
-            <button type="button" class="btn btn-outline btn-sm" onclick="addSpotTier('Guaranteed', 3)">+ Add Custom Spot Tier</button>
-          </div>
+            <div style="margin-bottom: 10px;">
+              <button type="button" class="btn btn-outline btn-sm" onclick="addSpotTier('Guaranteed', 3)">+ Add Custom Spot Tier</button>
+            </div>
 
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Min Spots Per Person</label>
-              <input type="number" id="gMinPerUser" class="form-input" min="1" value="1" required>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Max Spots Per Person</label>
-              <input type="number" id="gMaxPerUser" class="form-input" min="1" value="1" required>
-            </div>
-          </div>
-
-          <div class="form-row">
-            <div class="form-group" style="flex: 2;">
-              <label class="form-label">Duration Amount</label>
-              <input type="number" id="gDurationVal" class="form-input" min="1" value="15" required>
-            </div>
-            <div class="form-group" style="flex: 1.5;">
-              <label class="form-label">Time Unit</label>
-              <select id="gDurationUnit" class="form-select">
-                <option value="minutes">Minutes</option>
-                <option value="hours" selected>Hours</option>
-                <option value="days">Days</option>
-              </select>
-            </div>
-            <div class="form-group" style="flex: 2;">
-              <label class="form-label">Network / Blockchain Name</label>
-              <input type="text" id="gNetwork" class="form-input" placeholder="e.g. Ethereum, Solana, Base" value="Ethereum" required>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Min Spots Per Person</label>
+                <input type="number" id="gMinPerUser" class="form-input" min="1" value="1" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Max Spots Per Person</label>
+                <input type="number" id="gMaxPerUser" class="form-input" min="1" value="1" required>
+              </div>
             </div>
           </div>
 
-          <!-- Dynamic Task Builder Section -->
-          <div style="border-top: 1px solid var(--border-color); margin-top: 0.75rem; padding-top: 1rem;">
-            <label class="form-label" style="font-size: 1.05rem; color: var(--primary);">📋 Dynamic Task Requirements Builder</label>
-            <p class="form-hint" style="margin-bottom: 12px;">Add as many custom tasks as needed (multiple Twitter likes/retweets/follows supported). No tasks are forced!</p>
+          <!-- Step 4: Duration & Schedule -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <span class="form-section-number">4</span>
+              <span>⏳ Giveaway Duration & Timer</span>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Duration Amount</label>
+                <input type="number" id="gDurationVal" class="form-input" min="1" value="15" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Time Unit</label>
+                <select id="gDurationUnit" class="form-select">
+                  <option value="minutes">Minutes</option>
+                  <option value="hours" selected>Hours</option>
+                  <option value="days">Days</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 5: Requirement Builder -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <span class="form-section-number">5</span>
+              <span>📋 Task Requirements & Wallets</span>
+            </div>
+            <p class="form-hint" style="margin-bottom: 10px;">Add custom social tasks (Twitter, TikTok, YouTube, Discord Roles, Custom Tasks).</p>
             
-            <div id="dynamicTasksList" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px;">
-              <!-- Dynamic task items will be added here -->
+            <div id="dynamicTasksList" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px;">
+              <!-- Dynamic task items -->
             </div>
 
-            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;">
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">
               <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('twitter_follow')">🐦 + Twitter Follow</button>
               <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('twitter_like')">❤️ + Twitter Like</button>
               <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('twitter_retweet')">🔄 + Twitter Retweet</button>
@@ -203,7 +231,7 @@
               <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('manual_task')">📝 + Custom Task</button>
             </div>
 
-            <div style="display: flex; gap: 20px; border-top: 1px dashed var(--border-color); padding-top: 10px;">
+            <div style="display: flex; gap: 20px; border-top: 1px dashed var(--border-color); padding-top: 10px; flex-wrap: wrap;">
               <label style="display: flex; align-items: center; gap: 8px; font-size: 0.88rem; cursor: pointer; color: var(--text-main);">
                 <input type="checkbox" id="reqEvm" checked style="accent-color: var(--primary);"> Require EVM Wallet (0x...)
               </label>
@@ -231,35 +259,47 @@
       <div class="modal-body">
         <form id="editGiveawayForm">
           <input type="hidden" id="editGId">
-          <div class="form-group">
-            <label class="form-label">Giveaway Title *</label>
-            <input type="text" id="editGTitle" class="form-input" required>
-          </div>
 
-          <div class="form-group">
-            <label class="form-label">Description *</label>
-            <textarea id="editGDesc" class="form-textarea" rows="3" required></textarea>
-          </div>
+          <!-- Step 1: Basic Details -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <span class="form-section-number">1</span>
+              <span>📝 Basic Details</span>
+            </div>
 
-          <div class="form-row">
             <div class="form-group">
-              <label class="form-label">📷 Banner Image (Upload File or Paste URL)</label>
-              <input type="file" id="editGBannerFile" accept="image/*" class="form-input" style="padding: 6px; margin-bottom: 6px;" onchange="handleBannerFileUpload(this, 'editGBanner', 'editGBannerPreview')">
-              <input type="url" id="editGBanner" class="form-input" placeholder="https://i.imgur.com/example.png or uploaded URL">
-              <div id="editGBannerPreview" style="margin-top: 6px; display: none;">
-                <img src="" style="max-height: 100px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);" alt="preview">
+              <label class="form-label">Giveaway Title *</label>
+              <input type="text" id="editGTitle" class="form-input" required>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Description *</label>
+              <textarea id="editGDesc" class="form-textarea" rows="3" required></textarea>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">📷 Banner Image (Upload or Paste URL)</label>
+                <input type="file" id="editGBannerFile" accept="image/*" class="form-input" style="padding: 6px; margin-bottom: 6px;" onchange="handleBannerFileUpload(this, 'editGBanner', 'editGBannerPreview')">
+                <input type="url" id="editGBanner" class="form-input" placeholder="https://i.imgur.com/example.png or uploaded URL">
+                <div id="editGBannerPreview" style="margin-top: 6px; display: none;">
+                  <img src="" style="max-height: 100px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);" alt="preview">
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">🌐 Network / Blockchain Name</label>
+                <input type="text" id="editGNetwork" class="form-input" value="Ethereum" required>
               </div>
             </div>
-            <div class="form-group">
-              <label class="form-label">Network / Blockchain Name</label>
-              <input type="text" id="editGNetwork" class="form-input" value="Ethereum" required>
-            </div>
           </div>
 
-          <!-- Web3 Discord Target & Role Notification Panel (Edit) -->
+          <!-- Step 2: Discord Target & Role Notifications -->
           <div class="discord-config-card">
             <div class="discord-config-header">
-              <div>🤖 Discord Server Channel & Mention Role Updates</div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="form-section-number">2</span>
+                <span>🤖 Discord Server Channel & Mention Role Updates</span>
+              </div>
               <div class="discord-config-header-tag">Live Server Sync</div>
             </div>
 
@@ -290,44 +330,64 @@
             </div>
           </div>
 
-          <!-- Spot Tiers -->
-          <div style="margin-top: 0.5rem; margin-bottom: 0.75rem;">
-            <label class="form-label" style="font-size: 1rem; color: var(--primary);">💎 Spot Tiers & Categories Builder</label>
+          <!-- Step 3: Spot Tiers & Limits -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <span class="form-section-number">3</span>
+              <span>💎 Spot Tiers & Limits Builder</span>
+            </div>
+            
             <div id="editSpotTiersList" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;"></div>
-            <button type="button" class="btn btn-outline btn-sm" onclick="addEditSpotTier('Guaranteed', 3)">+ Add Custom Spot Tier</button>
-          </div>
+            
+            <div style="margin-bottom: 10px;">
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditSpotTier('Guaranteed', 3)">+ Add Custom Spot Tier</button>
+            </div>
 
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Min Spots Per Person</label>
-              <input type="number" id="editGMinPerUser" class="form-input" min="1" value="1" required>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Max Spots Per Person</label>
-              <input type="number" id="editGMaxPerUser" class="form-input" min="1" value="1" required>
-            </div>
-          </div>
-
-          <div class="form-row">
-            <div class="form-group" style="flex: 2;">
-              <label class="form-label">Duration Amount</label>
-              <input type="number" id="editGDurationVal" class="form-input" min="1" value="15" required>
-            </div>
-            <div class="form-group" style="flex: 1.5;">
-              <label class="form-label">Time Unit</label>
-              <select id="editGDurationUnit" class="form-select">
-                <option value="minutes">Minutes</option>
-                <option value="hours" selected>Hours</option>
-                <option value="days">Days</option>
-              </select>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Min Spots Per Person</label>
+                <input type="number" id="editGMinPerUser" class="form-input" min="1" value="1" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Max Spots Per Person</label>
+                <input type="number" id="editGMaxPerUser" class="form-input" min="1" value="1" required>
+              </div>
             </div>
           </div>
 
-          <!-- Dynamic Tasks -->
-          <div style="border-top: 1px solid var(--border-color); margin-top: 0.75rem; padding-top: 1rem;">
-            <label class="form-label" style="font-size: 1.05rem; color: var(--primary);">📋 Dynamic Task Requirements Builder</label>
-            <div id="editDynamicTasksList" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px;"></div>
-            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;">
+          <!-- Step 4: Duration & Schedule -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <span class="form-section-number">4</span>
+              <span>⏳ Duration & Time Unit</span>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Duration Amount</label>
+                <input type="number" id="editGDurationVal" class="form-input" min="1" value="15" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Time Unit</label>
+                <select id="editGDurationUnit" class="form-select">
+                  <option value="minutes">Minutes</option>
+                  <option value="hours" selected>Hours</option>
+                  <option value="days">Days</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 5: Requirements Builder -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <span class="form-section-number">5</span>
+              <span>📋 Dynamic Tasks & Requirements</span>
+            </div>
+            
+            <div id="editDynamicTasksList" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px;"></div>
+            
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">
               <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('twitter_follow')">🐦 + Twitter Follow</button>
               <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('twitter_like')">❤️ + Twitter Like</button>
               <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('twitter_retweet')">🔄 + Twitter Retweet</button>
@@ -337,7 +397,7 @@
               <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('manual_task')">📝 + Custom Task</button>
             </div>
 
-            <div style="display: flex; gap: 20px; border-top: 1px dashed var(--border-color); padding-top: 10px;">
+            <div style="display: flex; gap: 20px; border-top: 1px dashed var(--border-color); padding-top: 10px; flex-wrap: wrap;">
               <label style="display: flex; align-items: center; gap: 8px; font-size: 0.88rem; cursor: pointer; color: var(--text-main);">
                 <input type="checkbox" id="editReqEvm" style="accent-color: var(--primary);"> Require EVM Wallet (0x...)
               </label>
