@@ -32,6 +32,7 @@ document.addEventListener('DOMContentLoaded', () => {
 async function initApp() {
   checkAuth();
   await loadGiveaways();
+  await loadGuildChannels();
 }
 
 function setupEventListeners() {
@@ -260,24 +261,7 @@ function renderGiveaways() {
   }).join('');
 }
 
-// Load Guild Channels for Channel Selector
-async function loadGuildChannels() {
-  const select = document.getElementById('gChannel');
-  select.innerHTML = '<option value="">Loading channels...</option>';
-  try {
-    const res = await fetch(apiUrl('/api/guilds'), { credentials: 'include' });
-    const channels = await res.json();
-    if (channels.length === 0) {
-      select.innerHTML = '<option value="">No available channels found</option>';
-      return;
-    }
-    select.innerHTML = channels.map(c => `
-      <option value="${c.id}">#${escapeHtml(c.name)} (${escapeHtml(c.guild_name)})</option>
-    `).join('');
-  } catch (err) {
-    select.innerHTML = '<option value="">Failed to load channels</option>';
-  }
-}
+
 
 let spotTierCount = 0;
 

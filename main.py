@@ -3694,7 +3694,8 @@ def build_giveaway_embed(g_data: dict):
             embed.add_field(name="Spot Tiers", value=f"Guaranteed: {guaranteed} | FCFS: {fcfs}", inline=False)
 
     g_id = g_data.get("id", "")
-    entries_count = len(giveaway_entries.get(g_id, [])) if g_id else 0
+    # Use stored entries_count from Firebase or fallback to local entries list
+    entries_count = int(g_data.get("entries_count", 0)) or len(giveaway_entries.get(g_id, [])) if g_id else 0
     embed.add_field(name="Total Entries", value=f"{entries_count} Users Joined", inline=True)
 
     embed.set_footer(text="Click [Join Giveaway] below to participate | Powered by Arcie Bot")
@@ -4464,8 +4465,86 @@ async def start_health_server():
                 else:
                     e["winner_type"] = None
 
-            winner_names_g = [f"<@{w['user_id']}>" for w in guaranteed_winners]
-            winner_names_f = [f"<@{w['user_id']}>" for w in fcfs_winners]
+        g["is_active"] = False
+        g["winners_text"] = "\n".join(winner_summary_lines)
+        save_giveaways()
+        save_giveaway_entries()
+        await firebase_put(f"giveaways/{g_id}", g)
+        await firebase_put(f"giveaway_entries/{g_id}", entries)
+        await update_giveaway_discord_message(g_id)
+        await announce_winners_in_discord(g_id, winner_summary_lines)
+        return web.json_response({"success": True, "winners_text": g["winners_text"]})
+
+    async def redraw_winners_handler(request):
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin required"}, status=403)
+        g_id = request.match_info.get("id")
+        g = giveaways.get(g_id)
+        if not g: return web.json_response({"error": "Not found"}, status=404)
+
+        # Fetch entries from Firebase to ensure we have latest data
+        fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
+        if fb_entries and isinstance(fb_entries, (dict, list)):
+            fetched = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+            if fetched:
+                giveaway_entries[g_id] = fetched
+
+        entries = giveaway_entries.get(g_id, [])
+        if not entries:
+            return web.json_response({"error": "No entries available"}, status=400)
+
+        # Clear winner_type for disqualified (ineligible) entries
+        for e in entries:
+            if e.get("task_status") == "ineligible":
+                e["winner_type"] = None
+
+        # Available pool: eligible participants who are NOT already winners
+        available_pool = [e for e in entries if e.get("task_status") != "ineligible" and not e.get("winner_type")]
+        random.shuffle(available_pool)
+
+        winner_summary_lines = []
+        new_winner_count = 0
+
+        spot_tiers = g.get("spot_tiers", [])
+        if spot_tiers:
+            # spot_tiers mode: fill empty slots for each tier
+            for tier in spot_tiers:
+                t_name = tier.get("name", "Spot")
+                t_count = tier.get("count", 1)
+                current_valid = [e for e in entries if e.get("winner_type") == t_name and e.get("task_status") != "ineligible"]
+                needed = max(0, t_count - len(current_valid))
+                new_for_tier = available_pool[:needed]
+                available_pool = available_pool[needed:]
+                for w in new_for_tier:
+                    w["winner_type"] = t_name
+                    new_winner_count += 1
+                all_for_tier = [e for e in entries if e.get("winner_type") == t_name]
+                w_mentions = [f"<@{w['user_id']}>" for w in all_for_tier]
+                winner_summary_lines.append(f"**{t_name}:** {', '.join(w_mentions) if w_mentions else 'None'}")
+        else:
+            # Legacy guaranteed/fcfs mode
+            guaranteed_target = g.get("guaranteed_spots", 0)
+            fcfs_target = g.get("fcfs_spots", 0)
+            valid_guaranteed = [e for e in entries if e.get("winner_type") == "guaranteed" and e.get("task_status") != "ineligible"]
+            valid_fcfs = [e for e in entries if e.get("winner_type") == "fcfs" and e.get("task_status") != "ineligible"]
+            needed_guaranteed = max(0, guaranteed_target - len(valid_guaranteed))
+            needed_fcfs = max(0, fcfs_target - len(valid_fcfs))
+
+            new_guaranteed = available_pool[:needed_guaranteed]
+            for w in new_guaranteed:
+                w["winner_type"] = "guaranteed"
+                new_winner_count += 1
+            remaining_pool = [e for e in available_pool if e not in new_guaranteed]
+            new_fcfs = remaining_pool[:needed_fcfs]
+            for w in new_fcfs:
+                w["winner_type"] = "fcfs"
+                new_winner_count += 1
+
+            all_guaranteed = [e for e in entries if e.get("winner_type") == "guaranteed"]
+            all_fcfs = [e for e in entries if e.get("winner_type") == "fcfs"]
+            winner_names_g = [f"<@{w['user_id']}>" for w in all_guaranteed]
+            winner_names_f = [f"<@{w['user_id']}>" for w in all_fcfs]
             winner_summary_lines.append(f"**Guaranteed:** {', '.join(winner_names_g) or 'None'}")
             winner_summary_lines.append(f"**FCFS:** {', '.join(winner_names_f) or 'None'}")
 
@@ -4479,76 +4558,13 @@ async def start_health_server():
 
         await update_giveaway_discord_message(g_id)
         await announce_winners_in_discord(g_id, winner_summary_lines)
-        return web.json_response({"success": True, "winners_text": g["winners_text"]})
-
-    async def redraw_winners_handler(request):
-        user = get_session_user(request)
-        if not user or not user.get("is_admin"):
-            return web.json_response({"error": "Admin required"}, status=403)
-        g_id = request.match_info.get("id")
-        g = giveaways.get(g_id)
-        if not g: return web.json_response({"error": "Not found"}, status=404)
-
-        entries = giveaway_entries.get(g_id, [])
-        if not entries:
-            return web.json_response({"error": "No entries available"}, status=400)
-
-        guaranteed_target = g.get("guaranteed_spots", 0)
-        fcfs_target = g.get("fcfs_spots", 0)
-
-        # Clear winner_type for disqualified (ineligible) entries
-        for e in entries:
-            if e.get("task_status") == "ineligible":
-                e["winner_type"] = None
-
-        # Count current valid winners
-        valid_guaranteed = [e for e in entries if e.get("winner_type") == "guaranteed" and e.get("task_status") != "ineligible"]
-        valid_fcfs = [e for e in entries if e.get("winner_type") == "fcfs" and e.get("task_status") != "ineligible"]
-
-        needed_guaranteed = max(0, guaranteed_target - len(valid_guaranteed))
-        needed_fcfs = max(0, fcfs_target - len(valid_fcfs))
-
-        # Available pool for re-drawing: eligible participants who are not winners yet
-        available_pool = [e for e in entries if e.get("task_status") != "ineligible" and not e.get("winner_type")]
-        random.shuffle(available_pool)
-
-        # Pick new Guaranteed winners
-        new_guaranteed = available_pool[:needed_guaranteed]
-        for w in new_guaranteed:
-            w["winner_type"] = "guaranteed"
-
-        # Update available pool for FCFS
-        remaining_pool = [e for e in available_pool if e not in new_guaranteed]
-        remaining_pool.sort(key=lambda x: x.get("joined_at", 0))
-
-        # Pick new FCFS winners
-        new_fcfs = remaining_pool[:needed_fcfs]
-        for w in new_fcfs:
-            w["winner_type"] = "fcfs"
-
-        g["is_active"] = False
-
-        # Re-build winners text
-        all_guaranteed = [e for e in entries if e.get("winner_type") == "guaranteed"]
-        all_fcfs = [e for e in entries if e.get("winner_type") == "fcfs"]
-
-        winner_names_g = [f"<@{w['user_id']}>" for w in all_guaranteed]
-        winner_names_f = [f"<@{w['user_id']}>" for w in all_fcfs]
-        
-        g["winners_text"] = f"**Guaranteed:** {', '.join(winner_names_g) or 'None'}\n**FCFS:** {', '.join(winner_names_f) or 'None'}"
-
-        save_giveaways()
-        save_giveaway_entries()
-
-        await update_giveaway_discord_message(g_id)
 
         return web.json_response({
             "success": True,
-            "new_guaranteed_count": len(new_guaranteed),
-            "new_fcfs_count": len(new_fcfs),
-            "total_guaranteed_winners": len(all_guaranteed),
-            "total_fcfs_winners": len(all_fcfs)
+            "new_winner_count": new_winner_count,
+            "winners_text": g["winners_text"]
         })
+
 
     async def verify_winner_handler(request):
         user = get_session_user(request)
@@ -4561,15 +4577,27 @@ async def start_health_server():
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
         target_uid = body.get("user_id")
-        task_status = body.get("task_status", "pending")
+        task_status = body.get("task_status", "verified")
+
+        # Fetch latest entries from Firebase first
+        fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
+        if fb_entries and isinstance(fb_entries, (dict, list)):
+            fetched = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+            if fetched:
+                giveaway_entries[g_id] = fetched
 
         entries = giveaway_entries.get(g_id, [])
-        target_entry = next((e for e in entries if e["user_id"] == target_uid), None)
+        target_entry = next((e for e in entries if str(e.get("user_id", "")) == str(target_uid)), None)
         if target_entry:
             target_entry["task_status"] = task_status
+            # If marking ineligible, remove winner status too
+            if task_status == "ineligible":
+                target_entry["winner_type"] = None
             save_giveaway_entries()
+            # Sync to Firebase
+            await firebase_put(f"giveaway_entries/{g_id}", entries)
             await update_giveaway_discord_message(g_id)
-            return web.json_response({"success": True})
+            return web.json_response({"success": True, "task_status": task_status})
         return web.json_response({"error": "Participant entry not found"}, status=404)
 
     async def save_profile_handler(request):
