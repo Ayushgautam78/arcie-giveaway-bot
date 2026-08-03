@@ -4699,6 +4699,63 @@ async def start_health_server():
                 })
         return web.json_response(roles)
 
+    async def search_members_handler(request):
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin required"}, status=403)
+
+        query = request.query.get("q", "").strip().lower()
+        results = []
+        seen_ids = set()
+
+        for guild in bot.guilds:
+            for member in guild.members:
+                if member.bot: continue
+                uid = str(member.id)
+                if uid in seen_ids: continue
+
+                m_name = member.name.lower()
+                m_disp = member.display_name.lower()
+                m_id = uid.lower()
+
+                if not query or query in m_name or query in m_disp or query in m_id:
+                    avatar_url = member.display_avatar.url if member.display_avatar else "https://cdn.discordapp.com/embed/avatars/0.png"
+                    prof = user_profiles.get(uid, {})
+                    results.append({
+                        "id": uid,
+                        "username": member.name,
+                        "display_name": member.display_name,
+                        "mention": f"<@{uid}>",
+                        "avatar": avatar_url,
+                        "evm_wallet": prof.get("evm_wallet", ""),
+                        "solana_wallet": prof.get("solana_wallet", ""),
+                        "twitter": prof.get("twitter", "")
+                    })
+                    seen_ids.add(uid)
+                    if len(results) >= 50: break
+            if len(results) >= 50: break
+
+        if len(results) < 50:
+            for uid, prof in user_profiles.items():
+                if uid in seen_ids: continue
+                u_name = str(prof.get("username", "")).lower()
+                d_name = str(prof.get("display_name", "")).lower()
+                if not query or query in u_name or query in d_name or query in uid:
+                    results.append({
+                        "id": uid,
+                        "username": prof.get("username", uid),
+                        "display_name": prof.get("display_name", uid),
+                        "mention": f"<@{uid}>",
+                        "avatar": "https://cdn.discordapp.com/embed/avatars/0.png",
+                        "evm_wallet": prof.get("evm_wallet", ""),
+                        "solana_wallet": prof.get("solana_wallet", ""),
+                        "twitter": prof.get("twitter", "")
+                    })
+                    seen_ids.add(uid)
+                    if len(results) >= 50: break
+
+        return web.json_response(results)
+
 
     async def get_giveaways_handler(request):
         if FIREBASE_URL:
@@ -5465,6 +5522,7 @@ async def start_health_server():
     app.router.add_post("/api/auth/password-login", auth_password_login_handler)
     app.router.add_get("/api/guilds", guilds_handler)
     app.router.add_get("/api/guilds/roles", guilds_roles_handler)
+    app.router.add_get("/api/members/search", search_members_handler)
     app.router.add_get("/api/giveaways", get_giveaways_handler)
     app.router.add_get("/api/giveaways/{id}", get_giveaway_detail_handler)
     app.router.add_post("/api/giveaways", create_giveaway_handler)

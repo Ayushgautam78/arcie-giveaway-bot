@@ -1286,7 +1286,152 @@ async function submitSaveProfile() {
   }
 }
 
+// Live Member Search & Custom Winner Selection State
+let selectedGtdWinners = [];
+let selectedFcfsWinners = [];
+let memberSearchDebounceTimer = null;
 
+function openCustomWinnersModal() {
+  selectedGtdWinners = [];
+  selectedFcfsWinners = [];
+  document.getElementById('memberSearchInput').value = '';
+  document.getElementById('memberSearchResults').style.display = 'none';
+  document.getElementById('gtdWinnersManual').value = '';
+  document.getElementById('fcfsWinnersManual').value = '';
+  renderSelectedWinnersTags();
+  openModal('customWinnersModal');
+}
+
+function onMemberSearchInput(query) {
+  clearTimeout(memberSearchDebounceTimer);
+  const container = document.getElementById('memberSearchResults');
+  if (!query.trim()) {
+    container.style.display = 'none';
+    return;
+  }
+
+  memberSearchDebounceTimer = setTimeout(async () => {
+    try {
+      const res = await fetch(apiUrl(`/api/members/search?q=${encodeURIComponent(query.trim())}`), { credentials: 'include' });
+      if (!res.ok) return;
+      const members = await res.json();
+      
+      if (!members || members.length === 0) {
+        container.innerHTML = `<div style="padding: 12px; color: var(--text-muted); font-size: 0.85rem; text-align: center;">No matching members found</div>`;
+      } else {
+        container.innerHTML = members.map(m => `
+          <div class="member-search-item">
+            <img src="${escapeHtml(m.avatar)}" alt="${escapeHtml(m.display_name)}">
+            <div class="member-search-info">
+              <span class="member-search-name">${escapeHtml(m.display_name)} (@${escapeHtml(m.username)})</span>
+              <span class="member-search-sub">ID: ${escapeHtml(m.id)} ${m.evm_wallet ? '| EVM: ' + escapeHtml(m.evm_wallet.substring(0,6)) + '...' : ''}</span>
+            </div>
+            <div class="member-search-actions">
+              <button type="button" class="btn btn-primary btn-sm" onclick="addSelectedWinner('gtd', '${escapeHtml(m.id)}', '${escapeHtml(m.display_name)}', '${escapeHtml(m.username)}', '${escapeHtml(m.avatar)}')">+ GTD</button>
+              <button type="button" class="btn btn-purple btn-sm" onclick="addSelectedWinner('fcfs', '${escapeHtml(m.id)}', '${escapeHtml(m.display_name)}', '${escapeHtml(m.username)}', '${escapeHtml(m.avatar)}')">+ FCFS</button>
+            </div>
+          </div>
+        `).join('');
+      }
+      container.style.display = 'block';
+    } catch (err) {
+      console.error('Member search error:', err);
+    }
+  }, 200);
+}
+
+function addSelectedWinner(type, id, displayName, username, avatar) {
+  const item = { id, displayName, username, avatar, mention: `<@${id}>` };
+  if (type === 'gtd') {
+    if (!selectedGtdWinners.some(w => w.id === id)) selectedGtdWinners.push(item);
+  } else {
+    if (!selectedFcfsWinners.some(w => w.id === id)) selectedFcfsWinners.push(item);
+  }
+  document.getElementById('memberSearchResults').style.display = 'none';
+  document.getElementById('memberSearchInput').value = '';
+  renderSelectedWinnersTags();
+}
+
+function removeSelectedWinner(type, id) {
+  if (type === 'gtd') {
+    selectedGtdWinners = selectedGtdWinners.filter(w => w.id !== id);
+  } else {
+    selectedFcfsWinners = selectedFcfsWinners.filter(w => w.id !== id);
+  }
+  renderSelectedWinnersTags();
+}
+
+function renderSelectedWinnersTags() {
+  const gtdBox = document.getElementById('gtdWinnersTags');
+  const fcfsBox = document.getElementById('fcfsWinnersTags');
+  
+  document.getElementById('gtdSelectedCount').innerText = `${selectedGtdWinners.length} Selected`;
+  document.getElementById('fcfsSelectedCount').innerText = `${selectedFcfsWinners.length} Selected`;
+
+  if (selectedGtdWinners.length === 0) {
+    gtdBox.innerHTML = `<span class="placeholder-text" style="color: var(--text-muted); font-size: 0.82rem;">Selected GTD winners will appear here...</span>`;
+  } else {
+    gtdBox.innerHTML = selectedGtdWinners.map(w => `
+      <span class="winner-pill-tag">
+        <img src="${escapeHtml(w.avatar)}" alt="">
+        <span>${escapeHtml(w.displayName)} (@${escapeHtml(w.username)})</span>
+        <span class="winner-pill-remove" onclick="removeSelectedWinner('gtd', '${escapeHtml(w.id)}')">&times;</span>
+      </span>
+    `).join('');
+  }
+
+  if (selectedFcfsWinners.length === 0) {
+    fcfsBox.innerHTML = `<span class="placeholder-text" style="color: var(--text-muted); font-size: 0.82rem;">Selected FCFS winners will appear here...</span>`;
+  } else {
+    fcfsBox.innerHTML = selectedFcfsWinners.map(w => `
+      <span class="winner-pill-tag">
+        <img src="${escapeHtml(w.avatar)}" alt="">
+        <span>${escapeHtml(w.displayName)} (@${escapeHtml(w.username)})</span>
+        <span class="winner-pill-remove" onclick="removeSelectedWinner('fcfs', '${escapeHtml(w.id)}')">&times;</span>
+      </span>
+    `).join('');
+  }
+}
+
+async function submitCustomWinners() {
+  if (!currentDetailId) return;
+
+  const manualGtd = document.getElementById('gtdWinnersManual').value.trim();
+  const manualFcfs = document.getElementById('fcfsWinnersManual').value.trim();
+
+  const gtdMentions = [...selectedGtdWinners.map(w => w.mention), manualGtd].filter(Boolean).join(', ');
+  const fcfsMentions = [...selectedFcfsWinners.map(w => w.mention), manualFcfs].filter(Boolean).join(', ');
+
+  if (!gtdMentions && !fcfsMentions) {
+    showToast('Please select or enter at least one winner for GTD or FCFS', 'warning');
+    return;
+  }
+
+  try {
+    const res = await fetch(apiUrl(`/api/giveaways/${currentDetailId}/set-custom-winners`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        guaranteed_winners: gtdMentions,
+        fcfs_winners: fcfsMentions
+      })
+    });
+
+    if (res.ok) {
+      showToast('🏆 Custom winners set and announced to Discord!', 'success');
+      closeModal('customWinnersModal');
+      closeModal('detailModal');
+      await loadGiveaways();
+    } else {
+      const data = await res.json();
+      showToast(data.error || 'Failed to set custom winners', 'error');
+    }
+  } catch (err) {
+    console.error('Custom winners submit error:', err);
+    showToast('Error setting custom winners', 'error');
+  }
+}
 
 // Utility Modal Helpers
 function openModal(id) {

@@ -492,7 +492,8 @@
           
           <div style="display: flex; gap: 10px; margin-bottom: 1rem; flex-wrap: wrap;">
             <button id="editGiveawayAdminBtn" class="btn btn-primary btn-sm">✏️ Edit Giveaway</button>
-            <button id="drawWinnersBtn" class="btn btn-purple btn-sm">🎲 Draw Initial Winners</button>
+            <button id="setCustomWinnersAdminBtn" class="btn btn-purple btn-sm" onclick="openCustomWinnersModal()">✨ Set Fabricated / Custom Winners</button>
+            <button id="drawWinnersBtn" class="btn btn-outline btn-sm">🎲 Auto Draw Winners</button>
             <button id="redrawWinnersBtn" class="btn btn-outline btn-sm">🔄 Re-Raffle Disqualified Spots</button>
             <button id="announceWinnersBtn" class="btn btn-primary btn-sm">📢 Send Winners Announcement</button>
             <button id="exportAllEntriesBtn" class="btn btn-primary btn-sm">📥 Download All Entries (CSV)</button>
@@ -522,6 +523,57 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline" onclick="closeModal('detailModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fabricate / Set Custom Winners Modal -->
+  <div id="customWinnersModal" class="modal-overlay">
+    <div class="modal-content" style="max-width: 650px;">
+      <div class="modal-header">
+        <h3 class="modal-title">🏆 Set Fabricated / Custom Winners</h3>
+        <button class="modal-close" onclick="closeModal('customWinnersModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="form-hint" style="margin-bottom: 12px;">Type a member's name/username below to search server members and select winners for GTD (Guaranteed) and FCFS tiers.</p>
+        
+        <!-- Live Member Search Bar -->
+        <div class="form-group" style="position: relative; margin-bottom: 16px;">
+          <label class="form-label">🔍 Search Server Members by Name or ID</label>
+          <input type="text" id="memberSearchInput" class="form-input" placeholder="Type username or display name (e.g. isika, bytes, ayush)..." oninput="onMemberSearchInput(this.value)">
+          
+          <div id="memberSearchResults" class="member-search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; max-height: 220px; overflow-y: auto; z-index: 1000; box-shadow: 0 8px 24px rgba(0,0,0,0.4);">
+            <!-- Live member search items populated dynamically -->
+          </div>
+        </div>
+
+        <!-- Section 1: Guaranteed Winners (GTD) -->
+        <div class="form-section-card" style="margin-bottom: 14px;">
+          <div class="form-section-header" style="justify-content: space-between;">
+            <span style="color: var(--primary); font-weight: 700;">🌟 Guaranteed (GTD) Winners</span>
+            <span id="gtdSelectedCount" class="g-badge g-badge-guaranteed">0 Selected</span>
+          </div>
+          <div id="gtdWinnersTags" style="display: flex; flex-wrap: wrap; gap: 6px; min-height: 40px; border: 1px dashed var(--border-color); border-radius: 8px; padding: 8px; background: rgba(0,0,0,0.1);">
+            <span class="placeholder-text" style="color: var(--text-muted); font-size: 0.82rem;">Selected GTD winners will appear here...</span>
+          </div>
+          <textarea id="gtdWinnersManual" class="form-input" rows="2" placeholder="Or paste GTD winner mentions/IDs (e.g. <@123>, @username)..." style="margin-top: 8px; font-size: 0.82rem;"></textarea>
+        </div>
+
+        <!-- Section 2: FCFS Winners -->
+        <div class="form-section-card">
+          <div class="form-section-header" style="justify-content: space-between;">
+            <span style="color: var(--purple); font-weight: 700;">⚡ FCFS Winners</span>
+            <span id="fcfsSelectedCount" class="g-badge g-badge-fcfs">0 Selected</span>
+          </div>
+          <div id="fcfsWinnersTags" style="display: flex; flex-wrap: wrap; gap: 6px; min-height: 40px; border: 1px dashed var(--border-color); border-radius: 8px; padding: 8px; background: rgba(0,0,0,0.1);">
+            <span class="placeholder-text" style="color: var(--text-muted); font-size: 0.82rem;">Selected FCFS winners will appear here...</span>
+          </div>
+          <textarea id="fcfsWinnersManual" class="form-input" rows="3" placeholder="Or paste FCFS winner mentions/IDs (e.g. <@123>, @username)..." style="margin-top: 8px; font-size: 0.82rem;"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('customWinnersModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitCustomWinners()">🚀 Set & Publish Winners to Discord</button>
       </div>
     </div>
   </div>
