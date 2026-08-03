@@ -950,60 +950,100 @@ async function updateVerificationStatus(giveawayId, userId, status) {
   }
 }
 
-// Export All Entries as CSV
+// Export All Entries as CSV (Reads directly from Firebase over HTTPS)
 async function exportAllEntriesCSV(giveawayId) {
   try {
-    const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
-    const data = await res.json();
-    const entries = data.entries || [];
-    
-    if (entries.length === 0) {
-      showToast('No entries to download yet.', 'info');
+    let entries = [];
+    const fbData = await firebaseGet('giveaway_entries/' + giveawayId);
+    if (fbData && typeof fbData === 'object') {
+      entries = Array.isArray(fbData) ? fbData : Object.values(fbData);
+    }
+
+    if (!entries || entries.length === 0) {
+      try {
+        const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
+        const data = await res.json();
+        entries = data.entries || [];
+      } catch (e) {}
+    }
+
+    if (!entries || entries.length === 0) {
+      showToast('No entries recorded yet to download.', 'info');
       return;
     }
 
-    let csv = 'Discord Username,Discord ID,Twitter Handle,Telegram Handle,EVM Wallet,Solana Wallet,Task Status,Winner Status\n';
+    let csv = '\uFEFFDiscord Username,Discord ID,Twitter Handle,Telegram Handle,EVM Wallet,Solana Wallet,Task Status,Winner Status\n';
     entries.forEach(e => {
+      if (!e) return;
       const winnerStatus = e.winner_type ? `WINNER (${String(e.winner_type).toUpperCase()})` : 'Participant';
-      csv += `"${e.username || 'User'}","${e.user_id}","${e.twitter || ''}","${e.telegram || ''}","${e.evm_wallet || ''}","${e.solana_wallet || ''}","${e.task_status || 'pending'}","${winnerStatus}"\n`;
+      csv += `"${(e.username || e.display_name || 'User').replace(/"/g, '""')}","${e.user_id || ''}","${(e.twitter || '').replace(/"/g, '""')}","${(e.telegram || '').replace(/"/g, '""')}","${e.evm_wallet || ''}","${e.solana_wallet || ''}","${e.task_status || 'verified'}","${winnerStatus}"\n`;
     });
 
-    const blob = new Blob([csv], { type: 'text/csv' });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
+    a.style.display = 'none';
     a.href = url;
     a.download = `giveaway_${giveawayId}_all_entries.csv`;
+    document.body.appendChild(a);
     a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    }, 200);
+
     showToast('📥 Exported all entries to CSV!', 'success');
   } catch (err) {
+    console.error('CSV export error:', err);
     showToast('Failed to export entries', 'error');
   }
 }
 
-// Export Winners as CSV
+// Export Winners as CSV (Reads directly from Firebase over HTTPS)
 async function exportWinnersCSV(giveawayId) {
   try {
-    const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
-    const data = await res.json();
-    const winners = (data.entries || []).filter(e => e.winner_type);
+    let entries = [];
+    const fbData = await firebaseGet('giveaway_entries/' + giveawayId);
+    if (fbData && typeof fbData === 'object') {
+      entries = Array.isArray(fbData) ? fbData : Object.values(fbData);
+    }
+
+    if (!entries || entries.length === 0) {
+      try {
+        const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
+        const data = await res.json();
+        entries = data.entries || [];
+      } catch (e) {}
+    }
+
+    const winners = entries.filter(e => e && e.winner_type);
     
     if (winners.length === 0) {
       showToast('No winners to export yet.', 'info');
       return;
     }
 
-    let csv = 'Discord Tag,Discord ID,Spot Type,EVM Wallet,Solana Wallet,Twitter,Telegram,Task Status\n';
+    let csv = '\uFEFFDiscord Username,Discord ID,Spot Type,EVM Wallet,Solana Wallet,Twitter Handle,Telegram Handle,Task Status\n';
     winners.forEach(w => {
-      csv += `"${w.username}","${w.user_id}","${w.winner_type}","${w.evm_wallet || ''}","${w.solana_wallet || ''}","${w.twitter || ''}","${w.telegram || ''}","${w.task_status || ''}"\n`;
+      csv += `"${(w.username || w.display_name || 'User').replace(/"/g, '""')}","${w.user_id || ''}","${String(w.winner_type).toUpperCase()}","${w.evm_wallet || ''}","${w.solana_wallet || ''}","${(w.twitter || '').replace(/"/g, '""')}","${(w.telegram || '').replace(/"/g, '""')}","${w.task_status || 'verified'}"\n`;
     });
 
-    const blob = new Blob([csv], { type: 'text/csv' });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
+    a.style.display = 'none';
     a.href = url;
     a.download = `giveaway_${giveawayId}_winners.csv`;
+    document.body.appendChild(a);
     a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    }, 200);
+
+    showToast('🏆 Exported winners to CSV!', 'success');
   } catch (err) {
+    console.error('Winners CSV export error:', err);
     showToast('Failed to export winners', 'error');
   }
 }

@@ -3595,6 +3595,41 @@ def build_giveaway_embed(g_data: dict):
     embed.add_field(name="Network", value=g_data.get("network", "Ethereum"), inline=True)
     embed.add_field(name="Ends At", value=f"<t:{int(g_data.get('ends_at', time.time()))}:R>", inline=True)
 
+    # Render Tasks / Requirements Field
+    tasks = g_data.get("tasks", {})
+    task_lines = []
+    if isinstance(tasks, dict):
+        dyn_tasks = tasks.get("dynamic_tasks", [])
+        if dyn_tasks and isinstance(dyn_tasks, list):
+            for t in dyn_tasks:
+                val = t.get("value", "").strip()
+                ttype = t.get("type", "")
+                if val:
+                    if ttype == "twitter_follow": task_lines.append(f"• Follow @{val}")
+                    elif ttype == "twitter_like": task_lines.append(f"• Like Tweet: {val}")
+                    elif ttype == "twitter_retweet": task_lines.append(f"• Retweet: {val}")
+                    elif ttype == "tiktok_follow": task_lines.append(f"• TikTok: {val}")
+                    elif ttype == "youtube_follow": task_lines.append(f"• YouTube: {val}")
+                    elif ttype == "role_require": task_lines.append(f"• Required Role: {val}")
+                    else: task_lines.append(f"• {val}")
+
+        if not task_lines:
+            if tasks.get("twitter_follow"): task_lines.append(f"• Follow @{tasks['twitter_follow']}")
+            if tasks.get("twitter_like"): task_lines.append(f"• Like Tweet")
+            if tasks.get("twitter_retweet"): task_lines.append(f"• Retweet Tweet")
+            if tasks.get("tiktok_follow"): task_lines.append(f"• TikTok: {tasks['tiktok_follow']}")
+            if tasks.get("youtube_follow"): task_lines.append(f"• YouTube: {tasks['youtube_follow']}")
+            if tasks.get("manual_task"): task_lines.append(f"• {tasks['manual_task']}")
+            if tasks.get("roles"): task_lines.append(f"• Required Roles: {', '.join(tasks['roles'])}")
+
+        if tasks.get("require_evm"):
+            task_lines.append("• Require EVM Wallet (0x...)")
+        if tasks.get("require_solana"):
+            task_lines.append("• Require Solana Wallet")
+
+    if task_lines:
+        embed.add_field(name="Tasks / Requirements", value="\n".join(task_lines), inline=False)
+
     spot_tiers = g_data.get("spot_tiers", [])
     if spot_tiers:
         tier_str = ", ".join([f"{t.get('name', 'Tier')}: {t.get('count', 1)}" for t in spot_tiers])
