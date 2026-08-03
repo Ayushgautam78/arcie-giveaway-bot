@@ -49,8 +49,32 @@ function setupEventListeners() {
   const createBtn = document.getElementById('createGiveawayBtn');
   if (createBtn) {
     createBtn.addEventListener('click', () => {
+      loadGuildChannels();
       openModal('createModal');
     });
+  }
+}
+
+// Load Guild Channels for Channel Selector from Firebase
+async function loadGuildChannels() {
+  const select = document.getElementById('gChannel');
+  if (!select) return;
+  select.innerHTML = '<option value="">Loading channels...</option>';
+  try {
+    const channels = await firebaseGet('channels');
+    if (channels && typeof channels === 'object') {
+      const channelArray = Array.isArray(channels) ? channels : Object.values(channels);
+      if (channelArray.length > 0) {
+        select.innerHTML = '<option value="">-- Select Discord Channel --</option>' + channelArray.map(c => `
+          <option value="${c.id}">#${escapeHtml(c.name)} (${escapeHtml(c.guild_name || 'Server')})</option>
+        `).join('');
+        return;
+      }
+    }
+    select.innerHTML = '<option value="">Paste Channel ID below</option>';
+  } catch (err) {
+    console.error('Failed to load channels:', err);
+    select.innerHTML = '<option value="">Paste Channel ID below</option>';
   }
 }
 
@@ -359,7 +383,14 @@ async function submitCreateGiveaway() {
   const title = document.getElementById('gTitle').value.trim();
   const description = document.getElementById('gDesc').value.trim();
   const banner_url = document.getElementById('gBanner').value.trim();
-  const channel_id = document.getElementById('gChannel').value;
+  const channelSelect = document.getElementById('gChannel').value;
+  const channelManual = document.getElementById('gChannelManual') ? document.getElementById('gChannelManual').value.trim() : '';
+  const channel_id = channelManual || channelSelect;
+
+  if (!title || !description || !channel_id) {
+    showToast('Please fill in Title, Description, and Select or Paste a Channel ID', 'error');
+    return;
+  }
   const spot_tiers = getSpotTiersPayload();
   const min_per_user = parseInt(document.getElementById('gMinPerUser').value) || 1;
   const max_per_user = parseInt(document.getElementById('gMaxPerUser').value) || 1;
