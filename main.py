@@ -1,5 +1,5 @@
-import os
 import sys
+import os
 import re
 import json
 import asyncio
@@ -3531,81 +3531,94 @@ async def on_message(message: discord.Message):
     await bot.process_commands(message)
 
 
-async def sync_firebase_loop():
-    await bot.wait_until_ready()
+async def sync_and_post_giveaways():
+    """Sync Discord channels to Firebase AND post embeds for active giveaways missing message_id."""
+    if not FIREBASE_URL:
+        return
+
     port = os.getenv("PORT", "3000")
     web_url = os.getenv("APP_URL", f"http://localhost:{port}")
 
+    # 1. Sync Guild Channels to Firebase
+    try:
+        channels_list = []
+        for guild in bot.guilds:
+            for ch in guild.text_channels:
+                if ch.permissions_for(guild.me).send_messages:
+                    channels_list.append({
+                        "id": str(ch.id),
+                        "name": ch.name,
+                        "guild_name": guild.name
+                    })
+        await firebase_put("channels", channels_list)
+        print(f"[FIREBASE] Synced {len(channels_list)} Discord channels to Cloud DB.")
+    except Exception as ce:
+        print(f"[CHANNEL SYNC ERROR] {ce}")
+
+    # 2. Sync Giveaways from Firebase & Post Missing Embeds
+    try:
+        fb_giveaways = await firebase_get("giveaways")
+        if fb_giveaways and isinstance(fb_giveaways, dict):
+            for g_id, g_data in fb_giveaways.items():
+                if not isinstance(g_data, dict):
+                    continue
+                giveaways[g_id] = g_data
+                
+                # Check if giveaway needs Discord announcement embed posted
+                if g_data.get("is_active") and not g_data.get("message_id"):
+                    ch_id_str = str(g_data.get("channel_id", "")).strip()
+                    channel = None
+                    if ch_id_str.isdigit():
+                        channel = bot.get_channel(int(ch_id_str))
+                        if not channel:
+                            try:
+                                channel = await bot.fetch_channel(int(ch_id_str))
+                            except Exception:
+                                channel = None
+
+                    if not channel:
+                        for guild in bot.guilds:
+                            channel = guild.system_channel or (guild.text_channels[0] if guild.text_channels else None)
+                            if channel:
+                                break
+
+                    if channel:
+                        try:
+                            embed = discord.Embed(
+                                title=f"🎁 {g_data.get('title', 'Giveaway')}",
+                                description=g_data.get("description", ""),
+                                color=discord.Color.gold()
+                            )
+                            if g_data.get("banner_url"):
+                                embed.set_image(url=g_data["banner_url"])
+
+                            embed.add_field(name="Hosted by", value=g_data.get("hosted_by", "Admin"), inline=True)
+                            embed.add_field(name="Network", value=g_data.get("network", "Ethereum"), inline=True)
+                            embed.add_field(name="Ends At", value=f"<t:{int(g_data.get('ends_at', time.time()))}:R>", inline=True)
+                            embed.set_footer(text="Click [Join Giveaway] below to participate!")
+
+                            view = GiveawayView(g_id, web_url)
+                            msg = await channel.send(embed=embed, view=view)
+                            g_data["message_id"] = str(msg.id)
+                            g_data["channel_id"] = str(channel.id)
+                            giveaways[g_id] = g_data
+                            save_giveaways()
+                            await firebase_put(f"giveaways/{g_id}", g_data)
+                            print(f"[GIVEAWAY POSTED] Posted giveaway '{g_data.get('title')}' in #{channel.name} ({channel.id})")
+                        except Exception as send_err:
+                            print(f"[GIVEAWAY SEND ERROR] Failed to send to #{channel.name}: {send_err}")
+    except Exception as ge:
+        print(f"[GIVEAWAY SYNC ERROR] {ge}")
+
+
+async def bg_firebase_poster_task():
+    await bot.wait_until_ready()
     while not bot.is_closed():
         try:
-            if FIREBASE_URL:
-                # 1. Sync Guild Channels to Firebase for Web Dashboard
-                channels_list = []
-                for guild in bot.guilds:
-                    for ch in guild.text_channels:
-                        if ch.permissions_for(guild.me).send_messages:
-                            channels_list.append({
-                                "id": str(ch.id),
-                                "name": ch.name,
-                                "guild_name": guild.name
-                            })
-                await firebase_put("channels", channels_list)
-
-                # 2. Check for web-created giveaways and post embeds into Discord channels
-                fb_giveaways = await firebase_get("giveaways")
-                if fb_giveaways and isinstance(fb_giveaways, dict):
-                    for g_id, g_data in fb_giveaways.items():
-                        if not isinstance(g_data, dict):
-                            continue
-                        giveaways[g_id] = g_data
-                        
-                        # Post Discord embed if active and missing message_id
-                        if g_data.get("is_active") and not g_data.get("message_id"):
-                            ch_id_str = str(g_data.get("channel_id", "")).strip()
-                            channel = None
-                            if ch_id_str.isdigit():
-                                channel = bot.get_channel(int(ch_id_str))
-                                if not channel:
-                                    try:
-                                        channel = await bot.fetch_channel(int(ch_id_str))
-                                    except Exception as fe:
-                                        print(f"[FETCH CHANNEL ERROR] Could not fetch channel {ch_id_str}: {fe}")
-                            
-                            if not channel:
-                                for guild in bot.guilds:
-                                    channel = guild.system_channel or (guild.text_channels[0] if guild.text_channels else None)
-                                    if channel:
-                                        break
-
-                            if channel:
-                                try:
-                                    embed = discord.Embed(
-                                        title=f"🎁 {g_data.get('title', 'Giveaway')}",
-                                        description=g_data.get("description", ""),
-                                        color=discord.Color.gold()
-                                    )
-                                    if g_data.get("banner_url"):
-                                        embed.set_image(url=g_data["banner_url"])
-
-                                    embed.add_field(name="Hosted by", value=g_data.get("hosted_by", "Admin"), inline=True)
-                                    embed.add_field(name="Network", value=g_data.get("network", "Ethereum"), inline=True)
-                                    embed.add_field(name="Ends At", value=f"<t:{int(g_data.get('ends_at', time.time()))}:R>", inline=True)
-                                    embed.set_footer(text="Click [Join Giveaway] below to participate!")
-
-                                    view = GiveawayView(g_id, web_url)
-                                    msg = await channel.send(embed=embed, view=view)
-                                    g_data["message_id"] = str(msg.id)
-                                    g_data["channel_id"] = str(channel.id)
-                                    giveaways[g_id] = g_data
-                                    save_giveaways()
-                                    await firebase_put(f"giveaways/{g_id}", g_data)
-                                    print(f"[GIVEAWAY POSTED] Posted giveaway {g_id} in #{channel.name} ({channel.id})")
-                                except Exception as send_err:
-                                    print(f"[GIVEAWAY SEND ERROR] Failed to send to #{channel.name}: {send_err}")
+            await sync_and_post_giveaways()
         except Exception as e:
-            print(f"[FIREBASE LOOP ERROR] {e}")
-
-        await asyncio.sleep(3)
+            print(f"[BG TASK ERROR] {e}")
+        await asyncio.sleep(4)
 
 
 @bot.event
@@ -3631,14 +3644,17 @@ async def on_ready():
         except Exception as fe:
             print(f"[FIREBASE SYNC ERROR] {fe}")
 
+    # Immediately sync channels & post any pending giveaways right now on startup
+    await sync_and_post_giveaways()
+
     port = os.getenv("PORT", "3000")
     web_url = os.getenv("APP_URL", f"http://localhost:{port}")
     
     for g_id in giveaways:
         bot.add_view(GiveawayView(g_id, web_url))
 
-    # Launch background Firebase sync loop
-    bot.loop.create_task(sync_firebase_loop())
+    # Launch continuous background channel sync & giveaway poster loop
+    bot.loop.create_task(bg_firebase_poster_task())
 
     try:
         synced = await bot.tree.sync()
