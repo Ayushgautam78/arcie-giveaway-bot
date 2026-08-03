@@ -3672,16 +3672,31 @@ async def set_custom_winners_cmd(interaction: discord.Interaction, giveaway_id: 
 
     def format_list(raw):
         if not raw: return "None"
-        items = [x.strip() for x in re.split(r'[\n,]+', str(raw)) if x.strip()]
+        text = str(raw)
+
+        # 1. Extract all 17-20 digit Discord IDs and mentions
+        ids = re.findall(r'\b\d{17,20}\b', text)
+        mentions = re.findall(r'<@!?(\d{17,20})>', text)
+        all_ids = []
+        for i in ids + mentions:
+            if i not in all_ids:
+                all_ids.append(i)
+
+        if all_ids:
+            return ", ".join([f"<@{i}>" for i in all_ids])
+
+        # 2. Fallback: split by whitespace, comma, or newline for usernames/handles
+        items = [x.strip() for x in re.split(r'[\s,\n]+', text) if x.strip()]
         formatted = []
         for item in items:
             clean_id = re.sub(r'[^0-9]', '', item)
-            if clean_id and len(clean_id) >= 17:
-                formatted.append(f"<@{clean_id}>")
-            elif item.startswith("@"):
-                formatted.append(item)
-            else:
-                formatted.append(item)
+            if clean_id and 17 <= len(clean_id) <= 20:
+                tag = f"<@{clean_id}>"
+                if tag not in formatted: formatted.append(tag)
+            elif item:
+                tag = item if item.startswith("@") or item.startswith("<@") else f"@{item.lstrip('@')}"
+                if tag not in formatted: formatted.append(tag)
+
         return ", ".join(formatted) if formatted else "None"
 
     gtd_str = format_list(guaranteed)
@@ -5477,20 +5492,32 @@ async def start_health_server():
             winner_summary_lines = [l for l in str(custom_text).strip().split("\n") if l.strip()]
         else:
             def format_winner_list(raw_val):
-                if isinstance(raw_val, list):
-                    items = [str(x).strip() for x in raw_val if str(x).strip()]
-                else:
-                    items = [x.strip() for x in re.split(r'[\n,]+', str(raw_val)) if x.strip()]
-                
+                if not raw_val: return "None"
+                text = str(raw_val)
+
+                # 1. Extract all 17-20 digit Discord IDs and mentions
+                ids = re.findall(r'\b\d{17,20}\b', text)
+                mentions = re.findall(r'<@!?(\d{17,20})>', text)
+                all_ids = []
+                for i in ids + mentions:
+                    if i not in all_ids:
+                        all_ids.append(i)
+
+                if all_ids:
+                    return ", ".join([f"<@{i}>" for i in all_ids])
+
+                # 2. Fallback: split by whitespace, comma, or newline for usernames/handles
+                items = [x.strip() for x in re.split(r'[\s,\n]+', text) if x.strip()]
                 formatted = []
                 for item in items:
                     clean_id = re.sub(r'[^0-9]', '', item)
-                    if clean_id and len(clean_id) >= 17:
-                        formatted.append(f"<@{clean_id}>")
-                    elif item.startswith("@"):
-                        formatted.append(item)
-                    else:
-                        formatted.append(item)
+                    if clean_id and 17 <= len(clean_id) <= 20:
+                        tag = f"<@{clean_id}>"
+                        if tag not in formatted: formatted.append(tag)
+                    elif item:
+                        tag = item if item.startswith("@") or item.startswith("<@") else f"@{item.lstrip('@')}"
+                        if tag not in formatted: formatted.append(tag)
+
                 return ", ".join(formatted) if formatted else "None"
 
             gtd_str = format_winner_list(gtd_raw)
