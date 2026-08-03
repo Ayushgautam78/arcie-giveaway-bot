@@ -3074,96 +3074,6 @@ async def on_member_join(member: discord.Member):
 
 # -------- Giveaway System UI Views, Modals & Handlers -------- #
 
-def build_giveaway_embed(g: dict) -> discord.Embed:
-    title = g.get("title", "Giveaway")
-    description = g.get("description", "")
-    hosted_by = g.get("hosted_by", "Admin")
-    guaranteed = g.get("guaranteed_spots", 0)
-    fcfs = g.get("fcfs_spots", 0)
-    min_per_user = g.get("min_per_user", 1)
-    max_per_user = g.get("max_per_user", 1)
-    ends_at = g.get("ends_at", 0)
-    network = g.get("network", "Ethereum")
-    banner_url = g.get("banner_url", None)
-    tasks = g.get("tasks", {})
-    winners_text = g.get("winners_text", None)
-
-    g_id = g.get("id", "")
-    entries_count = len(giveaway_entries.get(g_id, [])) if g_id else g.get("entries_count", 0)
-
-    color = discord.Color.from_rgb(43, 92, 255)
-    
-    desc_body = (
-        f"{description}\n\n"
-        f"**Type**\nRaffle\n\n"
-        f"**Spots**\n"
-        f"💎 Guaranteed (GTD): **{guaranteed}** (Min: {min_per_user} | Max: {max_per_user} per user)\n"
-        f"⚡ FCFS: **{fcfs}** (Min: {min_per_user} | Max: {max_per_user} per user)\n\n"
-        f"👥 **Live Participants**: **{entries_count}** entered\n\n"
-        f"**Ends**\n<t:{ends_at}:R>\n\n"
-        f"**Network**\n{network}"
-    )
-    if winners_text:
-        desc_body += f"\n\n🏆 **Winners Announced!**\n{winners_text}"
-
-    embed = discord.Embed(
-        title=f"**{title}**",
-        description=desc_body,
-        color=color
-    )
-
-    req_lines = []
-    dynamic_tasks = tasks.get("dynamic_tasks", [])
-    if dynamic_tasks:
-        for t in dynamic_tasks:
-            t_type = t.get("type")
-            t_val = t.get("value", "")
-            if t_type == "twitter_follow":
-                handle = t_val if not t_val.startswith("@") else t_val[1:]
-                req_lines.append(f"🐦 Follow [{t_val}](https://twitter.com/{handle})")
-            elif t_type == "twitter_like":
-                req_lines.append(f"❤️ Like [this tweet]({t_val})")
-            elif t_type == "twitter_retweet":
-                req_lines.append(f"🔄 Retweet [this tweet]({t_val})")
-            elif t_type == "tiktok_follow":
-                req_lines.append(f"🎵 Follow TikTok `{t_val}`")
-            elif t_type == "youtube_follow":
-                req_lines.append(f"▶️ Subscribe YouTube `{t_val}`")
-            elif t_type == "role_require":
-                req_lines.append(f"🏅 Require Role `{t_val}`")
-            else:
-                req_lines.append(f"📝 {t_val}")
-    else:
-        roles = tasks.get("roles", [])
-        if roles:
-            req_lines.append(f"🏅 Have one of the following roles: {', '.join(roles)}")
-        if tasks.get("twitter_follow"):
-            req_lines.append(f"🐦 Follow [{tasks['twitter_follow']}](https://twitter.com/{tasks['twitter_follow']})")
-        if tasks.get("twitter_like"):
-            req_lines.append(f"❤️ Like [this tweet]({tasks['twitter_like']})")
-        if tasks.get("twitter_retweet"):
-            req_lines.append(f"🔄 Retweet [this tweet]({tasks['twitter_retweet']})")
-        if tasks.get("tiktok_follow"):
-            req_lines.append(f"🎵 Follow TikTok `{tasks['tiktok_follow']}`")
-        if tasks.get("youtube_follow"):
-            req_lines.append(f"▶️ Subscribe YouTube `{tasks['youtube_follow']}`")
-        if tasks.get("manual_task"):
-            req_lines.append(f"📝 {tasks['manual_task']}")
-
-    if tasks.get("require_evm"):
-        req_lines.append("🔷 Require EVM Wallet Address")
-    if tasks.get("require_solana"):
-        req_lines.append("🟣 Require Solana Wallet Address")
-
-    if req_lines:
-        embed.add_field(name="Requirements:", value="\n".join(req_lines), inline=False)
-
-    if banner_url:
-        embed.set_image(url=banner_url)
-
-    embed.set_footer(text="Powered by Arcie Bot")
-    return embed
-
 
 class JoinGiveawayModal(discord.ui.Modal, title="Giveaway Profile & Wallet Setup"):
     twitter = discord.ui.TextInput(label="Twitter Handle", placeholder="@yourhandle", required=False)
@@ -3347,16 +3257,33 @@ async def update_giveaway_discord_message(giveaway_id: str):
     if not g or not g.get("channel_id") or not g.get("message_id"):
         return
     try:
-        channel = bot.get_channel(int(g["channel_id"]))
+        ch_id_clean = re.sub(r'[^0-9]', '', str(g["channel_id"]))
+        msg_id_clean = re.sub(r'[^0-9]', '', str(g["message_id"]))
+        if not ch_id_clean or not msg_id_clean:
+            return
+
+        channel = bot.get_channel(int(ch_id_clean))
+        if not channel:
+            try:
+                channel = await bot.fetch_channel(int(ch_id_clean))
+            except Exception:
+                pass
         if not channel:
             return
-        msg = await channel.fetch_message(int(g["message_id"]))
+
+        msg = await channel.fetch_message(int(msg_id_clean))
         if msg:
-            embed = build_giveaway_embed(g)
+            embed, file_to_send = build_giveaway_embed(g)
             port = os.getenv("PORT", "3000")
             domain = os.getenv("APP_URL", f"http://localhost:{port}")
             view = GiveawayView(giveaway_id, domain)
-            await msg.edit(embed=embed, view=view)
+
+            kwargs = {"embed": embed, "view": view}
+            if file_to_send:
+                kwargs["attachments"] = [file_to_send]
+
+            await msg.edit(**kwargs)
+            print(f"[UPDATE EMBED SUCCESS] Updated Discord embed for '{g.get('title')}' in #{channel.name}")
     except Exception as e:
         print(f"[UPDATE EMBED ERROR] {e}")
 
@@ -3898,6 +3825,10 @@ def build_giveaway_embed(g_data: dict):
     entries_count = int(g_data.get("entries_count", 0)) or len(giveaway_entries.get(g_id, [])) if g_id else 0
     embed.add_field(name="Total Entries", value=f"{entries_count} Users Joined", inline=True)
 
+    winners_text = g_data.get("winners_text", "")
+    if winners_text and winners_text.strip():
+        embed.add_field(name="🏆 Winners Announced!", value=winners_text.strip(), inline=False)
+
     embed.set_footer(text="Click [Join Giveaway] below to participate | Powered by Arcie Bot")
 
     return embed, file_to_send
@@ -3920,49 +3851,87 @@ async def announce_winners_in_discord(g_id: str, winner_summary_lines: list):
     """Post an official Winners Announcement Embed directly to the Discord giveaway or specified winner channel."""
     g = giveaways.get(g_id)
     if not g:
+        g = await firebase_get(f"giveaways/{g_id}")
+        if g:
+            giveaways[g_id] = g
+    if not g:
         return
 
-    target_ch_str = str(g.get("winner_channel_id", "")).strip() or str(g.get("channel_id", "")).strip()
-    if not target_ch_str or not target_ch_str.isdigit():
-        target_ch_str = str(g.get("channel_id", "")).strip()
+    winner_summary_lines = [line for line in winner_summary_lines if line and line.strip()]
+    if not winner_summary_lines:
+        print(f"[ANNOUNCE ERROR] No winner summary lines for giveaway '{g_id}'")
+        return
 
-    if not target_ch_str or not target_ch_str.isdigit():
+    channel = None
+    target_ch_str = str(g.get("winner_channel_id", "")).strip() or str(g.get("channel_id", "")).strip()
+
+    # Clean channel ID string
+    clean_id = re.sub(r'[^0-9]', '', target_ch_str)
+    if clean_id:
+        try:
+            channel_id = int(clean_id)
+            channel = bot.get_channel(channel_id)
+            if not channel:
+                channel = await bot.fetch_channel(channel_id)
+        except Exception as e:
+            print(f"[ANNOUNCE CH FETCH ERROR] {e}")
+
+    # Fallback 1: Try giveaway main channel_id if winner_channel_id failed
+    if not channel and g.get("channel_id"):
+        main_ch_id = re.sub(r'[^0-9]', '', str(g["channel_id"]))
+        if main_ch_id:
+            try:
+                channel = bot.get_channel(int(main_ch_id))
+                if not channel:
+                    channel = await bot.fetch_channel(int(main_ch_id))
+            except Exception:
+                pass
+
+    # Fallback 2: Search guild channels by name or use system channel
+    if not channel and bot.guilds:
+        for guild in bot.guilds:
+            for ch in guild.text_channels:
+                if ch.name.lower() == target_ch_str.lower().strip('#'):
+                    channel = ch
+                    break
+            if channel: break
+
+            channel = guild.system_channel or (guild.text_channels[0] if guild.text_channels else None)
+            if channel: break
+
+    if not channel:
+        print(f"[ANNOUNCE ERROR] Could not find any valid channel to announce winners for giveaway '{g_id}'")
         return
 
     try:
-        channel_id = int(target_ch_str)
-        channel = bot.get_channel(channel_id)
-        if not channel:
-            channel = await bot.fetch_channel(channel_id)
+        embed = discord.Embed(
+            title=f"🏆 Raffle Winners Announced — {g.get('title', 'Giveaway')}",
+            description="🎉 **Congratulations to all selected winners!**\n\n" + "\n".join(winner_summary_lines),
+            color=discord.Color.gold()
+        )
+        banner_url = str(g.get("banner_url", "")).strip()
+        file_to_send = None
+        if banner_url:
+            if banner_url.startswith("data:image"):
+                try:
+                    header, encoded = banner_url.split(",", 1)
+                    img_bytes = base64.b64decode(encoded)
+                    fp = io.BytesIO(img_bytes)
+                    file_to_send = discord.File(fp, filename="banner.png")
+                    embed.set_image(url="attachment://banner.png")
+                except Exception:
+                    pass
+            elif (banner_url.startswith("http://") or banner_url.startswith("https://")) and len(banner_url) <= 2048:
+                embed.set_image(url=banner_url)
 
-        if channel:
-            embed = discord.Embed(
-                title=f"Raffle Winners Announced - {g.get('title', 'Giveaway')}",
-                description="Congratulations to all the selected winners!\n\n" + "\n".join(winner_summary_lines),
-                color=discord.Color.green()
-            )
-            banner_url = str(g.get("banner_url", "")).strip()
-            file_to_send = None
-            if banner_url:
-                if banner_url.startswith("data:image"):
-                    try:
-                        header, encoded = banner_url.split(",", 1)
-                        img_bytes = base64.b64decode(encoded)
-                        fp = io.BytesIO(img_bytes)
-                        file_to_send = discord.File(fp, filename="banner.png")
-                        embed.set_image(url="attachment://banner.png")
-                    except Exception:
-                        pass
-                elif (banner_url.startswith("http://") or banner_url.startswith("https://")) and len(banner_url) <= 2048:
-                    embed.set_image(url=banner_url)
+        embed.set_footer(text="Powered by Arcie Bot")
+        mention_text = format_role_mention(g.get("mention_role"))
 
-            embed.set_footer(text="Powered by Arcie Bot")
-            mention_text = format_role_mention(g.get("mention_role"))
-            if file_to_send:
-                await channel.send(content=mention_text, embed=embed, file=file_to_send)
-            else:
-                await channel.send(content=mention_text, embed=embed)
-            print(f"[WINNERS ANNOUNCED] Posted winners announcement for '{g.get('title')}' in #{channel.name}")
+        if file_to_send:
+            await channel.send(content=mention_text, embed=embed, file=file_to_send)
+        else:
+            await channel.send(content=mention_text, embed=embed)
+        print(f"[WINNERS ANNOUNCED] Posted winners announcement for '{g.get('title')}' in #{channel.name}")
     except Exception as e:
         print(f"[ANNOUNCE WINNERS ERROR] {e}")
 
@@ -4707,6 +4676,12 @@ async def start_health_server():
         else:
             # Just update the existing embed in place
             await update_giveaway_discord_message(g_id)
+
+        # If this giveaway already has winners drawn, re-announce winners to winner_channel_id
+        if g.get("winners_text"):
+            lines = [l for l in g["winners_text"].split("\n") if l.strip()]
+            if lines:
+                await announce_winners_in_discord(g_id, lines)
 
         return web.json_response(g)
 
