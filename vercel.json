@@ -1,20 +1,17 @@
 {
   "version": 2,
-  "name": "arcie-giveaway-hub",
-  "builds": [
+  "rewrites": [
     {
-      "src": "static/**",
-      "use": "@vercel/static"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/static/(.*)",
-      "dest": "/static/$1"
+      "source": "/api/:path*",
+      "destination": "http://89.106.84.246:3000/api/:path*"
     },
     {
-      "src": "/(.*)",
-      "dest": "/static/index.html"
+      "source": "/static/:path*",
+      "destination": "/static/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/static/index.html"
     }
   ]
 }

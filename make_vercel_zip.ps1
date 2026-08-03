@@ -16,11 +16,7 @@ Copy-Item (Join-Path $srcDir "vercel.json") (Join-Path $tempDir "vercel.json")
 # Copy static files
 Copy-Item (Join-Path $srcDir "static\styles.css") (Join-Path $tempDir "static\styles.css")
 Copy-Item (Join-Path $srcDir "static\app.js") (Join-Path $tempDir "static\app.js")
-
-# Copy and modify index.html — set API_BASE to NexCloud URL
-$htmlContent = Get-Content (Join-Path $srcDir "static\index.html") -Raw
-$htmlContent = $htmlContent -replace "window\.ARCIE_API_BASE = '';", "window.ARCIE_API_BASE = 'http://89.106.84.246:3000';"
-Set-Content -Path (Join-Path $tempDir "static\index.html") -Value $htmlContent -NoNewline
+Copy-Item (Join-Path $srcDir "static\index.html") (Join-Path $tempDir "static\index.html")
 
 # Create zip from temp dir
 $zip = [System.IO.Compression.ZipFile]::Open($zipPath, 'Create')
