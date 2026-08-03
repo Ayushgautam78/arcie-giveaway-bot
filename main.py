@@ -1386,11 +1386,12 @@ async def create_welcome_card(
     return buf
 
 # -------- Reaction Role UI Component -------- #
+# -------- Reaction Role UI Component -------- #
 class ReactionRoleButton(discord.ui.Button):
     def __init__(self, role_id: int, emoji: Optional[str] = None, label: Optional[str] = None):
         clean_emoji = emoji.strip() if emoji and emoji.strip() and emoji.strip() != "✔️" else None
         super().__init__(style=discord.ButtonStyle.primary, label=label or "Get Role", emoji=clean_emoji, custom_id=f"rr_{role_id}")
-        self.role_id = role_id
+        self.role_id = int(role_id)
 
     async def callback(self, interaction: discord.Interaction):
         guild = interaction.guild
@@ -1399,22 +1400,42 @@ class ReactionRoleButton(discord.ui.Button):
             return
         role = guild.get_role(self.role_id)
         if not role:
-            await interaction.response.send_message("That role no longer exists! 🥺", ephemeral=True)
+            await interaction.response.send_message("❌ That role no longer exists in this server! 🥺", ephemeral=True)
             return
 
         member = interaction.user
+        if not isinstance(member, discord.Member):
+            member = guild.get_member(interaction.user.id)
+
+        if not member:
+            await interaction.response.send_message("❌ Could not fetch member details! 🥺", ephemeral=True)
+            return
+
+        # Check Discord Role Hierarchy
+        if role >= guild.me.top_role:
+            await interaction.response.send_message(
+                f"❌ **Role Hierarchy Error!** The role **{role.name}** is positioned HIGHER than (or equal to) my bot role in Server Settings.\n\n"
+                f"👉 **Fix:** Open **Server Settings ➔ Roles**, and drag the bot role (**Arcie**) ABOVE **{role.name}**!",
+                ephemeral=True
+            )
+            return
+
         if role in member.roles:
             try:
                 await member.remove_roles(role, reason="Reaction Role button toggle")
                 await interaction.response.send_message(f"❌ Removed the **{role.name}** role from you!", ephemeral=True)
+            except discord.Forbidden:
+                await interaction.response.send_message(f"❌ **Permission Denied!** Make sure my **Arcie** role has **Manage Roles** permission and is placed higher than **{role.name}** in Server Settings!", ephemeral=True)
             except Exception as e:
-                await interaction.response.send_message(f"Could not remove role! Check my permissions. 🥺", ephemeral=True)
+                await interaction.response.send_message(f"Could not remove role: {e}", ephemeral=True)
         else:
             try:
                 await member.add_roles(role, reason="Reaction Role button toggle")
                 await interaction.response.send_message(f"✅ Granted you the **{role.name}** role!", ephemeral=True)
+            except discord.Forbidden:
+                await interaction.response.send_message(f"❌ **Permission Denied!** Make sure my **Arcie** role has **Manage Roles** permission and is placed higher than **{role.name}** in Server Settings!", ephemeral=True)
             except Exception as e:
-                await interaction.response.send_message(f"Could not give role! Check my permissions. 🥺", ephemeral=True)
+                await interaction.response.send_message(f"Could not give role: {e}", ephemeral=True)
 
 # -------- Event Handlers -------- #
 @bot.event
@@ -1446,52 +1467,28 @@ async def on_ready():
 
     # Register persistent reaction role views across restarts
     for msg_id, data in reaction_roles.items():
-        role_id = data.get("role_id")
-        emoji = data.get("emoji", "⭐")
-        if role_id:
+        try:
             view = discord.ui.View(timeout=None)
-            view.add_item(ReactionRoleButton(role_id=role_id, emoji=emoji, label="Get Role"))
-            bot.add_view(view, message_id=int(msg_id))
+            if "roles" in data and isinstance(data["roles"], list):
+                for r_item in data["roles"]:
+                    rid = r_item.get("role_id")
+                    emo = r_item.get("emoji")
+                    lbl = r_item.get("label", "Get Role")
+                    if rid:
+                        view.add_item(ReactionRoleButton(role_id=int(rid), emoji=emo, label=lbl))
+            elif data.get("role_id"):
+                rid = int(data["role_id"])
+                emo = data.get("emoji", "⭐")
+                lbl = data.get("title", "Get Role")
+                view.add_item(ReactionRoleButton(role_id=rid, emoji=emo, label=lbl))
+
+            if len(view.children) > 0:
+                bot.add_view(view, message_id=int(msg_id))
+                print(f"[RR RESTORE] Registered {len(view.children)} button(s) for message {msg_id}")
+        except Exception as r_err:
+            print(f"[RR RESTORE ERROR] message {msg_id}: {r_err}")
 
     print(f"[BOOT] {bot.user.name} ({bot.user.id}) IS ONLINE AND READY TO CHAT.")
-
-@bot.event
-async def on_interaction(interaction: discord.Interaction):
-    if interaction.type == discord.InteractionType.component:
-        custom_id = interaction.data.get("custom_id", "")
-        if custom_id and custom_id.startswith("rr_"):
-            try:
-                role_id = int(custom_id.split("rr_")[1])
-                guild = interaction.guild
-                if not guild:
-                    await interaction.response.send_message("This action can only be used in a server!", ephemeral=True)
-                    return
-
-                role = guild.get_role(role_id)
-                if not role:
-                    await interaction.response.send_message("That role no longer exists! 🥺", ephemeral=True)
-                    return
-
-                member = interaction.user
-                if role in member.roles:
-                    try:
-                        await member.remove_roles(role, reason="Reaction Role button toggle")
-                        await interaction.response.send_message(f"❌ Removed the **{role.name}** role from you!", ephemeral=True)
-                    except Exception as e:
-                        await interaction.response.send_message(f"Could not remove role! Make sure my role is higher than {role.name}! 🥺", ephemeral=True)
-                else:
-                    try:
-                        await member.add_roles(role, reason="Reaction Role button toggle")
-                        await interaction.response.send_message(f"✅ Granted you the **{role.name}** role!", ephemeral=True)
-                    except Exception as e:
-                        await interaction.response.send_message(f"Could not give role! Make sure my role is higher than {role.name}! 🥺", ephemeral=True)
-            except Exception as e:
-                print(f"[DYNAMIC RR INTERACTION ERROR] {e}")
-                if not interaction.response.is_done():
-                    await interaction.response.send_message("Something went wrong! 🥺", ephemeral=True)
-            return
-
-    await bot.process_application_commands(interaction)
 
 @bot.event
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
@@ -1500,14 +1497,42 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     msg_id = str(payload.message_id)
     if msg_id in reaction_roles:
         data = reaction_roles[msg_id]
-        role_id = data.get("role_id")
         guild = bot.get_guild(payload.guild_id)
-        if guild and role_id:
-            role = guild.get_role(role_id)
-            member = payload.member or guild.get_member(payload.user_id)
-            if role and member and role not in member.roles:
+        if not guild:
+            try:
+                guild = await bot.fetch_guild(payload.guild_id)
+            except Exception:
+                return
+        if not guild: return
+
+        member = payload.member or guild.get_member(payload.user_id)
+        if not member:
+            try:
+                member = await guild.fetch_member(payload.user_id)
+            except Exception:
+                return
+        if not member: return
+
+        roles_to_add = []
+        if "roles" in data and isinstance(data["roles"], list):
+            payload_emoji = str(payload.emoji.name) if payload.emoji.is_unicode_emoji() else str(payload.emoji)
+            for r_item in data["roles"]:
+                target_emoji = str(r_item.get("emoji", "")).strip()
+                if not target_emoji or target_emoji == payload_emoji or target_emoji in str(payload.emoji):
+                    roles_to_add.append(r_item.get("role_id"))
+        elif data.get("role_id"):
+            roles_to_add.append(data.get("role_id"))
+
+        for r_id in roles_to_add:
+            if not r_id: continue
+            role = guild.get_role(int(r_id))
+            if role and role not in member.roles:
+                if role >= guild.me.top_role:
+                    print(f"[RR WARNING] Cannot assign role '{role.name}' to {member.display_name} - Bot role is below '{role.name}' in role hierarchy!")
+                    continue
                 try:
                     await member.add_roles(role, reason="Reaction Role emoji add")
+                    print(f"[RR EMOJI ADD] Granted '{role.name}' to {member.display_name}")
                 except Exception as e:
                     print(f"[RR EMOJI ADD ERROR] {e}")
 
@@ -1518,14 +1543,42 @@ async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
     msg_id = str(payload.message_id)
     if msg_id in reaction_roles:
         data = reaction_roles[msg_id]
-        role_id = data.get("role_id")
         guild = bot.get_guild(payload.guild_id)
-        if guild and role_id:
-            role = guild.get_role(role_id)
-            member = guild.get_member(payload.user_id)
-            if role and member and role in member.roles:
+        if not guild:
+            try:
+                guild = await bot.fetch_guild(payload.guild_id)
+            except Exception:
+                return
+        if not guild: return
+
+        member = guild.get_member(payload.user_id)
+        if not member:
+            try:
+                member = await guild.fetch_member(payload.user_id)
+            except Exception:
+                return
+        if not member: return
+
+        roles_to_remove = []
+        if "roles" in data and isinstance(data["roles"], list):
+            payload_emoji = str(payload.emoji.name) if payload.emoji.is_unicode_emoji() else str(payload.emoji)
+            for r_item in data["roles"]:
+                target_emoji = str(r_item.get("emoji", "")).strip()
+                if not target_emoji or target_emoji == payload_emoji or target_emoji in str(payload.emoji):
+                    roles_to_remove.append(r_item.get("role_id"))
+        elif data.get("role_id"):
+            roles_to_remove.append(data.get("role_id"))
+
+        for r_id in roles_to_remove:
+            if not r_id: continue
+            role = guild.get_role(int(r_id))
+            if role and role in member.roles:
+                if role >= guild.me.top_role:
+                    print(f"[RR WARNING] Cannot remove role '{role.name}' from {member.display_name} - Bot role is below '{role.name}' in role hierarchy!")
+                    continue
                 try:
                     await member.remove_roles(role, reason="Reaction Role emoji remove")
+                    print(f"[RR EMOJI REMOVE] Removed '{role.name}' from {member.display_name}")
                 except Exception as e:
                     print(f"[RR EMOJI REMOVE ERROR] {e}")
 
@@ -1812,6 +1865,7 @@ async def on_message(message: discord.Message):
 
         bot.add_view(view, message_id=msg.id)
         reaction_roles[str(msg.id)] = {
+            "roles": [{"role_id": target_role.id, "emoji": emoji_char, "label": f"Get {target_role.name}"}],
             "role_id": target_role.id,
             "emoji": emoji_char,
             "channel_id": target_channel.id,
@@ -1906,16 +1960,15 @@ async def on_message(message: discord.Message):
         msg = await target_channel.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=True))
         bot.add_view(view, message_id=msg.id)
 
-        for role_obj, emoji_char in role_pairs:
-            reaction_roles[str(msg.id)] = {
-                "role_id": role_obj.id,
-                "emoji": emoji_char,
-                "channel_id": target_channel.id,
-                "title": title_text
-            }
+        roles_list = [{"role_id": r.id, "emoji": e, "label": r.name} for r, e in role_pairs]
+        reaction_roles[str(msg.id)] = {
+            "roles": roles_list,
+            "channel_id": target_channel.id,
+            "title": title_text
+        }
         save_reaction_roles()
 
-        roles_summary = ", ".join([f"**{r.name}** {e}" for r, e in role_pairs])
+        roles_summary = ", ".join([f"**{r.name}** {e if e else ''}" for r, e in role_pairs])
         await message.reply(f"✅ Posted Multi-Role Selection embed in {target_channel.mention} with roles: {roles_summary}!")
         return
 
@@ -1945,9 +1998,15 @@ async def on_message(message: discord.Message):
         except Exception as e:
             print(f"[ADDRR EMOJI ERROR] {e}")
 
+        existing_entry = reaction_roles.get(str(target_msg.id), {})
+        existing_roles = existing_entry.get("roles", [])
+        if not existing_roles and existing_entry.get("role_id"):
+            existing_roles = [{"role_id": existing_entry.get("role_id"), "emoji": existing_entry.get("emoji")}]
+
+        existing_roles.append({"role_id": target_role.id, "emoji": emoji_char, "label": target_role.name})
+
         reaction_roles[str(target_msg.id)] = {
-            "role_id": target_role.id,
-            "emoji": emoji_char,
+            "roles": existing_roles,
             "channel_id": message.channel.id
         }
         save_reaction_roles()
@@ -2364,9 +2423,15 @@ async def add_reaction_role_cmd(
     except Exception:
         pass
 
+    existing_entry = reaction_roles.get(str(msg.id), {})
+    existing_roles = existing_entry.get("roles", [])
+    if not existing_roles and existing_entry.get("role_id"):
+        existing_roles = [{"role_id": existing_entry.get("role_id"), "emoji": existing_entry.get("emoji")}]
+
+    existing_roles.append({"role_id": role.id, "emoji": emoji, "label": role.name})
+
     reaction_roles[str(msg.id)] = {
-        "role_id": role.id,
-        "emoji": emoji,
+        "roles": existing_roles,
         "channel_id": interaction.channel.id
     }
     save_reaction_roles()
@@ -2468,6 +2533,7 @@ async def reaction_role_cmd(
 
         # Save to persistent database
         reaction_roles[str(msg.id)] = {
+            "roles": [{"role_id": role.id, "emoji": emoji, "label": f"Get {role.name}"}],
             "role_id": role.id,
             "emoji": emoji,
             "channel_id": channel.id,
@@ -2551,13 +2617,12 @@ async def multi_reaction_role_cmd(
         msg = await channel.send(embed=embed, view=view, files=files if files else None, allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=True))
         bot.add_view(view, message_id=msg.id)
 
-        for r, e in role_pairs:
-            reaction_roles[str(msg.id)] = {
-                "role_id": r.id,
-                "emoji": e,
-                "channel_id": channel.id,
-                "title": title
-            }
+        roles_list = [{"role_id": r.id, "emoji": e, "label": r.name} for r, e in role_pairs]
+        reaction_roles[str(msg.id)] = {
+            "roles": roles_list,
+            "channel_id": channel.id,
+            "title": title
+        }
         save_reaction_roles()
 
         roles_summary = ", ".join([f"**{r.name}** {e}" for r, e in role_pairs])
