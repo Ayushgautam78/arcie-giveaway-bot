@@ -3414,10 +3414,71 @@ class UserProfileModal(discord.ui.Modal, title="Update Web3 Socials & Wallets"):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+async def get_or_fetch_user_profile(uid: str, usr: Optional[discord.User] = None) -> dict:
+    prof = user_profiles.get(uid, {})
+
+    # 1. Fetch from Firebase user_profiles if missing
+    if FIREBASE_URL and (not prof or not (prof.get("evm_wallet") or prof.get("solana_wallet") or prof.get("twitter"))):
+        try:
+            fb_prof = await firebase_get(f"user_profiles/{uid}")
+            if fb_prof and isinstance(fb_prof, dict):
+                prof.update(fb_prof)
+                user_profiles[uid] = prof
+        except Exception:
+            pass
+
+    # 2. Search giveaway_entries for this user's wallets & socials if still missing
+    if not (prof.get("evm_wallet") or prof.get("solana_wallet") or prof.get("twitter")):
+        found_entry = None
+        for g_id, entries in giveaway_entries.items():
+            if isinstance(entries, list):
+                for e in entries:
+                    if isinstance(e, dict) and e.get("user_id") == uid:
+                        if e.get("evm_wallet") or e.get("solana_wallet") or e.get("twitter"):
+                            found_entry = e
+                            break
+            if found_entry: break
+
+        if not found_entry and FIREBASE_URL:
+            try:
+                fb_all_entries = await firebase_get("giveaway_entries")
+                if fb_all_entries and isinstance(fb_all_entries, dict):
+                    for g_id, e_data in fb_all_entries.items():
+                        e_list = list(e_data.values()) if isinstance(e_data, dict) else e_data
+                        if isinstance(e_list, list):
+                            for e in e_list:
+                                if isinstance(e, dict) and e.get("user_id") == uid:
+                                    if e.get("evm_wallet") or e.get("solana_wallet") or e.get("twitter"):
+                                        found_entry = e
+                                        break
+                        if found_entry: break
+            except Exception:
+                pass
+
+        if found_entry:
+            if not prof:
+                display_name = usr.display_name if usr else str(uid)
+                username = usr.name if usr else str(uid)
+                prof = {
+                    "display_name": display_name,
+                    "username": username,
+                    "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                }
+            if found_entry.get("evm_wallet"): prof["evm_wallet"] = found_entry["evm_wallet"]
+            if found_entry.get("solana_wallet"): prof["solana_wallet"] = found_entry["solana_wallet"]
+            if found_entry.get("twitter"): prof["twitter"] = found_entry["twitter"]
+            if found_entry.get("telegram"): prof["telegram"] = found_entry["telegram"]
+            
+            user_profiles[uid] = prof
+            save_user_profiles()
+
+    return prof
+
+
 @bot.tree.command(name="profile", description="Manage your Web3 wallets & social handles for giveaways!")
 async def profile_cmd(interaction: discord.Interaction):
     uid = str(interaction.user.id)
-    prof = user_profiles.get(uid, {})
+    prof = await get_or_fetch_user_profile(uid, interaction.user)
     modal = UserProfileModal()
     if prof.get("twitter"): modal.twitter.default = prof.get("twitter")
     if prof.get("telegram"): modal.telegram.default = prof.get("telegram")
@@ -3499,7 +3560,7 @@ async def user_details_cmd(interaction: discord.Interaction, target: Optional[di
         await interaction.response.defer()
         usr = target or interaction.user
         uid = str(usr.id)
-        prof = user_profiles.get(uid, {})
+        prof = await get_or_fetch_user_profile(uid, usr)
 
         twitter_val = f"**{prof.get('twitter')}**" if prof.get("twitter") else "*Not set by user yet*"
         telegram_val = f"**{prof.get('telegram')}**" if prof.get("telegram") else "*Not set by user yet*"
