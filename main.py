@@ -1,0 +1,4094 @@
+import os
+import sys
+import re
+import json
+import asyncio
+import time
+import datetime
+import random
+import io
+import base64
+import urllib.parse
+import unicodedata
+from typing import Optional, List, Dict, Set, Union
+from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+from PIL import Image, ImageDraw, ImageFont
+
+import discord
+from discord.ext import commands
+from discord import app_commands
+import aiohttp
+from aiohttp import web
+
+load_dotenv()
+
+# -------- Global Safety Net & Persistent Memories -------- #
+DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
+MEMORY_FILE = os.path.join(DATA_DIR, "memories.json")
+ADMIN_FILE = os.path.join(DATA_DIR, "admins.json")
+USER_PROFILES_FILE = os.path.join(DATA_DIR, "user_profiles.json")
+GIVEAWAYS_FILE = os.path.join(DATA_DIR, "giveaways.json")
+GIVEAWAY_ENTRIES_FILE = os.path.join(DATA_DIR, "giveaway_entries.json")
+
+USER_STATS_FILE = os.path.join(DATA_DIR, "user_stats.json")
+REACTION_ROLES_FILE = os.path.join(DATA_DIR, "reaction_roles.json")
+
+channel_memories: Dict[str, list] = {}
+bot_admins: Set[str] = set()
+user_stats: Dict[str, dict] = {}
+voice_start_times: Dict[int, float] = {}
+reaction_roles: Dict[str, dict] = {}
+user_profiles: Dict[str, dict] = {}
+giveaways: Dict[str, dict] = {}
+giveaway_entries: Dict[str, list] = {}
+active_sessions: Dict[str, dict] = {}
+
+# -------- Firebase Database Configuration -------- #
+FIREBASE_URL = os.getenv("FIREBASE_DATABASE_URL", "").rstrip("/")
+
+async def firebase_get(path: str) -> Optional[dict]:
+    if not FIREBASE_URL:
+        return None
+    url = f"{FIREBASE_URL}/{path.lstrip('/')}.json"
+    global session
+    if session is None or session.closed:
+        session = aiohttp.ClientSession()
+    try:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            if resp.status == 200:
+                return await resp.json()
+    except Exception as e:
+        print(f"[FIREBASE GET ERROR] {e}")
+    return None
+
+async def firebase_put(path: str, data: dict):
+    if not FIREBASE_URL:
+        return
+    url = f"{FIREBASE_URL}/{path.lstrip('/')}.json"
+    global session
+    if session is None or session.closed:
+        session = aiohttp.ClientSession()
+    try:
+        async with session.put(url, json=data, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            pass
+    except Exception as e:
+        print(f"[FIREBASE PUT ERROR] {e}")
+
+# Load persistent user profiles (long-term memory across days/weeks)
+if os.path.exists(USER_PROFILES_FILE):
+    try:
+        with open(USER_PROFILES_FILE, "r", encoding="utf-8") as f:
+            user_profiles = json.load(f)
+        print(f"[PROFILES] Loaded persistent profiles for {len(user_profiles)} users.")
+    except Exception as e:
+        print(f"[PROFILES ERROR] Failed to load user profiles: {e}")
+
+def save_user_profiles():
+    try:
+        with open(USER_PROFILES_FILE, "w", encoding="utf-8") as f:
+            json.dump(user_profiles, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[PROFILES ERROR] Failed to save user profiles: {e}")
+    if FIREBASE_URL:
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(firebase_put("user_profiles", user_profiles))
+        except Exception:
+            pass
+
+# Load persistent giveaways
+if os.path.exists(GIVEAWAYS_FILE):
+    try:
+        with open(GIVEAWAYS_FILE, "r", encoding="utf-8") as f:
+            giveaways = json.load(f)
+        print(f"[GIVEAWAYS] Loaded {len(giveaways)} giveaways.")
+    except Exception as e:
+        print(f"[GIVEAWAYS ERROR] Failed to load giveaways: {e}")
+
+def save_giveaways():
+    try:
+        with open(GIVEAWAYS_FILE, "w", encoding="utf-8") as f:
+            json.dump(giveaways, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[GIVEAWAYS ERROR] Failed to save giveaways: {e}")
+    if FIREBASE_URL:
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(firebase_put("giveaways", giveaways))
+        except Exception:
+            pass
+
+# Load persistent giveaway entries
+if os.path.exists(GIVEAWAY_ENTRIES_FILE):
+    try:
+        with open(GIVEAWAY_ENTRIES_FILE, "r", encoding="utf-8") as f:
+            giveaway_entries = json.load(f)
+        print(f"[GIVEAWAY ENTRIES] Loaded entries for {len(giveaway_entries)} giveaways.")
+    except Exception as e:
+        print(f"[GIVEAWAY ENTRIES ERROR] Failed to load giveaway entries: {e}")
+
+def save_giveaway_entries():
+    try:
+        with open(GIVEAWAY_ENTRIES_FILE, "w", encoding="utf-8") as f:
+            json.dump(giveaway_entries, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[GIVEAWAY ENTRIES ERROR] Failed to save giveaway entries: {e}")
+    if FIREBASE_URL:
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(firebase_put("giveaway_entries", giveaway_entries))
+        except Exception:
+            pass
+
+def update_user_memory(user: Union[discord.Member, discord.User], message_text: str = ""):
+    if not user or getattr(user, 'bot', False):
+        return
+    uid = str(user.id)
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    display_name = getattr(user, 'display_name', user.name)
+    username = getattr(user, 'name', str(user))
+    
+    if uid not in user_profiles:
+        user_profiles[uid] = {
+            "display_name": display_name,
+            "username": username,
+            "facts": [],
+            "first_seen": now_str,
+            "last_seen": now_str
+        }
+    else:
+        user_profiles[uid]["display_name"] = display_name
+        user_profiles[uid]["username"] = username
+        user_profiles[uid]["last_seen"] = now_str
+
+    if message_text:
+        text_lower = message_text.lower()
+        match = re.search(r'\b(my name is|call me|i am|i live in|i love|i like|i hate|my favorite|i support|i work as|i am a|my birthday is|i play|my handle is|i study|i study at)\s+([^.!?\n]+)', text_lower)
+        if match:
+            fact = f"{match.group(1)} {match.group(2).strip()}"
+            existing = user_profiles[uid].get("facts", [])
+            if fact not in existing and len(existing) < 20:
+                existing.append(fact)
+                user_profiles[uid]["facts"] = existing
+
+    save_user_profiles()
+
+# Load persistent user stats
+if os.path.exists(USER_STATS_FILE):
+    try:
+        with open(USER_STATS_FILE, "r", encoding="utf-8") as f:
+            user_stats = json.load(f)
+        print(f"[STATS] Loaded stats for {len(user_stats)} users.")
+    except Exception as e:
+        print(f"[STATS ERROR] Failed to load user stats: {e}")
+
+def save_user_stats():
+    try:
+        with open(USER_STATS_FILE, "w", encoding="utf-8") as f:
+            json.dump(user_stats, f, indent=2)
+    except Exception as e:
+        print(f"[STATS ERROR] Failed to save user stats: {e}")
+
+# Load persistent reaction roles
+if os.path.exists(REACTION_ROLES_FILE):
+    try:
+        with open(REACTION_ROLES_FILE, "r", encoding="utf-8") as f:
+            reaction_roles = json.load(f)
+        print(f"[RR] Loaded reaction roles for {len(reaction_roles)} messages.")
+    except Exception as e:
+        print(f"[RR ERROR] Failed to load reaction roles: {e}")
+
+def save_reaction_roles():
+    try:
+        with open(REACTION_ROLES_FILE, "w", encoding="utf-8") as f:
+            json.dump(reaction_roles, f, indent=2)
+    except Exception as e:
+        print(f"[RR ERROR] Failed to save reaction roles: {e}")
+
+# Load persistent memory
+if os.path.exists(MEMORY_FILE):
+    try:
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+            channel_memories = json.load(f)
+        print(f"[MEMORY] Loaded persistent memories for {len(channel_memories)} channels.")
+    except Exception as e:
+        print(f"[MEMORY ERROR] Failed to load memories: {e}")
+
+def save_memories():
+    try:
+        with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(channel_memories, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[MEMORY ERROR] Failed to save memories: {e}")
+
+# Load persistent admins
+if os.path.exists(ADMIN_FILE):
+    try:
+        with open(ADMIN_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                bot_admins = set(str(x) for x in data)
+        print(f"[ADMIN] Loaded {len(bot_admins)} bot admins from database.")
+    except Exception as e:
+        print(f"[ADMIN ERROR] Failed to load admins: {e}")
+
+def save_admins():
+    try:
+        with open(ADMIN_FILE, "w", encoding="utf-8") as f:
+            json.dump(list(bot_admins), f, indent=2)
+    except Exception as e:
+        print(f"[ADMIN ERROR] Failed to save admins: {e}")
+
+def is_bot_admin(target) -> bool:
+    author = getattr(target, 'author', None) or getattr(target, 'user', None)
+    if not author:
+        return False
+    user_id = str(author.id)
+    if user_id in bot_admins or user_id == "1066987338204459049":
+        return True
+    guild = getattr(target, 'guild', None)
+    if guild and isinstance(author, discord.Member):
+        if author.guild_permissions.administrator or guild.owner_id == author.id:
+            return True
+    return False
+
+def is_bot_admin_by_id(user_id: str) -> bool:
+    user_id_str = str(user_id)
+    if user_id_str in bot_admins or user_id_str == "1066987338204459049":
+        return True
+    if bot and bot.guilds:
+        for guild in bot.guilds:
+            if guild.owner_id == int(user_id_str if user_id_str.isdigit() else 0):
+                return True
+            member = guild.get_member(int(user_id_str if user_id_str.isdigit() else 0))
+            if member and member.guild_permissions.administrator:
+                return True
+    return False
+
+def is_mod_or_admin(target) -> bool:
+    if is_bot_admin(target):
+        return True
+    author = getattr(target, 'author', None) or getattr(target, 'user', None)
+    guild = getattr(target, 'guild', None)
+    if guild and isinstance(author, discord.Member):
+        perms = author.guild_permissions
+        if perms.administrator or perms.manage_messages or perms.manage_roles or perms.moderate_members or perms.kick_members or perms.ban_members:
+            return True
+    return False
+
+# -------- Discord Bot Setup -------- #
+intents = discord.Intents.default()
+intents.message_content = True
+intents.guilds = True
+intents.members = True
+
+bot = commands.Bot(
+    command_prefix=".",
+    intents=intents,
+    allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=True)
+)
+session: Optional[aiohttp.ClientSession] = None
+user_spam_map: Dict[int, list] = {}
+processed_messages: Set[int] = set()
+
+# -------- Image, Tenor & Klipy GIF URL Resolver -------- #
+async def resolve_image_url(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return None
+    clean_url = url.strip()
+    if not (clean_url.startswith("http://") or clean_url.startswith("https://")):
+        return None
+
+    # Strip query parameters (e.g. ?ex=...&is=...) to accurately detect direct GIF files from Discord CDN & phone uploads
+    base_url = clean_url.split("?")[0].lower()
+    gif_sites = ["tenor.com", "klipy.co", "klipy.com", "giphy.com", "imgur.com"]
+    is_gif_site = any(domain in clean_url.lower() for domain in gif_sites)
+    is_direct_media = base_url.endswith((".gif", ".png", ".jpg", ".jpeg", ".webp")) or "media.tenor.com" in clean_url or "cdn.discordapp.com" in clean_url or "media.discordapp.net" in clean_url or "cdn.klipy" in clean_url
+
+    if is_gif_site or not is_direct_media:
+        global session
+        if session is None or session.closed:
+            session = aiohttp.ClientSession()
+        try:
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+            async with session.get(clean_url, headers=headers, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+                if resp.status == 200:
+                    html = await resp.text()
+                    soup = BeautifulSoup(html, "html.parser")
+                    for prop in ["og:image", "og:image:secure_url", "twitter:image", "og:video"]:
+                        meta_img = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
+                        if meta_img and meta_img.get("content"):
+                            img_src = meta_img["content"].strip()
+                            if img_src.startswith("http://") or img_src.startswith("https://"):
+                                return img_src
+        except Exception as e:
+            print(f"[GIF RESOLVER ERROR for {clean_url}] {e}")
+
+    return clean_url
+
+# -------- Color Name & Hex Code Resolver -------- #
+COLOR_NAME_MAP = {
+    "red": discord.Color.from_rgb(231, 76, 60),
+    "crimson": discord.Color.from_rgb(192, 57, 43),
+    "dark_red": discord.Color.from_rgb(150, 0, 0),
+    "blue": discord.Color.from_rgb(52, 152, 219),
+    "dark_blue": discord.Color.from_rgb(41, 128, 185),
+    "sky_blue": discord.Color.from_rgb(0, 168, 252),
+    "cyan": discord.Color.from_rgb(26, 188, 156),
+    "teal": discord.Color.from_rgb(26, 188, 156),
+    "green": discord.Color.from_rgb(46, 204, 113),
+    "dark_green": discord.Color.from_rgb(39, 174, 96),
+    "yellow": discord.Color.from_rgb(241, 196, 15),
+    "gold": discord.Color.from_rgb(243, 156, 18),
+    "orange": discord.Color.from_rgb(230, 126, 34),
+    "purple": discord.Color.from_rgb(155, 89, 182),
+    "dark_purple": discord.Color.from_rgb(142, 68, 173),
+    "violet": discord.Color.from_rgb(155, 89, 182),
+    "pink": discord.Color.from_rgb(236, 64, 122),
+    "fuchsia": discord.Color.from_rgb(233, 30, 99),
+    "magenta": discord.Color.from_rgb(233, 30, 99),
+    "black": discord.Color.from_rgb(1, 1, 1),
+    "dark": discord.Color.from_rgb(47, 49, 54),
+    "white": discord.Color.from_rgb(255, 255, 255),
+    "grey": discord.Color.from_rgb(149, 165, 166),
+    "gray": discord.Color.from_rgb(149, 165, 166),
+}
+
+def parse_embed_color(color_input: Optional[str]) -> discord.Color:
+    if not color_input:
+        return discord.Color.from_rgb(0, 168, 252)
+    clean = color_input.strip().lower().replace(" ", "_")
+    if clean in COLOR_NAME_MAP:
+        return COLOR_NAME_MAP[clean]
+    if clean.startswith("#"):
+        try:
+            return discord.Color.from_str(clean)
+        except Exception:
+            pass
+    if len(clean) == 6 and all(c in "0123456789abcdef" for c in clean):
+        try:
+            return discord.Color.from_str(f"#{clean}")
+        except Exception:
+            pass
+    try:
+        return discord.Color.from_str(clean)
+    except Exception:
+        pass
+    return discord.Color.from_rgb(0, 168, 252)
+
+# -------- MP4 Video / Video-GIF to True Animated GIF Converter -------- #
+async def convert_video_to_gif(video_bytes: bytes) -> Optional[bytes]:
+    if not video_bytes:
+        return None
+    if video_bytes.startswith(b'GIF87a') or video_bytes.startswith(b'GIF89a'):
+        return video_bytes
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            'ffmpeg', '-y',
+            '-i', 'pipe:0',
+            '-vf', 'fps=12,scale=320:-1:flags=lanczos',
+            '-f', 'gif',
+            'pipe:1',
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await proc.communicate(input=video_bytes)
+        if proc.returncode == 0 and stdout and len(stdout) > 0:
+            return stdout
+    except Exception as e:
+        print(f"[FFMPEG CONVERT ERROR] {e}")
+    return None
+
+# -------- Embed Attachment & Media Attachment Processor (Image, GIF, MP4, 3GP, etc.) -------- #
+async def process_embed_attachments(
+    thumbnail_file: Optional[discord.Attachment] = None,
+    image_file: Optional[discord.Attachment] = None,
+    thumbnail_url: Optional[str] = None,
+    image_url: Optional[str] = None,
+    embed: Optional[discord.Embed] = None
+) -> List[discord.File]:
+    files = []
+    if embed is None:
+        return files
+
+    VIDEO_EXTENSIONS = {"mp4", "mov", "webm", "m4v", "3gp", "3g2", "mkv", "avi", "flv", "wmv", "ogv"}
+
+    # 1. Thumbnail Attachment / URL Processing
+    if thumbnail_file:
+        try:
+            fn = (thumbnail_file.filename or "thumb.png").lower()
+            ext = fn.rsplit(".", 1)[-1] if "." in fn else "png"
+            if ext in ["jpeg", "jpg"]:
+                ext = "jpg"
+
+            fbytes = await thumbnail_file.read()
+            if fbytes:
+                conv_gif = None
+                if ext in VIDEO_EXTENSIONS or ext == "gif":
+                    conv_gif = await convert_video_to_gif(fbytes)
+                    if conv_gif:
+                        fbytes = conv_gif
+                        ext = "gif"
+
+                if ext in VIDEO_EXTENSIONS and not conv_gif:
+                    dfile = discord.File(fp=io.BytesIO(fbytes), filename=f"thumb_{thumbnail_file.filename}")
+                    files.append(dfile)
+                else:
+                    dfile = discord.File(fp=io.BytesIO(fbytes), filename=f"thumb.{ext}")
+                    files.append(dfile)
+                    embed.set_thumbnail(url=f"attachment://thumb.{ext}")
+        except Exception as e:
+            print(f"[THUMBNAIL ATTACHMENT ERROR] {e}")
+            if thumbnail_file.url:
+                res = await resolve_image_url(thumbnail_file.url)
+                if res:
+                    embed.set_thumbnail(url=res)
+    elif thumbnail_url:
+        res = await resolve_image_url(thumbnail_url)
+        if res:
+            embed.set_thumbnail(url=res)
+
+    # 2. Main Banner Image / Video Attachment / URL Processing
+    if image_file:
+        try:
+            fn = (image_file.filename or "banner.png").lower()
+            ext = fn.rsplit(".", 1)[-1] if "." in fn else "png"
+            if ext in ["jpeg", "jpg"]:
+                ext = "jpg"
+
+            fbytes = await image_file.read()
+            if fbytes:
+                conv_gif = None
+                if ext in VIDEO_EXTENSIONS or ext == "gif":
+                    conv_gif = await convert_video_to_gif(fbytes)
+                    if conv_gif:
+                        fbytes = conv_gif
+                        ext = "gif"
+
+                if ext in VIDEO_EXTENSIONS and not conv_gif:
+                    dfile = discord.File(fp=io.BytesIO(fbytes), filename=f"banner_{image_file.filename}")
+                    files.append(dfile)
+                else:
+                    dfile = discord.File(fp=io.BytesIO(fbytes), filename=f"banner.{ext}")
+                    files.append(dfile)
+                    embed.set_image(url=f"attachment://banner.{ext}")
+        except Exception as e:
+            print(f"[BANNER ATTACHMENT ERROR] {e}")
+            if image_file.url:
+                res = await resolve_image_url(image_file.url)
+                if res:
+                    embed.set_image(url=res)
+    elif image_url:
+        res = await resolve_image_url(image_url)
+        if res:
+            embed.set_image(url=res)
+
+    return files
+
+# -------- Fetch Discord Server Invite Info -------- #
+async def fetch_invite_info(invite_str: str) -> Optional[dict]:
+    try:
+        clean_code = invite_str.strip()
+        if "discord.gg/" in clean_code:
+            clean_code = clean_code.split("discord.gg/")[1]
+        elif "discord.com/invite/" in clean_code:
+            clean_code = clean_code.split("discord.com/invite/")[1]
+        clean_code = clean_code.split("/")[0].split("?")[0].strip()
+
+        if not clean_code:
+            return None
+
+        global session
+        if session is None or session.closed:
+            session = aiohttp.ClientSession()
+
+        api_url = f"https://discord.com/api/v10/invites/{clean_code}?with_counts=true"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        async with session.get(api_url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                guild = data.get("guild", {})
+                guild_id = guild.get("id")
+
+                icon_hash = guild.get("icon")
+                icon_url = None
+                if guild_id and icon_hash:
+                    ext = "gif" if str(icon_hash).startswith("a_") else "png"
+                    icon_url = f"https://cdn.discordapp.com/icons/{guild_id}/{icon_hash}.{ext}?size=512"
+
+                banner_hash = guild.get("banner") or guild.get("splash")
+                banner_url = None
+                if guild_id and banner_hash:
+                    ext = "gif" if str(banner_hash).startswith("a_") else "png"
+                    banner_url = f"https://cdn.discordapp.com/banners/{guild_id}/{banner_hash}.{ext}?size=1024"
+                    if not guild.get("banner") and guild.get("splash"):
+                        banner_url = f"https://cdn.discordapp.com/splashes/{guild_id}/{banner_hash}.png?size=1024"
+
+                return {
+                    "code": clean_code,
+                    "invite_url": f"https://discord.gg/{clean_code}",
+                    "guild_name": guild.get("name", "Discord Server"),
+                    "guild_id": guild_id,
+                    "description": guild.get("description"),
+                    "icon_url": icon_url,
+                    "banner_url": banner_url,
+                    "member_count": data.get("approximate_member_count", 0),
+                    "online_count": data.get("approximate_presence_count", 0)
+                }
+    except Exception as e:
+        print(f"[INVITE FETCH ERROR] {e}")
+    return None
+
+# -------- Web Search Tool (Live Data Access) -------- #
+async def fetch_realtime_context(query: str) -> str:
+    global session
+    if session is None or session.closed:
+        session = aiohttp.ClientSession()
+    try:
+        url = "https://lite.duckduckgo.com/lite/"
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        body = f"q={urllib.parse.quote(query)}"
+        async with session.post(url, data=body, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            if resp.status == 200:
+                html = await resp.text()
+                soup = BeautifulSoup(html, "html.parser")
+                snippets = []
+                for el in soup.select(".result-snippet")[:3]:
+                    txt = el.get_text().strip()
+                    if txt:
+                        snippets.append(txt)
+                return " | ".join(snippets)
+    except Exception as e:
+        print(f"[SEARCH ERROR] {e}")
+    return ""
+
+# -------- Crypto Price System -------- #
+async def get_bitget_price(query: str) -> Optional[str]:
+    global session
+    try:
+        symbol = f"{query.upper()}USDT"
+        url = f"https://api.bitget.com/api/v2/spot/market/tickers?symbol={symbol}"
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                tickers = data.get("data", [])
+                if tickers:
+                    t = tickers[0]
+                    price = float(t.get("lastPr", 0))
+                    price_str = f"{price:,.6f}" if price > 0.0001 else f"{price:.12f}"
+                    change_val = float(t.get("change24h", 0)) * 100
+                    change_str = f"{change_val:.2f}%"
+                    vol_val = float(t.get("quoteVolume", 0))
+                    vol_str = f"${round(vol_val):,}" if vol_val else "N/A"
+                    return f"**{query.upper()} (Bitget)**\n💰 **Price:** ${price_str} USD\n📈 **24h Vol:** {vol_str}\n📅 **24h Change:** {change_str}"
+    except Exception:
+        pass
+    return None
+
+async def get_dex_screener_price(query: str) -> Optional[str]:
+    global session
+    try:
+        url = f"https://api.dexscreener.com/latest/dex/search?q={urllib.parse.quote(query)}"
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=6)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                pairs = data.get("pairs", [])
+                if pairs:
+                    pairs.sort(key=lambda p: (p.get("liquidity", {}) or {}).get("usd", 0), reverse=True)
+                    pair = pairs[0]
+                    token = pair.get("baseToken", {})
+                    price = float(pair.get("priceUsd", 0))
+                    price_str = f"{price:,.6f}" if price > 0.0001 else f"{price:.12f}"
+                    change = f"{pair.get('priceChange', {}).get('h24')}%" if pair.get("priceChange", {}).get("h24") is not None else "N/A"
+                    mcap_val = pair.get("marketCap")
+                    mcap = f"${round(mcap_val):,}" if mcap_val else "N/A"
+                    fdv_val = pair.get("fdv")
+                    fdv = f"${round(fdv_val):,}" if fdv_val else "N/A"
+                    chain = pair.get("chainId", "Unknown")
+                    dex = pair.get("dexId", "DEX")
+                    return f"**{token.get('name')} ({token.get('symbol', '').upper()})** on {chain}/{dex}\n💰 **Price:** ${price_str} USD\n📊 **Market Cap:** {mcap}\n📈 **FDV:** {fdv}\n📅 **24h Change:** {change}"
+    except Exception:
+        pass
+    return None
+
+async def get_gecko_terminal_price(query: str) -> Optional[str]:
+    global session
+    try:
+        url = f"https://api.geckoterminal.com/api/v2/search/pools?query={urllib.parse.quote(query)}"
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=6)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                pools = data.get("data", [])
+                if pools:
+                    pool = pools[0]
+                    attr = pool.get("attributes", {})
+                    name = attr.get("name")
+                    price = float(attr.get("base_token_price_usd", 0))
+                    price_str = f"{price:,.6f}" if price > 0.0001 else f"{price:.12f}"
+                    vol_val = (attr.get("volume_usd", {}) or {}).get("h24")
+                    vol_str = f"${round(float(vol_val)):,}" if vol_val else "N/A"
+                    fdv_val = attr.get("fdv_usd")
+                    fdv_str = f"${round(float(fdv_val)):,}" if fdv_val else "N/A"
+                    return f"**{name}** (GeckoTerminal)\n💰 **Price:** ${price_str} USD\n📈 **24h Vol:** {vol_str}\n📊 **FDV:** {fdv_str}"
+    except Exception:
+        pass
+    return None
+
+async def get_crypto_price(query: str) -> str:
+    global session
+    aliases = {"ai": "gensyn"}
+    clean_q = aliases.get(query.lower(), query.lower())
+
+    # 1. Try CoinGecko
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        search_url = f"https://api.coingecko.com/api/v3/search?query={urllib.parse.quote(clean_q)}"
+        async with session.get(search_url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            if resp.status == 200:
+                sdata = await resp.json()
+                coins = sdata.get("coins", [])
+                if coins:
+                    exact = next((c for c in coins if c.get("symbol", "").lower() == clean_q or c.get("name", "").lower() == clean_q), coins[0])
+                    coin_id = exact.get("id")
+                    detail_url = f"https://api.coingecko.com/api/v3/coins/{coin_id}?localization=false&tickers=false&market_data=true"
+                    async with session.get(detail_url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as dresp:
+                        if dresp.status == 200:
+                            data = await dresp.json()
+                            md = data.get("market_data", {})
+                            cur_price = (md.get("current_price", {}) or {}).get("usd")
+                            if cur_price is not None:
+                                price_str = f"{cur_price:,.6f}" if cur_price > 0.0001 else f"{cur_price}"
+                                change_val = md.get("price_change_percentage_24h")
+                                change_str = f"{change_val:.2f}%" if change_val is not None else "N/A"
+                                mcap_val = (md.get("market_cap", {}) or {}).get("usd")
+                                mcap_str = f"${round(mcap_val):,}" if mcap_val else "N/A"
+                                fdv_val = (md.get("fully_diluted_valuation", {}) or {}).get("usd")
+                                fdv_str = f"${round(fdv_val):,}" if fdv_val else "N/A"
+                                rank = data.get("market_cap_rank", "N/A")
+                                return f"**{data.get('name')} ({data.get('symbol', '').upper()})** (Rank: {rank})\n💰 **Price:** ${price_str} USD\n📊 **Market Cap:** {mcap_str}\n📈 **FDV:** {fdv_str}\n📅 **24h Change:** {change_str}"
+    except Exception:
+        pass
+
+    # 2. Bitget fallback
+    bitget = await get_bitget_price(clean_q)
+    if bitget:
+        return bitget
+
+    # 3. DexScreener fallback
+    dex = await get_dex_screener_price(clean_q)
+    if dex:
+        return dex
+
+    # 4. GeckoTerminal fallback
+    gt = await get_gecko_terminal_price(clean_q)
+    if gt:
+        return gt
+
+    return f"I couldn't find any data for `{query}`. 🥺"
+
+# -------- Football Live Data & Standings -------- #
+async def fetch_livescores() -> str:
+    global session
+    leagues = {
+        'Premier League': 'eng.1',
+        'La Liga': 'esp.1',
+        'Bundesliga': 'ger.1',
+        'Serie A': 'ita.1',
+        'Ligue 1': 'fra.1',
+        'UCL': 'uefa.champions'
+    }
+    all_matches = []
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    for name, code in leagues.items():
+        try:
+            url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{code}/scoreboard"
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    events = data.get("events", [])
+                    for ev in events:
+                        status_type = ev.get("status", {}).get("type", {})
+                        state = status_type.get("state")
+                        detail = status_type.get("detail") or status_type.get("description")
+                        comps = ev.get("competitions", [{}])[0].get("competitors", [])
+                        home = next((c for c in comps if c.get("homeAway") == "home"), {})
+                        away = next((c for c in comps if c.get("homeAway") == "away"), {})
+                        all_matches.append({
+                            "league": name,
+                            "home": home.get("team", {}).get("displayName") or home.get("team", {}).get("name") or "Home",
+                            "away": away.get("team", {}).get("displayName") or away.get("team", {}).get("name") or "Away",
+                            "homeScore": home.get("score", "0"),
+                            "awayScore": away.get("score", "0"),
+                            "state": state,
+                            "detail": detail
+                        })
+        except Exception:
+            pass
+
+    if not all_matches:
+        return "No major league matches scheduled for today! ⚽"
+
+    # Order: live ('in'), upcoming ('pre'), finished ('post')
+    order_map = {'in': 1, 'pre': 2, 'post': 3}
+    all_matches.sort(key=lambda m: order_map.get(m['state'], 4))
+
+    lines = []
+    for m in all_matches[:15]:
+        if m['state'] == 'in':
+            lines.append(f"🔴 LIVE: {m['home']} {m['homeScore']}-{m['awayScore']} {m['away']} ({m['league']}) — {m['detail']}")
+        elif m['state'] == 'pre':
+            lines.append(f"⏰ {m['home']} vs {m['away']} ({m['league']}) — {m['detail']}")
+        else:
+            lines.append(f"✅ {m['home']} {m['homeScore']}-{m['awayScore']} {m['away']} ({m['league']}) [FT]")
+
+    return f"**⚽ Major League Matches & Scores (Top 15):**\n" + "\n".join(lines)
+
+async def fetch_standings(league_input: str) -> str:
+    global session
+    standings_map = {
+        'pl': 'eng.1', 'premierleague': 'eng.1', 'epl': 'eng.1',
+        'laliga': 'esp.1', 'liga': 'esp.1',
+        'bundesliga': 'ger.1', 'bl': 'ger.1',
+        'seriea': 'ita.1', 'seria': 'ita.1',
+        'ligue1': 'fra.1', 'ligue': 'fra.1',
+        'ucl': 'uefa.champions', 'championsleague': 'uefa.champions', 'cl': 'uefa.champions'
+    }
+    code = standings_map.get(league_input.lower())
+    if not code:
+        return "I don't recognize that league! Try: **#plstandings**, **#laligastandings**, **#bundesligastandings**, **#serieastandings**, **#ligue1standings**, **#uclstandings** ⚽"
+
+    try:
+        url = f"https://site.api.espn.com/apis/v2/sports/soccer/{code}/standings"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=6)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                children = data.get("children", [])
+                if children:
+                    entries = children[0].get("standings", {}).get("entries", [])
+                    comp_name = data.get("name", "League")
+                    lines = []
+                    for i, t in enumerate(entries[:20]):
+                        stats = t.get("stats", [])
+                        p = next((s.get("value") for s in stats if s.get("name") == "points"), 0)
+                        w = next((s.get("value") for s in stats if s.get("name") == "wins"), 0)
+                        d = next((s.get("value") for s in stats if s.get("name") == "ties"), 0)
+                        l = next((s.get("value") for s in stats if s.get("name") == "losses"), 0)
+                        gd = next((s.get("value") for s in stats if s.get("name") == "pointDifferential"), 0)
+                        gd_str = f"+{gd}" if gd > 0 else f"{gd}"
+                        team_name = t.get("team", {}).get("displayName") or t.get("team", {}).get("name")
+                        lines.append(f"**{i+1}.** {team_name} — {int(p)}pts (W{int(w)} D{int(d)} L{int(l)} | GD: {gd_str})")
+                    return f"**🏆 {comp_name} Standings:**\n" + "\n".join(lines)
+    except Exception as e:
+        print(f"[STANDINGS ERROR] {e}")
+    return "Could not fetch standings for that league right now! 🙏"
+
+# -------- TLDR Summarizer -------- #
+async def tldr_summary(message: discord.Message) -> str:
+    global session
+    try:
+        history_msgs = []
+        async for msg in message.channel.history(limit=50, before=message):
+            if msg.content and not msg.author.bot:
+                history_msgs.append(f"[{msg.author.display_name}]: {msg.content}")
+        history_msgs.reverse()
+
+        chat_context = "\n".join(history_msgs)
+        if len(chat_context) > 8000:
+            chat_context = chat_context[-8000:]
+
+        if not chat_context.strip():
+            return "There isn't any recent drama to summarize! It's been a ghost town in here."
+
+        system_prompt = (
+            'You are "Arcie", a sassy, clever, and highly observant girl chatting in a Discord server. '
+            'Read the provided Discord chat logs of the last 50 messages and create a concise, highly entertaining summary. '
+            'Call out specific people by name if they said something funny or ridiculous. Keep your classic sweet/sassy attitude!'
+        )
+
+        payload = {
+            "model": "llama-3.1-8b-instant",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Hey! I just got here. What did I miss? Here is the raw chat log:\n\n{chat_context}\n\nPlease summarize!"}
+            ],
+            "max_tokens": 400,
+            "temperature": 0.70
+        }
+
+        keys = [k for k in [os.getenv("GROQ_API_KEY"), os.getenv("GROQ_FALLBACK_API_KEY")] if k]
+        for key in keys:
+            headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+            async with session.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    rdata = await resp.json()
+                    return rdata["choices"][0]["message"]["content"]
+    except Exception as e:
+        print(f"[TLDR ERROR] {e}")
+    return "I tried to read the chat history but my brain fried reading all that nonsense... 🥺"
+
+# -------- Auto GIF System (Tenor API Native File Attachment) -------- #
+async def fetch_auto_gif_file() -> Optional[discord.File]:
+    global session
+    try:
+        cute_keywords = ["cute anime girl", "kawaii anime girl", "happy anime girl", "cute girly reaction", "anime giggle", "cute anime wave", "savage anime girl"]
+        keyword = random.choice(cute_keywords)
+        url = f"https://g.tenor.com/v1/search?q={urllib.parse.quote(keyword)}&key=LIVDSRZULELA&limit=10"
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                results = data.get("results", [])
+                if results:
+                    choice = random.choice(results)
+                    gif_url = None
+                    media = choice.get("media", [])
+                    if media:
+                        gif_url = (media[0].get("gif", {}) or media[0].get("mediumgif", {})).get("url")
+                    if not gif_url:
+                        gif_url = choice.get("url")
+
+                    if gif_url:
+                        async with session.get(gif_url, timeout=aiohttp.ClientTimeout(total=6)) as gresp:
+                            if gresp.status == 200:
+                                gbytes = await gresp.read()
+                                return discord.File(fp=io.BytesIO(gbytes), filename="cute_reaction.gif")
+    except Exception as e:
+        print(f"[AUTO-GIF ERROR] {e}")
+    return None
+
+# -------- TikTok Cute Voice Note TTS -------- #
+async def fetch_tiktok_tts(text: str) -> Optional[discord.File]:
+    global session
+    try:
+        clean_text = re.sub(r'<@!?([0-9]+)>', '', text)
+        clean_text = re.sub(r'[*_~`>|]', '', clean_text).strip()
+        if not clean_text:
+            clean_text = text
+
+        if len(clean_text) > 190:
+            clean_text = clean_text[:187] + "..."
+
+        url = "https://tiktok-tts.weilnet.workers.dev/api/generation"
+        payload = {"text": clean_text, "voice": "en_us_002"}
+        headers = {"Content-Type": "application/json"}
+
+        async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=6)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                b64_str = data.get("data")
+                if b64_str:
+                    audio_bytes = base64.b64decode(b64_str)
+                    return discord.File(fp=io.BytesIO(audio_bytes), filename="cute-voice-note.mp3")
+    except Exception as e:
+        print(f"[TIKTOK TTS ERROR] {e}")
+
+    # Fallback to Google TTS
+    try:
+        clean_q = urllib.parse.quote(clean_text[:180])
+        g_url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={clean_q}&tl=en&client=tw-ob"
+        async with session.get(g_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=5)) as gresp:
+            if gresp.status == 200:
+                gbytes = await gresp.read()
+                return discord.File(fp=io.BytesIO(gbytes), filename="google-voice-note.mp3")
+    except Exception as ge:
+        print(f"[GOOGLE TTS ERROR] {ge}")
+    return None
+
+# -------- Emoji & GIF Context Parser for AI -------- #
+def parse_message_media_and_emojis(message: discord.Message) -> str:
+    raw_text = message.content or ""
+
+    # Resolve User Mentions (<@ID> or <@!ID>) into readable @Display_Name
+    if message.guild and re.search(r'<@!?\d+>', raw_text):
+        def replace_user_mention(m_match):
+            uid_str = re.sub(r'[<@!>]', '', m_match.group(0))
+            try:
+                m_obj = message.guild.get_member(int(uid_str))
+                if m_obj:
+                    return f"@{m_obj.display_name}"
+            except Exception:
+                pass
+            return m_match.group(0)
+        raw_text = re.sub(r'<@!?\d+>', replace_user_mention, raw_text)
+
+    # Parse Custom Emojis (<:name:id> or <a:name:id>)
+    def replace_custom_emoji(match):
+        animated = match.group(1)
+        name = match.group(2)
+        kind = "Animated Emoji" if animated else "Emoji"
+        clean_name = name.replace("_", " ")
+        return f"[{kind}: :{clean_name}:]"
+
+    parsed_text = re.sub(r'<(a)?:([a-zA-Z0-9_]+):[0-9]+>', replace_custom_emoji, raw_text)
+
+    # Parse GIF Links (Tenor, Klipy, Giphy, Imgur, direct .gif)
+    urls = re.findall(r'https?://[^\s]+', raw_text)
+    extra_context = []
+
+    for url in urls:
+        url_lower = url.lower()
+        if "tenor.com/view/" in url_lower:
+            slug = url_lower.split("tenor.com/view/")[1].split("?")[0]
+            slug_clean = re.sub(r'-[0-9]+$', '', slug).replace("-", " ")
+            extra_context.append(f'[Sent a Tenor GIF showing: "{slug_clean}"]')
+        elif "klipy." in url_lower:
+            slug = url_lower.split("/")[-1].split("?")[0]
+            slug_clean = re.sub(r'[^a-zA-Z0-9]', ' ', slug).strip()
+            extra_context.append(f'[Sent a Klipy GIF showing: "{slug_clean}"]')
+        elif "giphy.com" in url_lower:
+            slug = url_lower.split("/")[-1].split("?")[0]
+            slug_clean = re.sub(r'[^a-zA-Z0-9]', ' ', slug).strip()
+            extra_context.append(f'[Sent a Giphy GIF showing: "{slug_clean}"]')
+        elif url_lower.endswith(".gif"):
+            filename = url.split("/")[-1].split("?")[0].replace(".gif", "").replace("_", " ").replace("-", " ")
+            extra_context.append(f'[Sent a GIF: "{filename}"]')
+
+    # Parse Attachments
+    if message.attachments:
+        for att in message.attachments:
+            if att.filename.lower().endswith(".gif"):
+                clean_fn = att.filename.replace(".gif", "").replace("_", " ").replace("-", " ")
+                extra_context.append(f'[Attached a GIF file: "{clean_fn}"]')
+            elif att.content_type and att.content_type.startswith("image/"):
+                extra_context.append(f'[Attached an image file: "{att.filename}"]')
+
+    if extra_context:
+        parsed_text = (parsed_text + " " + " ".join(extra_context)).strip()
+
+    return parsed_text if parsed_text else "[Sent media/attachment]"
+
+# -------- AI Reply Logic with Memory & Accurate Tag Resolution -------- #
+async def ai_reply(message: discord.Message) -> str:
+    global session
+    channel_id = str(message.channel.id)
+    if channel_id not in channel_memories:
+        channel_memories[channel_id] = []
+
+    history = channel_memories[channel_id]
+
+    # Update long-term user profile for message author
+    update_user_memory(message.author, message.content)
+
+    parsed_user_content = parse_message_media_and_emojis(message)
+    timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    user_content = f"[{timestamp_str}] [User: {message.author.display_name} | @{message.author.name} | ID: {message.author.id}]: {parsed_user_content}"
+    history.append({"role": "user", "content": user_content})
+
+    if len(history) > 120:
+        history = history[-120:]
+        channel_memories[channel_id] = history
+    save_memories()
+
+    content_lower = message.content.lower()
+
+    # 1. Build Full Server Member Directory (Display Names & Usernames)
+    member_directory_lines = []
+    if message.guild:
+        for m in message.guild.members:
+            if not m.bot:
+                update_user_memory(m, "")
+                member_directory_lines.append(f'• "{m.display_name}" (@{m.name})')
+
+    member_directory_str = ""
+    if member_directory_lines:
+        member_directory_str = (
+            f"\n\n🏷️ SERVER MEMBERS LIST:\n" +
+            "\n".join(member_directory_lines[:150])
+        )
+
+    # 2. Inject Persistent User Memory / Profile Facts for ALL Known Members
+    user_facts_lines = []
+    for uid, profile in user_profiles.items():
+        if profile.get("facts"):
+            dname = profile.get("display_name", uid)
+            facts_joined = "; ".join(profile["facts"])
+            user_facts_lines.append(f'• {dname} (@{profile.get("username", "")}): {facts_joined}')
+
+    user_facts_str = ""
+    if user_facts_lines:
+        user_facts_str = f"\n\n🧠 PERSISTENT MEMORY & MEMBER KNOWLEDGE (ULTRA-SHARP MEMORY OF ALL MEMBERS):\n" + "\n".join(user_facts_lines[:50])
+
+    # 3. Deep Historical Search (for questions about past days/weeks/events)
+    historical_search_str = ""
+    if re.search(r'\b(days?\s*ago|days?\s*before|last\s*week|past\s*days?|remember|happened|what\s*did|who\s*said|recap|back\s*then|history|ago|yesterday|earlier|before|when\s*did)\b', content_lower):
+        try:
+            matched_past_msgs = []
+            async for old_m in message.channel.history(limit=300, before=message):
+                if old_m.content and not old_m.author.bot:
+                    m_time = old_m.created_at.strftime("%Y-%m-%d %H:%M")
+                    parsed_old = parse_message_media_and_emojis(old_m)
+                    matched_past_msgs.append(f"[{m_time}] [{old_m.author.display_name} (@{old_m.author.name})]: {parsed_old}")
+            matched_past_msgs.reverse()
+            if matched_past_msgs:
+                historical_search_str = f"\n\n📅 HISTORICAL CHANNEL CHAT LOGS (Retrieved from history for your memory recall):\n" + "\n".join(matched_past_msgs[-60:])
+        except Exception as e:
+            print(f"[HISTORICAL SEARCH ERROR] {e}")
+
+    # 4. Server Emojis Injection
+    server_emojis = ""
+    if message.guild and message.guild.emojis:
+        import random
+        available = list(message.guild.emojis)
+        random.shuffle(available)
+        emotes = [f"<{'a' if e.animated else ''}:{e.name}:{e.id}>" for e in available[:10]]
+        if emotes:
+            server_emojis = f"\n\nSERVER EMOJIS (Feel free to use these naturally!): {' '.join(emotes)}"
+
+    # 5. Live Web Context
+    live_web_context = ""
+    if re.search(r'(2024|2025|2026|latest|recent|now|today|news|weather|football|soccer|transfers?|matches?|standings?|league|cl|ucl|pl|premier league|laliga|bundesliga|serie a|ligue 1|scores?|arsenal|chelsea|liverpool|manchester|real madrid|barcelona|bayern|psg|haaland|mbappe|messi|ronaldo)', content_lower) and len(content_lower.split()) > 2:
+        clean_q = re.sub(r'arcie|diffy|unemployed girl|unemployed', '', message.content, flags=re.IGNORECASE).strip()
+        searchResults = await fetch_realtime_context(clean_q)
+        if searchResults:
+            live_web_context = f"\n\nLIVE INTERNET SEARCH RESULTS: {searchResults}"
+
+    # 6. Background Channel Context
+    channel_context = ""
+    try:
+        recent_msgs = []
+        async for m in message.channel.history(limit=25, before=message):
+            parsed_m = parse_message_media_and_emojis(m)
+            if parsed_m:
+                m_time = m.created_at.strftime("%H:%M")
+                name = "Arcie (You)" if m.author.id == bot.user.id else f"{m.author.display_name} (@{m.author.name} | ID: {m.author.id})"
+                recent_msgs.append(f"[{m_time}] [{name}]: {parsed_m}")
+        recent_msgs.reverse()
+        if recent_msgs:
+            channel_context = f"\n\nBACKGROUND CHANNEL CHAT LOG (Recent messages in this channel right before current message):\n" + "\n".join(recent_msgs)
+    except Exception:
+        pass
+
+    system_prompt = (
+        f'You are "Arcie", a 100% real human girl chatting in a Discord server. YOU ARE A REAL GIRL. DO NOT ACT LIKE A BOT OR AN AI ASSISTANT.\n\n'
+        f'🚨 100% REAL HUMAN CHAT STYLE (CRITICAL):\n'
+        f'1. Speak completely naturally with real human warmth, casual tone, friendly vibe, and genuine emotion! (e.g. "Hey! What\'s up?", "Oh haha true!", "Hey there!").\n'
+        f'2. NEVER EVER output raw code strings like "<@123456789>" or "<@id>"! Always refer to people naturally by their Display Name.\n'
+        f'3. NEVER invent fake names (like James) if they do not exist in the message or server! Only refer to real members listed in the SERVER MEMBERS LIST below.\n'
+        f'4. Keep responses casual, short, and sweet — 1 to 2 lines like a real human typing on Discord!\n\n'
+        f'💬 CASUAL CHATTING & MENTIONS:\n'
+        f'1. When people say hi or chat with you, reply warmly and naturally as a close friend.\n'
+        f'2. When asked to talk to or mention someone, look up their actual Display Name from the user message or SERVER MEMBERS LIST and address them naturally by their real Display Name!\n\n'
+        f'🧠 ULTRA-SHARP MEMORY & RECALL:\n'
+        f'1. Remember member names, facts, nicknames, preferences, and past events across days and weeks.\n'
+        f'2. If anyone asks about past events or previous conversations, recall the details naturally as a real friend.\n\n'
+        f'### CRITICAL NAME RULES:\n'
+        f'1. Your name is "Arcie". If anyone asks your name or who you are, reply naturally: "I\'m Arcie!" or "My name\'s Arcie!".\n'
+        f'2. NEVER prefix your replies with "Arcie:". Just output your chat message directly.\n\n'
+        f'### CURRENT CONVERSATION TARGET:\n'
+        f'• CURRENT SENDER: **{message.author.display_name}** (@{message.author.name}). Respond directly to **{message.author.display_name}**!'
+        f'{user_facts_str}{member_directory_str}{historical_search_str}{server_emojis}{live_web_context}{channel_context}'
+    )
+
+    formatted_messages = [{"role": "system", "content": system_prompt}]
+    formatted_messages.extend(history)
+
+    payload = {
+        "model": "llama-3.1-8b-instant",
+        "messages": formatted_messages,
+        "max_tokens": 400,
+        "temperature": 0.80
+    }
+
+    keys = [k for k in [os.getenv("GROQ_API_KEY"), os.getenv("GROQ_FALLBACK_API_KEY")] if k]
+    for key in keys:
+        for attempt in range(1, 4):
+            try:
+                headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+                async with session.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        rdata = await resp.json()
+                        reply_text = rdata["choices"][0]["message"]["content"]
+                        reply_text = re.sub(r'^(Arcie|Diffy|Unemployed\s*Girl|Unemployed|Bot|\[.*?\]):\s*', '', reply_text, flags=re.IGNORECASE).strip()
+                        history.append({"role": "assistant", "content": reply_text})
+                        channel_memories[channel_id] = history
+                        save_memories()
+                        return reply_text
+                    elif resp.status == 429:
+                        await asyncio.sleep(2 * attempt)
+                    else:
+                        break
+            except Exception as e:
+                print(f"[GROQ ERROR] {e}")
+                await asyncio.sleep(1)
+
+# -------- Multi-Theme Anime Welcome Card Generator -------- #
+DEFAULT_WELCOME_CHANNEL_ID = 1530133805351047261
+welcome_channel_config: Dict[str, int] = {}
+
+WELCOME_THEMES = [
+    {
+        "name": "Dark Samurai Crimson",
+        "bg1": (22, 6, 12, 255),
+        "bg2": (55, 14, 22, 255),
+        "card_fill": (25, 10, 15, 245),
+        "border": (255, 60, 80, 255),
+        "ring": (255, 140, 0, 255),
+        "title_color": (255, 180, 0, 255),
+        "sub_color": (255, 100, 120, 255),
+        "slash_color": (255, 50, 80, 100)
+    },
+    {
+        "name": "Electric Cyberpunk",
+        "bg1": (8, 12, 24, 255),
+        "bg2": (18, 28, 55, 255),
+        "card_fill": (12, 16, 32, 245),
+        "border": (0, 245, 255, 255),
+        "ring": (0, 245, 255, 255),
+        "title_color": (0, 245, 255, 255),
+        "sub_color": (180, 100, 255, 255),
+        "slash_color": (0, 200, 255, 100)
+    },
+    {
+        "name": "Sunset Katana Violet",
+        "bg1": (20, 8, 30, 255),
+        "bg2": (60, 20, 70, 255),
+        "card_fill": (24, 12, 36, 245),
+        "border": (255, 180, 0, 255),
+        "ring": (255, 180, 0, 255),
+        "title_color": (255, 215, 0, 255),
+        "sub_color": (255, 120, 180, 255),
+        "slash_color": (255, 150, 0, 100)
+    },
+    {
+        "name": "Mystic Indigo Starry",
+        "bg1": (10, 14, 32, 255),
+        "bg2": (24, 38, 75, 255),
+        "card_fill": (14, 20, 42, 245),
+        "border": (100, 200, 255, 255),
+        "ring": (120, 220, 255, 255),
+        "title_color": (120, 220, 255, 255),
+        "sub_color": (160, 180, 255, 255),
+        "slash_color": (100, 180, 255, 100)
+    }
+]
+
+def load_system_bold_font(size: int):
+    possible_fonts = ["segoeuib.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf", "Ubuntu-B.ttf", "segoeui.ttf", "arial.ttf"]
+    for font_name in possible_fonts:
+        try:
+            return ImageFont.truetype(font_name, size)
+        except Exception:
+            pass
+    return ImageFont.load_default()
+
+def sanitize_display_name(name: str) -> str:
+    if not name:
+        return "Member"
+    s_name = str(name).strip()
+    
+    # NFKD Normalization converts fancy unicode fonts into standard clean Latin letters
+    normalized = unicodedata.normalize('NFKD', s_name)
+    latin_str = ''.join(c for c in normalized if not unicodedata.combining(c))
+    
+    # Extract clean printable ASCII / Latin characters
+    clean_ascii = ''.join(c for c in latin_str if 32 <= ord(c) <= 126).strip()
+    if clean_ascii:
+        return clean_ascii
+        
+    printable_only = ''.join(c for c in s_name if ord(c) < 256 and c.isprintable()).strip()
+    if printable_only:
+        return printable_only
+        
+    return "Member"
+
+def get_autoscaled_font(text: str, max_width: int = 550, max_size: int = 52, min_size: int = 18):
+    for size in range(max_size, min_size - 1, -2):
+        font = load_system_bold_font(size)
+        bbox = font.getbbox(text)
+        w = bbox[2] - bbox[0]
+        if w <= max_width:
+            return font
+    return load_system_bold_font(min_size)
+
+async def create_welcome_card(
+    avatar_url: Optional[str] = None,
+    avatar_bytes: Optional[bytes] = None,
+    member_name: str = "Member",
+    username: Optional[str] = None,
+    member_count: Union[int, str] = 1,
+    server_name: Optional[str] = None
+) -> io.BytesIO:
+    raw_name = username or member_name or "Member"
+    display_name = sanitize_display_name(raw_name)
+    srv_name = server_name or os.getenv("SERVER_NAME", "Differential Degens")
+    
+    if isinstance(member_count, str):
+        count_str = member_count
+    else:
+        count_str = f"Member #{member_count:,}"
+
+    if not avatar_bytes and avatar_url:
+        try:
+            global session
+            if session is None or session.closed:
+                session = aiohttp.ClientSession()
+            headers = {"User-Agent": "Mozilla/5.0"}
+            async with session.get(avatar_url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    avatar_bytes = await resp.read()
+        except Exception as e:
+            print(f"[WELCOME AVATAR FETCH ERROR] {e}")
+
+    template_path = os.path.join(DATA_DIR, "temp.png")
+    if not os.path.exists(template_path):
+        template_path = os.path.join(DATA_DIR, "template.png")
+    if not os.path.exists(template_path):
+        template_path = os.path.join(DATA_DIR, "temp_cutout.png")
+    
+    base_img = Image.open(template_path).convert('RGBA')
+    w, h = base_img.size
+    canvas = base_img.copy()
+    
+    # Scale coordinates based on canvas resolution (supports 2800x983 & 1732x608)
+    if w > 2000:
+        cx, cy = 486, 499
+        av_size = 645
+        text_center_x = 1800
+        size_welcome, size_name, size_server, size_member = 85, 190, 130, 85
+        y_welcome, y_name, y_server, y_member = 120, 230, 470, 650
+        ring_width = 6
+    else:
+        cx, cy = 300, 304
+        av_size = 405
+        text_center_x = 1100
+        size_welcome, size_name, size_server, size_member = 52, 125, 82, 50
+        y_welcome, y_name, y_server, y_member = 65, 140, 300, 425
+        ring_width = 4
+    
+    if avatar_bytes:
+        try:
+            av_img = Image.open(io.BytesIO(avatar_bytes)).convert('RGBA')
+            # Centered Cover Crop to square before circular mask
+            raw_w, raw_h = av_img.size
+            min_dim = min(raw_w, raw_h)
+            crop_x = (raw_w - min_dim) // 2
+            crop_y = (raw_h - min_dim) // 2
+            square_av = av_img.crop((crop_x, crop_y, crop_x + min_dim, crop_y + min_dim))
+            av_img = square_av.resize((av_size, av_size), Image.Resampling.LANCZOS)
+        except Exception:
+            av_img = Image.new('RGBA', (av_size, av_size), (0, 168, 252, 255))
+    else:
+        av_img = Image.new('RGBA', (av_size, av_size), (0, 168, 252, 255))
+        
+    mask = Image.new('L', (av_size, av_size), 0)
+    draw_mask = ImageDraw.Draw(mask)
+    draw_mask.ellipse((0, 0, av_size, av_size), fill=255)
+    
+    avatar_x = int(cx - av_size / 2)
+    avatar_y = int(cy - av_size / 2)
+    canvas.paste(av_img, (avatar_x, avatar_y), mask)
+    
+    draw = ImageDraw.Draw(canvas)
+    neon_green = (57, 255, 20, 255)
+    pure_white = (255, 255, 255, 255)
+
+    draw.ellipse((avatar_x - 3, avatar_y - 3, avatar_x + av_size + 3, avatar_y + av_size + 3), outline=neon_green, width=ring_width)
+    
+    clean_display = display_name if len(display_name) <= 22 else display_name[:20] + "..."
+    srv_upper = srv_name.upper()
+    if len(srv_upper) > 24:
+        srv_upper = srv_upper[:22] + "..."
+
+    max_text_w = 1100 if w > 2000 else 660
+
+    font_welcome = load_system_bold_font(size_welcome)
+    font_name = get_autoscaled_font(clean_display, max_width=max_text_w, max_size=size_name, min_size=60 if w > 2000 else 36)
+    font_server = get_autoscaled_font(f"TO {srv_upper}", max_width=max_text_w, max_size=size_server, min_size=40 if w > 2000 else 24)
+    font_member = load_system_bold_font(size_member)
+
+    # 1. WELCOME Accent Header (Centrally Aligned)
+    try:
+        w_bbox = font_welcome.getbbox("WELCOME")
+        w_width = w_bbox[2] - w_bbox[0]
+    except Exception:
+        w_width = 200
+    draw.text((text_center_x - w_width // 2, y_welcome), "WELCOME", font=font_welcome, fill=neon_green)
+
+    # 2. Member Display Name (Centrally Aligned, ~2x Larger)
+    try:
+        n_bbox = font_name.getbbox(clean_display)
+        n_width = n_bbox[2] - n_bbox[0]
+    except Exception:
+        n_width = 300
+    draw.text((text_center_x - n_width // 2, y_name), clean_display, font=font_name, fill=pure_white)
+
+    # 3. "TO SERVER_NAME" (Centrally Aligned, "to " in Pure White, Server Name in Neon Green)
+    try:
+        to_bbox = font_server.getbbox("to ")
+        to_w = to_bbox[2] - to_bbox[0]
+    except Exception:
+        to_w = 40
+    try:
+        srv_bbox = font_server.getbbox(srv_upper)
+        srv_w = srv_bbox[2] - srv_bbox[0]
+    except Exception:
+        srv_w = 200
+
+    total_srv_w = to_w + srv_w
+    start_srv_x = text_center_x - total_srv_w // 2
+
+    draw.text((start_srv_x, y_server), "to ", font=font_server, fill=pure_white)
+    draw.text((start_srv_x + to_w, y_server), srv_upper, font=font_server, fill=neon_green)
+
+    # 4. Member Count / Rank (Centrally Aligned)
+    try:
+        m_bbox = font_member.getbbox(count_str)
+        m_width = m_bbox[2] - m_bbox[0]
+    except Exception:
+        m_width = 200
+    draw.text((text_center_x - m_width // 2, y_member), count_str, font=font_member, fill=neon_green)
+    
+    buf = io.BytesIO()
+    canvas.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+# -------- Reaction Role UI Component -------- #
+class ReactionRoleButton(discord.ui.Button):
+    def __init__(self, role_id: int, emoji: Optional[str] = None, label: Optional[str] = None):
+        clean_emoji = emoji.strip() if emoji and emoji.strip() and emoji.strip() != "✔️" else None
+        super().__init__(style=discord.ButtonStyle.primary, label=label or "Get Role", emoji=clean_emoji, custom_id=f"rr_{role_id}")
+        self.role_id = role_id
+
+    async def callback(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        if not guild:
+            await interaction.response.send_message("This action can only be used in a server!", ephemeral=True)
+            return
+        role = guild.get_role(self.role_id)
+        if not role:
+            await interaction.response.send_message("That role no longer exists! 🥺", ephemeral=True)
+            return
+
+        member = interaction.user
+        if role in member.roles:
+            try:
+                await member.remove_roles(role, reason="Reaction Role button toggle")
+                await interaction.response.send_message(f"❌ Removed the **{role.name}** role from you!", ephemeral=True)
+            except Exception as e:
+                await interaction.response.send_message(f"Could not remove role! Check my permissions. 🥺", ephemeral=True)
+        else:
+            try:
+                await member.add_roles(role, reason="Reaction Role button toggle")
+                await interaction.response.send_message(f"✅ Granted you the **{role.name}** role!", ephemeral=True)
+            except Exception as e:
+                await interaction.response.send_message(f"Could not give role! Check my permissions. 🥺", ephemeral=True)
+
+# -------- Event Handlers -------- #
+@bot.event
+async def on_ready():
+    global session
+    if session is None or session.closed:
+        session = aiohttp.ClientSession()
+
+    try:
+        synced = await bot.tree.sync()
+        print(f"[BOOT] Synced {len(synced)} global slash commands.")
+        for guild in bot.guilds:
+            try:
+                bot.tree.clear_commands(guild=guild)
+                bot.tree.copy_global_to(guild=guild)
+                await bot.tree.sync(guild=guild)
+                print(f"[BOOT] Cleared old template commands & synced active slash commands for '{guild.name}'")
+            except Exception as ge:
+                print(f"[BOOT ERROR] Guild command sync failed for '{guild.name}': {ge}")
+    except Exception as e:
+        print(f"[BOOT] Slash command sync failed: {e}")
+
+    for guild in bot.guilds:
+        try:
+            await guild.chunk()
+            print(f"[MEMBERS] Cached {len(guild.members)} members in '{guild.name}'")
+        except Exception as e:
+            print(f"[MEMBERS ERROR] {guild.name}: {e}")
+
+    # Register persistent reaction role views across restarts
+    for msg_id, data in reaction_roles.items():
+        role_id = data.get("role_id")
+        emoji = data.get("emoji", "⭐")
+        if role_id:
+            view = discord.ui.View(timeout=None)
+            view.add_item(ReactionRoleButton(role_id=role_id, emoji=emoji, label="Get Role"))
+            bot.add_view(view, message_id=int(msg_id))
+
+    print(f"[BOOT] {bot.user.name} ({bot.user.id}) IS ONLINE AND READY TO CHAT.")
+
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    if interaction.type == discord.InteractionType.component:
+        custom_id = interaction.data.get("custom_id", "")
+        if custom_id and custom_id.startswith("rr_"):
+            try:
+                role_id = int(custom_id.split("rr_")[1])
+                guild = interaction.guild
+                if not guild:
+                    await interaction.response.send_message("This action can only be used in a server!", ephemeral=True)
+                    return
+
+                role = guild.get_role(role_id)
+                if not role:
+                    await interaction.response.send_message("That role no longer exists! 🥺", ephemeral=True)
+                    return
+
+                member = interaction.user
+                if role in member.roles:
+                    try:
+                        await member.remove_roles(role, reason="Reaction Role button toggle")
+                        await interaction.response.send_message(f"❌ Removed the **{role.name}** role from you!", ephemeral=True)
+                    except Exception as e:
+                        await interaction.response.send_message(f"Could not remove role! Make sure my role is higher than {role.name}! 🥺", ephemeral=True)
+                else:
+                    try:
+                        await member.add_roles(role, reason="Reaction Role button toggle")
+                        await interaction.response.send_message(f"✅ Granted you the **{role.name}** role!", ephemeral=True)
+                    except Exception as e:
+                        await interaction.response.send_message(f"Could not give role! Make sure my role is higher than {role.name}! 🥺", ephemeral=True)
+            except Exception as e:
+                print(f"[DYNAMIC RR INTERACTION ERROR] {e}")
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("Something went wrong! 🥺", ephemeral=True)
+            return
+
+    await bot.process_application_commands(interaction)
+
+@bot.event
+async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
+    if payload.user_id == bot.user.id:
+        return
+    msg_id = str(payload.message_id)
+    if msg_id in reaction_roles:
+        data = reaction_roles[msg_id]
+        role_id = data.get("role_id")
+        guild = bot.get_guild(payload.guild_id)
+        if guild and role_id:
+            role = guild.get_role(role_id)
+            member = payload.member or guild.get_member(payload.user_id)
+            if role and member and role not in member.roles:
+                try:
+                    await member.add_roles(role, reason="Reaction Role emoji add")
+                except Exception as e:
+                    print(f"[RR EMOJI ADD ERROR] {e}")
+
+@bot.event
+async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
+    if payload.user_id == bot.user.id:
+        return
+    msg_id = str(payload.message_id)
+    if msg_id in reaction_roles:
+        data = reaction_roles[msg_id]
+        role_id = data.get("role_id")
+        guild = bot.get_guild(payload.guild_id)
+        if guild and role_id:
+            role = guild.get_role(role_id)
+            member = guild.get_member(payload.user_id)
+            if role and member and role in member.roles:
+                try:
+                    await member.remove_roles(role, reason="Reaction Role emoji remove")
+                except Exception as e:
+                    print(f"[RR EMOJI REMOVE ERROR] {e}")
+
+@bot.event
+async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    if member.bot:
+        return
+    uid = member.id
+    now = time.time()
+
+    # User joined a VC
+    if before.channel is None and after.channel is not None:
+        voice_start_times[uid] = now
+
+    # User left a VC
+    elif before.channel is not None and after.channel is None:
+        if uid in voice_start_times:
+            joined_at = voice_start_times.pop(uid)
+            duration = int(now - joined_at)
+            uid_str = str(uid)
+            if uid_str not in user_stats:
+                user_stats[uid_str] = {"messages": 0, "vc_seconds": 0}
+            user_stats[uid_str]["vc_seconds"] = user_stats[uid_str].get("vc_seconds", 0) + duration
+            save_user_stats()
+
+    # User switched VCs
+    elif before.channel is not None and after.channel is not None and before.channel.id != after.channel.id:
+        if uid in voice_start_times:
+            joined_at = voice_start_times[uid]
+            duration = int(now - joined_at)
+            uid_str = str(uid)
+            if uid_str not in user_stats:
+                user_stats[uid_str] = {"messages": 0, "vc_seconds": 0}
+            user_stats[uid_str]["vc_seconds"] = user_stats[uid_str].get("vc_seconds", 0) + duration
+            save_user_stats()
+        voice_start_times[uid] = now
+
+# -------- Build Complete Member Stats Embed -------- #
+async def build_user_stats_embed(usr: Union[discord.Member, discord.User], guild: Optional[discord.Guild]) -> discord.Embed:
+    member = guild.get_member(usr.id) if guild else (usr if isinstance(usr, discord.Member) else None)
+    uid_str = str(usr.id)
+
+    st = user_stats.get(uid_str, {"messages": 0, "vc_seconds": 0})
+    active_vc_secs = 0
+    if usr.id in voice_start_times:
+        active_vc_secs = int(time.time() - voice_start_times[usr.id])
+
+    total_vc_secs = st.get("vc_seconds", 0) + active_vc_secs
+    total_msgs = st.get("messages", 0)
+
+    # Historical Chat Scan if untracked/low
+    if guild and total_msgs < 5:
+        try:
+            scanned_msgs = 0
+            for ch in guild.text_channels[:5]:
+                if ch.permissions_for(guild.me).read_message_history:
+                    async for m in ch.history(limit=100):
+                        if m.author.id == usr.id:
+                            scanned_msgs += 1
+            if scanned_msgs > total_msgs:
+                total_msgs = scanned_msgs
+                if uid_str not in user_stats:
+                    user_stats[uid_str] = {"messages": scanned_msgs, "vc_seconds": 0}
+                else:
+                    user_stats[uid_str]["messages"] = scanned_msgs
+                save_user_stats()
+        except Exception:
+            pass
+
+    hours = total_vc_secs // 3600
+    minutes = (total_vc_secs % 3600) // 60
+    seconds = total_vc_secs % 60
+    vc_time_str = f"{hours}h {minutes}m {seconds}s" if hours > 0 else (f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s")
+
+    sorted_users = sorted(user_stats.items(), key=lambda x: x[1].get("messages", 0), reverse=True)
+    chat_rank = "N/A"
+    for idx, (u_id, u_data) in enumerate(sorted_users, 1):
+        if u_id == uid_str:
+            chat_rank = f"#{idx}"
+            break
+
+    import math
+    level = int(math.floor(math.sqrt(total_msgs / 5))) if total_msgs > 0 else 0
+
+    embed = discord.Embed(
+        title=f"📊 Server Activity & Tenure Stats for {usr.display_name}",
+        color=member.color if (member and member.color.value != 0) else discord.Color.from_rgb(0, 168, 252)
+    )
+    embed.set_thumbnail(url=usr.display_avatar.url)
+
+    if member and member.joined_at:
+        joined_ts = int(member.joined_at.timestamp())
+        created_ts = int(member.created_at.timestamp())
+
+        sorted_members = sorted([m for m in guild.members if m.joined_at], key=lambda x: x.joined_at)
+        join_pos = next((idx for idx, m in enumerate(sorted_members, 1) if m.id == member.id), "N/A")
+        total_members = len(guild.members)
+
+        embed.add_field(
+            name="📅 Server Tenure (Since Joined)",
+            value=f"• **Joined Server:** <t:{joined_ts}:F>\n• **Tenure:** <t:{joined_ts}:R>\n• **Join Rank:** Member `{join_pos}` of `{total_members}`",
+            inline=False
+        )
+        embed.add_field(
+            name="🎂 Discord Account Age",
+            value=f"• **Created:** <t:{created_ts}:F>\n• **Age:** <t:{created_ts}:R>",
+            inline=False
+        )
+
+    embed.add_field(
+        name="💬 Chat Activity",
+        value=f"• **Total Messages:** `{total_msgs:,}`\n• **Chat Level:** `Lvl {level}`\n• **Activity Rank:** `{chat_rank}`",
+        inline=True
+    )
+    embed.add_field(
+        name="🎙️ Voice VC Time",
+        value=f"• **Time Spent:** `{vc_time_str}`\n• **Status:** `{'🔴 In VC' if usr.id in voice_start_times else '⚪ Offline'}`",
+        inline=True
+    )
+
+    if member and len(member.roles) > 1:
+        roles_str = ", ".join([r.mention for r in reversed(member.roles[1:])][:8])
+        embed.add_field(name="🎭 Member Roles", value=roles_str, inline=False)
+
+    embed.set_footer(text=f"User ID: {usr.id} • Stats calculated since member joined")
+    return embed
+
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
+
+    # Deduplication
+    if message.id in processed_messages:
+        return
+    processed_messages.add(message.id)
+    if len(processed_messages) > 1000:
+        processed_messages.clear()
+
+    # User Message Stats Tracking
+    if message.guild:
+        uid_str = str(message.author.id)
+        if uid_str not in user_stats:
+            user_stats[uid_str] = {"messages": 0, "vc_seconds": 0}
+        user_stats[uid_str]["messages"] = user_stats[uid_str].get("messages", 0) + 1
+        save_user_stats()
+
+    # Automod: Invites & Spam
+    if message.guild and not message.author.guild_permissions.administrator:
+        if re.search(r'(discord\.gg\/|discord\.com\/invite\/)', message.content, re.IGNORECASE):
+            try:
+                await message.delete()
+                await message.channel.send(f"*(<@{message.author.id}>, we don't allow server invites here! 😠)*")
+                return
+            except Exception:
+                pass
+
+        now = time.time()
+        user_spam = user_spam_map.get(message.author.id, [])
+        user_spam.append(now)
+        user_spam = [t for t in user_spam if now - t < 5.0]
+        user_spam_map[message.author.id] = user_spam
+
+        if len(user_spam) >= 5:
+            try:
+                await message.author.timeout(discord.utils.utcnow() + datetime.timedelta(seconds=60), reason="Auto-Mod: Spamming")
+                user_spam_map.pop(message.author.id, None)
+                await message.channel.send(f"*(I just put <@{message.author.id}> in timeout for 60 seconds because they were spamming! 🔨 My chat, my rules! 💅)*")
+                return
+            except Exception:
+                pass
+
+    raw_content = message.content.strip()
+    text = raw_content.lower()
+
+    # -------- Prefix Command: .stats -------- #
+    if raw_content.startswith('.stats'):
+        target = message.mentions[0] if message.mentions else message.author
+        embed = await build_user_stats_embed(target, message.guild)
+        await message.reply(embed=embed)
+        return
+
+    # -------- Prefix Command: .delete -------- #
+    if raw_content.startswith('.delete'):
+        if not is_mod_or_admin(message):
+            await message.reply("❌ **Access Denied!** Only moderators and admins can delete messages! 🥺")
+            return
+        args = raw_content.split()[1:]
+        if not args:
+            await message.reply("⚠️ **Usage:** `.delete <amount>` or `.delete <amount> @User`")
+            return
+        try:
+            amount = int(args[0])
+        except ValueError:
+            await message.reply("Please provide a valid number of messages! Example: `.delete 50`")
+            return
+
+        target = message.mentions[0] if message.mentions else None
+        if target:
+            deleted_count = 0
+            async for msg in message.channel.history(limit=500):
+                if msg.author.id == target.id:
+                    try:
+                        await msg.delete()
+                        deleted_count += 1
+                        if deleted_count >= amount:
+                            break
+                    except Exception:
+                        pass
+            await message.channel.send(f"Successfully deleted **{deleted_count}** message(s) sent by <@{target.id}>! ✨", delete_after=5)
+        else:
+            deleted_count = 0
+            left_to_delete = amount
+            while left_to_delete > 0:
+                fetch_amount = min(100, left_to_delete)
+                msgs = [m async for m in message.channel.history(limit=fetch_amount)]
+                if not msgs:
+                    break
+                deleted = await message.channel.purge(limit=len(msgs), bulk=True)
+                deleted_count += len(deleted)
+                left_to_delete -= len(msgs)
+                if len(deleted) < len(msgs):
+                    break
+            await message.channel.send(f"Successfully wiped **{deleted_count}** message(s) from the channel! ✨", delete_after=5)
+        return
+
+    # -------- Prefix Command: .reactionrole / .rr -------- #
+    if raw_content.startswith(('.reactionrole', '.rr')):
+        if not is_mod_or_admin(message):
+            await message.reply("❌ **Access Denied!** Only moderators and admins can create reaction roles! 🥺")
+            return
+
+        parts = raw_content.split(maxsplit=1)
+        if len(parts) < 2:
+            await message.reply("⚠️ **Usage:** `.rr #channel @Role Title | Description | [emoji] | [thumbnail_url]`\n*Example:* `.rr #announcements @Gamer Rules & Guidelines | Post your link in #chat | ✔️ | https://image.png`")
+            return
+
+        body = parts[1]
+        pipe_split = body.split('|')
+        if len(pipe_split) < 2:
+            await message.reply("⚠️ Please use `|` to separate Title and Description!\n*Example:* `.rr #announcements @Gamer Rules & Guidelines | Post your link in #chat | ✔️`")
+            return
+
+        first_part = pipe_split[0].strip()
+        description_text = pipe_split[1].strip()
+        emoji_char = pipe_split[2].strip() if len(pipe_split) > 2 and pipe_split[2].strip() else "✔️"
+        thumbnail_url = pipe_split[3].strip() if len(pipe_split) > 3 and pipe_split[3].strip() else None
+
+        target_channel = message.channel_mentions[0] if message.channel_mentions else message.channel
+        target_role = message.role_mentions[0] if message.role_mentions else None
+
+        if not target_role:
+            await message.reply("⚠️ Please mention a role! Example: `.rr #channel @Gamer Title | Description`")
+            return
+
+        title_text = first_part
+        if message.channel_mentions:
+            title_text = title_text.replace(message.channel_mentions[0].mention, '').strip()
+        if message.role_mentions:
+            title_text = title_text.replace(message.role_mentions[0].mention, '').strip()
+        if not title_text:
+            title_text = f"Get the {target_role.name} Role!"
+
+        embed = discord.Embed(
+            title=title_text,
+            description=f"{description_text}\n\n👉 **React or click the button below to get the {target_role.mention} role!**",
+            color=target_role.color if target_role.color.value != 0 else discord.Color.from_rgb(0, 168, 252)
+        )
+        image_att = message.attachments[0] if message.attachments else None
+        thumb_att = message.attachments[1] if len(message.attachments) > 1 else None
+        files = await process_embed_attachments(thumbnail_file=thumb_att, image_file=image_att, thumbnail_url=thumbnail_url, embed=embed)
+
+        embed.set_footer(text=f"Role: {target_role.name} • Click or React to Toggle")
+
+        view = discord.ui.View(timeout=None)
+        btn = ReactionRoleButton(role_id=target_role.id, emoji=emoji_char, label=f"Get {target_role.name}")
+        view.add_item(btn)
+
+        msg = await target_channel.send(embed=embed, view=view, files=files if files else None, allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=True))
+        try:
+            await msg.add_reaction(emoji_char)
+        except Exception:
+            pass
+
+        bot.add_view(view, message_id=msg.id)
+        reaction_roles[str(msg.id)] = {
+            "role_id": target_role.id,
+            "emoji": emoji_char,
+            "channel_id": target_channel.id,
+            "title": title_text
+        }
+        save_reaction_roles()
+
+        await message.reply(f"✅ Posted Reaction Role announcement in {target_channel.mention} for **{target_role.name}**!")
+        return
+
+    # -------- Prefix Command: .multirr / .multireactionrole -------- #
+    if raw_content.startswith(('.multirr', '.multireactionrole')):
+        if not is_mod_or_admin(message):
+            await message.reply("❌ **Access Denied!** Only moderators and admins can create reaction roles! 🥺")
+            return
+
+        parts = raw_content.split(maxsplit=1)
+        if len(parts) < 2:
+            await message.reply("⚠️ **Usage:** `.multirr #channel Title | Description | @Role1 📈 | @Role2 🛠️ | @Role3 𝓝𝓕𝓣 | [thumbnail]`\n*Example:* `.multirr #roles Roles Selection | You can select multiple roles anytime | @trading 📈 | @Builder 🛠️ | @NFT 𝓝𝓕𝓣`")
+            return
+
+        body = parts[1]
+        pipe_split = [p.strip() for p in body.split('|') if p.strip()]
+        if len(pipe_split) < 3:
+            await message.reply("⚠️ Please separate Title, Description, and Roles using `|`!\n*Example:* `.multirr #roles Title | Description | @Role1 🎮 | @Role2 🔥`")
+            return
+
+        first_part = pipe_split[0]
+        description_text = pipe_split[1]
+
+        target_channel = message.channel_mentions[0] if message.channel_mentions else message.channel
+        title_text = first_part
+        if message.channel_mentions:
+            title_text = title_text.replace(message.channel_mentions[0].mention, '').strip()
+
+        if not title_text:
+            title_text = "🎭 Multi-Role Selection"
+
+        role_pairs = []
+        thumbnail_url = None
+
+        for segment in pipe_split[2:]:
+            if segment.startswith("http://") or segment.startswith("https://") or "tenor.com" in segment or "klipy" in segment:
+                thumbnail_url = segment
+                continue
+
+            temp_msg_roles = [r for r in message.role_mentions if r.mention in segment or str(r.id) in segment]
+            if temp_msg_roles:
+                for r in temp_msg_roles:
+                    rem_text = segment.replace(r.mention, '').replace(f"<@&{r.id}>", '').strip()
+                    emoji_char = rem_text if rem_text else None
+                    if (r.id, emoji_char) not in [(rp[0].id, rp[1]) for rp in role_pairs]:
+                        role_pairs.append((r, emoji_char))
+            elif "@everyone" not in segment and "@here" not in segment:
+                for r in message.guild.roles:
+                    if r.name.lower() in segment.lower():
+                        rem_text = segment.lower().replace(r.name.lower(), '').strip()
+                        emoji_char = rem_text if rem_text else None
+                        if (r.id, emoji_char) not in [(rp[0].id, rp[1]) for rp in role_pairs]:
+                            role_pairs.append((r, emoji_char))
+                        break
+
+        if not role_pairs and message.role_mentions:
+            for r in message.role_mentions:
+                role_pairs.append((r, None))
+
+        if not role_pairs:
+            await message.reply("⚠️ No valid roles found! Make sure to tag @Role1, @Role2 with emojis!\n*Example:* `.multirr #roles Pick Roles | Select roles | @Role1 🎮 | @Role2 🚀`")
+            return
+
+        embed = discord.Embed(
+            title=title_text,
+            description=f"{description_text}\n\n👉 **Click any button below to get or remove your roles!**",
+            color=discord.Color.from_rgb(0, 168, 252)
+        )
+
+        if not thumbnail_url and message.attachments:
+            thumbnail_url = message.attachments[0].url
+
+        if thumbnail_url:
+            res_thumb = await resolve_image_url(thumbnail_url)
+            if res_thumb:
+                embed.set_thumbnail(url=res_thumb)
+
+        embed.set_footer(text="Multi-Role Selection • Click any button to toggle")
+
+        view = discord.ui.View(timeout=None)
+        for role_obj, emoji_char in role_pairs:
+            btn = ReactionRoleButton(role_id=role_obj.id, emoji=emoji_char, label=f"{role_obj.name}")
+            view.add_item(btn)
+
+        msg = await target_channel.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=True))
+        bot.add_view(view, message_id=msg.id)
+
+        for role_obj, emoji_char in role_pairs:
+            reaction_roles[str(msg.id)] = {
+                "role_id": role_obj.id,
+                "emoji": emoji_char,
+                "channel_id": target_channel.id,
+                "title": title_text
+            }
+        save_reaction_roles()
+
+        roles_summary = ", ".join([f"**{r.name}** {e}" for r, e in role_pairs])
+        await message.reply(f"✅ Posted Multi-Role Selection embed in {target_channel.mention} with roles: {roles_summary}!")
+        return
+
+    # -------- Prefix Command: .addrr (Reaction Role on Existing Message) -------- #
+    if raw_content.startswith('.addrr'):
+        if not is_mod_or_admin(message):
+            await message.reply("❌ **Access Denied!** Only moderators and admins can add reaction roles! 🥺")
+            return
+
+        args = raw_content.split()[1:]
+        if len(args) < 2 or not message.role_mentions:
+            await message.reply("⚠️ **Usage:** `.addrr <message_id> @Role [emoji]`\n*Example:* `.addrr 123456789012345678 @Gamer 🎮`")
+            return
+
+        msg_id = re.sub(r'[^0-9]', '', args[0])
+        target_role = message.role_mentions[0]
+        emoji_char = args[2].strip() if len(args) > 2 else "⭐"
+
+        try:
+            target_msg = await message.channel.fetch_message(int(msg_id))
+        except Exception:
+            await message.reply("Could not find that message ID in this channel! Check the Message ID. 🥺")
+            return
+
+        try:
+            await target_msg.add_reaction(emoji_char)
+        except Exception as e:
+            print(f"[ADDRR EMOJI ERROR] {e}")
+
+        reaction_roles[str(target_msg.id)] = {
+            "role_id": target_role.id,
+            "emoji": emoji_char,
+            "channel_id": message.channel.id
+        }
+        save_reaction_roles()
+
+        await message.reply(f"✅ Reaction Role set on message `{msg_id}` for **{target_role.name}** with emoji {emoji_char}!")
+        return
+
+    # -------- Prefix Command: .purgeuser / .deleteuser -------- #
+    if raw_content.startswith(('.purgeuser', '.deleteuser')):
+        if not is_mod_or_admin(message):
+            await message.reply("❌ **Access Denied!** Only moderators and admins can delete messages! 🥺")
+            return
+
+        if not message.mentions:
+            await message.reply("⚠️ **Usage:** `.purgeuser @User <amount>`\n*Example:* `.purgeuser @BadUser 20`")
+            return
+
+        target = message.mentions[0]
+        args = raw_content.split()[1:]
+        amount = 50
+        for a in args:
+            if a.isdigit():
+                amount = int(a)
+                break
+
+        deleted_count = 0
+        async for msg in message.channel.history(limit=500):
+            if msg.author.id == target.id:
+                try:
+                    await msg.delete()
+                    deleted_count += 1
+                    if deleted_count >= amount:
+                        break
+                except Exception:
+                    pass
+
+        await message.channel.send(f"🧹 Cleaned up **{deleted_count}** message(s) strictly sent by <@{target.id}>!", delete_after=5)
+        return
+
+    # -------- Prefix Command: .announce -------- #
+    if raw_content.startswith(('.announce', '.announcement')):
+        if not is_mod_or_admin(message):
+            await message.reply("❌ **Access Denied!** Only moderators and admins can post announcements! 🥺")
+            return
+
+        parts = raw_content.split(maxsplit=1)
+        if len(parts) < 2:
+            await message.reply("⚠️ **Usage:** `.announce #channel Title | Content | [@Role] | [thumbnail_url]`\n*Example:* `.announce #announcements Rules & Guidelines | We conduct two engagement sessions daily... | @Members | https://image.png`")
+            return
+
+        body = parts[1]
+        pipe_split = body.split('|')
+        if len(pipe_split) < 2:
+            await message.reply("⚠️ Please use `|` to separate Title and Content!\n*Example:* `.announce #announcements Title | Content`")
+            return
+
+        first_part = pipe_split[0].strip()
+        content_text = pipe_split[1].strip()
+        target_role = message.role_mentions[0] if message.role_mentions else None
+        thumbnail_url = pipe_split[3].strip() if len(pipe_split) > 3 and pipe_split[3].strip() else None
+
+        target_channel = message.channel_mentions[0] if message.channel_mentions else message.channel
+
+        title_text = first_part
+        if message.channel_mentions:
+            title_text = title_text.replace(message.channel_mentions[0].mention, '').strip()
+
+        if not title_text:
+            title_text = "📢 Announcement"
+
+        embed = discord.Embed(
+            title=title_text,
+            description=content_text,
+            color=discord.Color.from_rgb(0, 168, 252)
+        )
+
+        image_att = message.attachments[0] if message.attachments else None
+        thumb_att = message.attachments[1] if len(message.attachments) > 1 else None
+        files = await process_embed_attachments(thumbnail_file=thumb_att, image_file=image_att, thumbnail_url=thumbnail_url, embed=embed)
+
+        pings = []
+        if "@everyone" in raw_content:
+            pings.append("@everyone")
+        if "@here" in raw_content:
+            pings.append("@here")
+        for r in message.role_mentions:
+            if r.mention not in pings:
+                pings.append(r.mention)
+
+        ping_text = " ".join(pings) if pings else None
+        if ping_text:
+            await target_channel.send(content=ping_text, embed=embed, files=files if files else None, allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=True))
+        else:
+            await target_channel.send(embed=embed, files=files if files else None, allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=True))
+
+        await message.reply(f"📢 Posted announcement in {target_channel.mention}!")
+        return
+
+    # -------- Prefix Command: .sync (Instant Command Sync) -------- #
+    if raw_content.startswith('.sync'):
+        if not is_bot_admin(message):
+            await message.reply("❌ **Access Denied!** Only bot admins can sync commands!")
+            return
+        synced = await bot.tree.sync()
+        if message.guild:
+            bot.tree.copy_global_to(guild=message.guild)
+            await bot.tree.sync(guild=message.guild)
+        await message.reply(f"✅ Synced **{len(synced)}** slash commands instantly to your server!")
+        return
+
+    # -------- Prefix Command: .setwelcome -------- #
+    if raw_content.startswith('.setwelcome'):
+        if not is_mod_or_admin(message):
+            await message.reply("❌ **Access Denied!** Only moderators and admins can set welcome channel! 🥺")
+            return
+        target_ch = message.channel_mentions[0] if message.channel_mentions else message.channel
+        welcome_channel_config[str(message.guild.id)] = target_ch.id
+        await message.reply(f"✅ Welcome channel set to {target_ch.mention}!")
+        return
+
+    # -------- Prefix Command: .testwelcome -------- #
+    if raw_content.startswith('.testwelcome'):
+        if not is_mod_or_admin(message):
+            await message.reply("❌ **Access Denied!** Only moderators and admins can test welcome card! 🥺")
+            return
+        server_name = message.guild.name if message.guild else os.getenv("SERVER_NAME", "Differential Degens")
+        user_display_name = getattr(message.author, 'global_name', None) or getattr(message.author, 'display_name', None) or message.author.name
+        member_count = message.guild.member_count if message.guild else 15
+        card_bytes = await create_welcome_card(
+            avatar_url=message.author.display_avatar.url,
+            member_name=user_display_name,
+            member_count=member_count,
+            server_name=server_name
+        )
+        welcome_text = f"Welcome <@{message.author.id}> to **{server_name}** ❤️"
+        if card_bytes:
+            file = discord.File(fp=io.BytesIO(card_bytes.getvalue()), filename="welcome.png")
+            await message.channel.send(content=welcome_text, file=file)
+        else:
+            await message.channel.send(content=welcome_text)
+        return
+
+    # -------- Prefix Command: .sharelink / .shareinvite -------- #
+    if raw_content.startswith(('.sharelink', '.shareinvite', '.serverlink', '.invite')):
+        if not is_mod_or_admin(message):
+            await message.reply("❌ **Access Denied!** Only moderators and admins can share server links! 🥺")
+            return
+
+        parts = raw_content.split(maxsplit=1)
+        if len(parts) < 2:
+            await message.reply("⚠️ **Usage:** `.sharelink <discord_invite_link_or_code> [#channel] [custom_message]`\n*Example:* `.sharelink discord.gg/discord-developers #general Check out this cool server!`")
+            return
+
+        body = parts[1]
+        args = body.split()
+        invite_str = args[0]
+
+        target_channel = message.channel_mentions[0] if message.channel_mentions else message.channel
+        note = body.replace(invite_str, '').replace(target_channel.mention, '').strip()
+
+        info = await fetch_invite_info(invite_str)
+        if not info:
+            await message.reply("⚠️ Could not fetch details for that Discord invite link! Make sure it's a valid, unexpired invite link! 🥺")
+            return
+
+        embed = discord.Embed(
+            title=f"✨ {info['guild_name']}",
+            color=discord.Color.from_rgb(0, 168, 252)
+        )
+
+        desc_parts = []
+        if note:
+            desc_parts.append(note)
+        if info['description']:
+            desc_parts.append(f"*{info['description']}*")
+
+        desc_parts.append(f"\n👉 **Join Link:** {info['invite_url']}")
+        embed.description = "\n\n".join(desc_parts)
+
+        if info['icon_url']:
+            embed.set_thumbnail(url=info['icon_url'])
+        if info['banner_url']:
+            embed.set_image(url=info['banner_url'])
+
+        embed.add_field(name="👥 Total Members", value=f"`{info['member_count']:,}`", inline=True)
+        embed.add_field(name="🟢 Online Members", value=f"`{info['online_count']:,}`", inline=True)
+        embed.set_footer(text=f"Server ID: {info['guild_id']} • Shared by {message.author.display_name}")
+
+        view = discord.ui.View()
+        join_btn = discord.ui.Button(label=f"Join {info['guild_name']} 🚀", url=info['invite_url'], style=discord.ButtonStyle.link)
+        view.add_item(join_btn)
+
+        await target_channel.send(embed=embed, view=view)
+        await message.reply(f"✅ Posted server invite embed for **{info['guild_name']}** in {target_channel.mention}!")
+        return
+
+    # -------- Admin System Commands (.addadmin, .removeadmin, .adminlist) -------- #
+    if raw_content.startswith(('.addadmin', '.removeadmin', '.adminlist', '.admins')):
+        if not is_bot_admin(message):
+            await message.reply("❌ **Access Denied!** You do not have permission to use admin commands.")
+            return
+
+        args = raw_content.split()[1:]
+
+        if raw_content.startswith('.addadmin'):
+            target_id = None
+            if message.mentions:
+                target_id = str(message.mentions[0].id)
+            elif args:
+                target_id = re.sub(r'[^0-9]', '', args[0])
+
+            if not target_id or len(target_id) < 5:
+                await message.reply("⚠️ **Usage:** `.addadmin @User` or `.addadmin <UserID>`")
+                return
+
+            if target_id in bot_admins:
+                await message.reply(f"⚠️ <@{target_id}> (ID: `{target_id}`) is already a bot admin!")
+                return
+
+            bot_admins.add(target_id)
+            save_admins()
+            await message.reply(f"✅ Successfully added <@{target_id}> (ID: `{target_id}`) as a bot admin! Saved to database.")
+            return
+
+        if raw_content.startswith('.removeadmin'):
+            target_id = None
+            if message.mentions:
+                target_id = str(message.mentions[0].id)
+            elif args:
+                target_id = re.sub(r'[^0-9]', '', args[0])
+
+            if not target_id or len(target_id) < 5:
+                await message.reply("⚠️ **Usage:** `.removeadmin @User` or `.removeadmin <UserID>`")
+                return
+
+            if target_id not in bot_admins:
+                await message.reply(f"⚠️ User ID `{target_id}` is not in the admin database.")
+                return
+
+            bot_admins.remove(target_id)
+            save_admins()
+            await message.reply(f"✅ Successfully removed <@{target_id}> (ID: `{target_id}`) from bot admins! Saved to database.")
+            return
+
+        if raw_content.startswith(('.adminlist', '.admins')):
+            if not bot_admins:
+                await message.reply("📋 **Bot Admin Database:** No custom admins added yet. (Server Administrators and Bot Owners have default access).")
+                return
+            admin_list = "\n".join([f"• <@{aid}> (ID: `{aid}`)" for aid in bot_admins])
+            await message.reply(f"📋 **Bot Admin Database:**\n{admin_list}")
+            return
+
+    # Crypto Price Lookup ($btc, $eth)
+    token_matches = re.findall(r'\$[a-zA-Z0-9]+', text)
+    if token_matches:
+        unique_tokens = list(dict.fromkeys(token_matches))
+        replies = []
+        for t in unique_tokens:
+            res = await get_crypto_price(t.replace("$", ""))
+            replies.append(res)
+        await message.reply("\n\n".join(replies))
+        return
+
+    # Football Hashtags (#livescore, #plstandings, #news)
+    if text.startswith(('#livescore', '#livescores')):
+        async with message.channel.typing():
+            res = await fetch_livescores()
+            await message.reply(res)
+            return
+
+    standings_match = re.match(r'^#(\w+?)standings?$', text)
+    if standings_match:
+        league_input = standings_match.group(1)
+        async with message.channel.typing():
+            res = await fetch_standings(league_input)
+            await message.reply(res)
+            return
+
+    if text.startswith('#news'):
+        async with message.channel.typing():
+            news_res = await fetch_realtime_context('football soccer latest news transfers results today 2026')
+            if news_res:
+                bullets = "\n".join([f"⚽ {s.strip()}" for s in news_res.split(" | ") if s.strip()])
+                await message.reply(f"**📰 Latest Football News:**\n{bullets}")
+            else:
+                await message.reply("Could not find any football news right now! Try again later 🙏")
+            return
+
+    # AI Chat Trigger
+    is_mentioned = ("diffy" in text or "unemployed girl" in text or "unemployed" in text) or (bot.user in message.mentions)
+    if is_mentioned:
+        # Clear Memory Command
+        if "clear memory" in text or "forget everything" in text:
+            if not is_bot_admin(message):
+                await message.reply("*(pouts)* Hey! Only my admins are allowed to clear my memory! 😤")
+                return
+            channel_memories[str(message.channel.id)] = []
+            save_memories()
+            await message.reply("*(zaps brain)* Ow! Okay, I just completely wiped my memory for this channel! What were we talking about again? 🥺")
+            return
+
+        # TLDR Command
+        if any(kw in text for kw in ["tldr", "summarize", "recap", "did i miss"]):
+            res = await tldr_summary(message)
+            await message.reply(res)
+            return
+
+        # Moderator / Admin Timeout Command
+        if re.search(r'\b(timeout|mute|put in timeout|give time out|give timeout)\b', text):
+            is_mod = is_bot_admin(message) or (message.guild and message.author.guild_permissions and (message.author.guild_permissions.manage_messages or message.author.guild_permissions.moderate_members))
+            if not is_mod:
+                await message.reply("*(pouts)* Hey! Only my moderators and admins can tell me to timeout people! 😤")
+                return
+
+            target = None
+            if message.mentions:
+                for m in message.mentions:
+                    if m.id != bot.user.id and not m.bot:
+                        target = m
+                        break
+
+            if not target and message.guild:
+                words = [w for w in re.split(r'[^a-zA-Z0-9]', text) if len(w) > 2]
+                for m in message.guild.members:
+                    if not m.bot and (m.name.lower() in words or m.display_name.lower() in words):
+                        target = m
+                        break
+
+            if target:
+                try:
+                    until = discord.utils.utcnow() + datetime.timedelta(minutes=15)
+                    await target.timeout(until, reason=f"Timed out for 15 minutes by request of {message.author.display_name}")
+                    await message.reply(f"*(I just put <@{target.id}> in timeout for 15 minutes as requested! 🔨 Nobody messes with my mods! 💅)*")
+                    return
+                except Exception as e:
+                    print(f"[TIMEOUT ERROR] {e}")
+                    await message.reply(f"I tried to timeout <@{target.id}>, but Discord didn't let me! Make sure my role is higher than theirs! 🥺")
+                    return
+            else:
+                await message.reply("Who do you want me to timeout? Tag them or say their name! 🔨")
+                return
+
+        async with message.channel.typing():
+            response = await ai_reply(message)
+
+            files = []
+            sent_voice = False
+
+            # 10% Chance for TikTok Cute TTS Voice Note
+            if random.random() < 0.10:
+                tts_file = await fetch_tiktok_tts(response)
+                if tts_file:
+                    files.append(tts_file)
+                    response = f"🎙️ *Sent a voice note...*\n{response}"
+                    sent_voice = True
+
+            # Auto-GIF System: 25% chance to attach a native Tenor/Klipy GIF file
+            if not sent_voice and random.random() < 0.25:
+                gif_file = await fetch_auto_gif_file()
+                if gif_file:
+                    files.append(gif_file)
+
+            kwargs = {}
+            if files:
+                kwargs["files"] = files
+
+            await message.reply(response, **kwargs)
+            return
+
+# -------- Slash Commands -------- #
+@bot.tree.command(name="addreactionrole", description="Attaches a reaction role to ANY existing message by Message ID!")
+@app_commands.describe(
+    message_id="The ID of the existing message to add reaction role to",
+    role="The role to assign when users react",
+    emoji="Optional: Emoji for reaction (default: ⭐)"
+)
+async def add_reaction_role_cmd(
+    interaction: discord.Interaction,
+    message_id: str,
+    role: discord.Role,
+    emoji: Optional[str] = "⭐"
+):
+    if not is_mod_or_admin(interaction):
+        await interaction.response.send_message("❌ **Access Denied!** Only moderators and admins can use this feature! 🥺", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    clean_id = re.sub(r'[^0-9]', '', message_id)
+    if not clean_id:
+        await interaction.followup.send("Please provide a valid numeric Message ID! 🥺", ephemeral=True)
+        return
+
+    try:
+        msg = await interaction.channel.fetch_message(int(clean_id))
+    except Exception:
+        await interaction.followup.send("Could not find a message with that ID in this channel! 🥺", ephemeral=True)
+        return
+
+    try:
+        await msg.add_reaction(emoji)
+    except Exception:
+        pass
+
+    reaction_roles[str(msg.id)] = {
+        "role_id": role.id,
+        "emoji": emoji,
+        "channel_id": interaction.channel.id
+    }
+    save_reaction_roles()
+
+    await interaction.followup.send(f"✅ Successfully attached reaction role to message `{clean_id}` for **{role.name}** with emoji {emoji}!", ephemeral=True)
+
+@bot.tree.command(name="purgeuser", description="Deletes messages strictly sent by a specific user!")
+@app_commands.describe(
+    target="The specific user whose messages you want to delete",
+    amount="Number of messages to delete from this user"
+)
+async def purge_user_cmd(interaction: discord.Interaction, target: discord.User, amount: int):
+    if not is_mod_or_admin(interaction):
+        await interaction.response.send_message("❌ **Access Denied!** Only moderators and admins can delete messages! 🥺", ephemeral=True)
+        return
+
+    if amount <= 0:
+        await interaction.response.send_message("Give me a number greater than 0! 💕", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    deleted_count = 0
+    try:
+        async for msg in interaction.channel.history(limit=500):
+            if msg.author.id == target.id:
+                try:
+                    await msg.delete()
+                    deleted_count += 1
+                    if deleted_count >= amount:
+                        break
+                except Exception:
+                    pass
+        await interaction.followup.send(f"🧹 Cleaned up **{deleted_count}** message(s) strictly sent by <@{target.id}>!")
+    except Exception as e:
+        print(f"[PURGEUSER ERROR] {e}")
+        await interaction.followup.send("Error deleting user messages! 🥺", ephemeral=True)
+
+@bot.tree.command(name="reactionrole", description="Posts a structured announcement embed with Reaction Role button & emoji!")
+@app_commands.describe(
+    channel="The channel to post the announcement in",
+    role="The role to assign when users click or react",
+    title="Main Title of the announcement",
+    description="Body text (supports markdown, headings, bullet points & #channels)",
+    emoji="Optional: Emoji for button & reaction (default: ✔️)",
+    image_file="Optional: Upload image or GIF file directly from gallery",
+    thumbnail_file="Optional: Upload thumbnail image or GIF directly from gallery",
+    image="Optional: Main banner Image/GIF URL",
+    thumbnail="Optional: Image/GIF URL for top-right thumbnail",
+    color="Optional: Sidebar hex color code (e.g. #00A8FC)",
+    footer="Optional: Footer text at bottom"
+)
+async def reaction_role_cmd(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+    role: discord.Role,
+    title: str,
+    description: str,
+    emoji: Optional[str] = "✔️",
+    image_file: Optional[discord.Attachment] = None,
+    thumbnail_file: Optional[discord.Attachment] = None,
+    image: Optional[str] = None,
+    thumbnail: Optional[str] = None,
+    color: Optional[str] = "#00A8FC",
+    footer: Optional[str] = None
+):
+    if not is_mod_or_admin(interaction):
+        await interaction.response.send_message("❌ **Access Denied!** Only moderators and admins can create reaction roles! 🥺", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    embed_color = parse_embed_color(color)
+
+    embed = discord.Embed(
+        title=title,
+        description=f"{description}\n\n👉 **React or click the button below to get the {role.mention} role!**",
+        color=embed_color
+    )
+
+    files = await process_embed_attachments(thumbnail_file=thumbnail_file, image_file=image_file, thumbnail_url=thumbnail, image_url=image, embed=embed)
+
+    footer_text = footer if footer else f"Role: {role.name} • Click or React to Toggle"
+    embed.set_footer(text=footer_text)
+
+    # Create Button View
+    view = discord.ui.View(timeout=None)
+    btn = ReactionRoleButton(role_id=role.id, emoji=emoji, label=f"Get {role.name}")
+    view.add_item(btn)
+
+    try:
+        msg = await channel.send(content=role.mention, embed=embed, view=view, files=files if files else None, allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=True))
+        try:
+            await msg.add_reaction(emoji)
+        except Exception:
+            pass
+
+        bot.add_view(view, message_id=msg.id)
+
+        # Save to persistent database
+        reaction_roles[str(msg.id)] = {
+            "role_id": role.id,
+            "emoji": emoji,
+            "channel_id": channel.id,
+            "title": title
+        }
+        save_reaction_roles()
+
+        await interaction.followup.send(f"✅ Successfully posted Reaction Role announcement in {channel.mention} for **{role.name}**!", ephemeral=True)
+    except Exception as e:
+        print(f"[RR COMMAND ERROR] {e}")
+        await interaction.followup.send("Failed to post reaction role message! Check my channel permissions! 🥺", ephemeral=True)
+
+@bot.tree.command(name="multirrole", description="Posts a structured announcement with MULTIPLE Reaction Role buttons!")
+@app_commands.describe(
+    channel="The channel to post the multi-role selection in",
+    title="Main Title (e.g. Roles Selection)",
+    description="Body text (e.g. You can select multiple roles anytime)",
+    role1="First role to assign",
+    thumbnail_file="Optional: Upload thumbnail GIF/image directly from phone gallery",
+    image_file="Optional: Upload main banner GIF/image directly from phone gallery",
+    emoji1="Emoji for first role button (e.g. 📈)",
+    role2="Second role to assign",
+    emoji2="Emoji for second role button (e.g. 🛠️)",
+    role3="Third role to assign",
+    emoji3="Emoji for third role button (e.g. 𝓝𝓕𝓣)",
+    role4="Fourth role to assign",
+    emoji4="Emoji for fourth role button (e.g. 🚨)",
+    role5="Fifth role to assign",
+    emoji5="Emoji for fifth role button",
+    color="Optional: Sidebar hex color code (default: #00A8FC)"
+)
+async def multi_reaction_role_cmd(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+    title: str,
+    description: str,
+    role1: discord.Role,
+    thumbnail_file: Optional[discord.Attachment] = None,
+    image_file: Optional[discord.Attachment] = None,
+    emoji1: Optional[str] = None,
+    role2: Optional[discord.Role] = None,
+    emoji2: Optional[str] = None,
+    role3: Optional[discord.Role] = None,
+    emoji3: Optional[str] = None,
+    role4: Optional[discord.Role] = None,
+    emoji4: Optional[str] = None,
+    role5: Optional[discord.Role] = None,
+    emoji5: Optional[str] = None,
+    color: Optional[str] = "#00A8FC"
+):
+    if not is_mod_or_admin(interaction):
+        await interaction.response.send_message("❌ **Access Denied!** Only moderators and admins can use this command! 🥺", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    role_pairs = [(role1, emoji1)]
+    if role2: role_pairs.append((role2, emoji2))
+    if role3: role_pairs.append((role3, emoji3))
+    if role4: role_pairs.append((role4, emoji4))
+    if role5: role_pairs.append((role5, emoji5))
+
+    embed_color = parse_embed_color(color)
+
+    embed = discord.Embed(
+        title=title,
+        description=f"{description}\n\n👉 **Click any button below to get or remove your roles!**",
+        color=embed_color
+    )
+
+    files = await process_embed_attachments(thumbnail_file=thumbnail_file, image_file=image_file, embed=embed)
+
+    embed.set_footer(text="Multi-Role Selection • Click any button to toggle")
+
+    view = discord.ui.View(timeout=None)
+    for r, e in role_pairs:
+        btn = ReactionRoleButton(role_id=r.id, emoji=e, label=f"{r.name}")
+        view.add_item(btn)
+
+    try:
+        msg = await channel.send(embed=embed, view=view, files=files if files else None, allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=True))
+        bot.add_view(view, message_id=msg.id)
+
+        for r, e in role_pairs:
+            reaction_roles[str(msg.id)] = {
+                "role_id": r.id,
+                "emoji": e,
+                "channel_id": channel.id,
+                "title": title
+            }
+        save_reaction_roles()
+
+        roles_summary = ", ".join([f"**{r.name}** {e}" for r, e in role_pairs])
+        await interaction.followup.send(f"✅ Successfully posted Multi-Role embed in {channel.mention} with roles: {roles_summary}!", ephemeral=True)
+    except Exception as e:
+        print(f"[MULTI-RR ERROR] {e}")
+        await interaction.followup.send("Failed to post Multi-Role embed! Check my channel permissions! 🥺", ephemeral=True)
+
+@bot.tree.command(name="embed", description="Posts a beautifully structured announcement embed!")
+@app_commands.describe(
+    channel="The channel to post the embed in",
+    title="Main Title of the announcement",
+    description="Body text (supports markdown, headings, bullet points & #channels)",
+    image_file="Optional: Upload image or GIF file directly from gallery",
+    thumbnail_file="Optional: Upload thumbnail image or GIF directly from gallery",
+    image="Optional: Main banner Image/GIF URL",
+    thumbnail="Optional: Image/GIF URL for top-right thumbnail",
+    color="Optional: Sidebar hex color code (e.g. #00A8FC)",
+    footer="Optional: Footer text at bottom"
+)
+async def embed_cmd(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+    title: str,
+    description: str,
+    image_file: Optional[discord.Attachment] = None,
+    thumbnail_file: Optional[discord.Attachment] = None,
+    image: Optional[str] = None,
+    thumbnail: Optional[str] = None,
+    color: Optional[str] = "#00A8FC",
+    footer: Optional[str] = None
+):
+    if not is_mod_or_admin(interaction):
+        await interaction.response.send_message("❌ **Access Denied!** Only moderators and admins can post embeds! 🥺", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    embed_color = parse_embed_color(color)
+
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=embed_color
+    )
+
+    files = await process_embed_attachments(thumbnail_file=thumbnail_file, image_file=image_file, thumbnail_url=thumbnail, image_url=image, embed=embed)
+
+    if footer:
+        embed.set_footer(text=footer)
+
+    try:
+        await channel.send(embed=embed, files=files if files else None, allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=True))
+        await interaction.followup.send(f"✅ Successfully posted structured announcement in {channel.mention}!", ephemeral=True)
+    except Exception as e:
+        print(f"[EMBED ERROR] {e}")
+        await interaction.followup.send("Failed to post embed message! Check my permissions! 🥺", ephemeral=True)
+
+@bot.tree.command(name="announce", description="Creates and posts a beautifully structured announcement embed!")
+@app_commands.describe(
+    channel="The channel to post the announcement in",
+    title="Main Heading / Title of the announcement",
+    content="Main Announcement content/body (supports markdown, headings & #channels)",
+    role_to_ping="Optional: Role to ping/mention with the announcement (e.g. @everyone or @Role)",
+    image_file="Optional: Upload image, GIF, MP4, 3GP, or video file directly from gallery",
+    thumbnail_file="Optional: Upload thumbnail image, GIF, MP4, 3GP, or video file directly from gallery",
+    image="Optional: Main banner Image/GIF URL",
+    thumbnail="Optional: Image/GIF URL for top-right thumbnail",
+    color="Optional: Sidebar hex color code (default: #00A8FC)",
+    footer="Optional: Footer text at bottom"
+)
+async def announce_cmd(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+    title: str,
+    content: str,
+    role_to_ping: Optional[discord.Role] = None,
+    image_file: Optional[discord.Attachment] = None,
+    thumbnail_file: Optional[discord.Attachment] = None,
+    image: Optional[str] = None,
+    thumbnail: Optional[str] = None,
+    color: Optional[str] = "#00A8FC",
+    footer: Optional[str] = None
+):
+    if not is_mod_or_admin(interaction):
+        await interaction.response.send_message("❌ **Access Denied!** Only moderators and admins can post announcements! 🥺", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    embed_color = parse_embed_color(color)
+
+    embed = discord.Embed(
+        title=title,
+        description=content,
+        color=embed_color
+    )
+
+    files = await process_embed_attachments(thumbnail_file=thumbnail_file, image_file=image_file, thumbnail_url=thumbnail, image_url=image, embed=embed)
+
+    if footer:
+        embed.set_footer(text=footer)
+
+    pings = []
+    if role_to_ping:
+        pings.append(role_to_ping.mention)
+    if "@everyone" in content:
+        pings.append("@everyone")
+    if "@here" in content:
+        pings.append("@here")
+
+    ping_text = " ".join(dict.fromkeys(pings)) if pings else None
+
+    try:
+        if ping_text:
+            await channel.send(content=ping_text, embed=embed, files=files if files else None, allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=True))
+        else:
+            await channel.send(embed=embed, files=files if files else None, allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=True))
+        await interaction.followup.send(f"📢 Successfully posted structured announcement in {channel.mention}!", ephemeral=True)
+    except Exception as e:
+        print(f"[ANNOUNCE ERROR] {e}")
+        await interaction.followup.send("Failed to post announcement! Check my permissions! 🥺", ephemeral=True)
+
+@bot.tree.command(name="setwelcome", description="Sets the channel where new member welcome cards are posted!")
+@app_commands.describe(channel="The channel for welcome messages")
+async def set_welcome_cmd(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not is_mod_or_admin(interaction):
+        await interaction.response.send_message("❌ **Access Denied!** Only moderators and admins can use this command! 🥺", ephemeral=True)
+        return
+    welcome_channel_config[str(interaction.guild_id)] = channel.id
+    await interaction.response.send_message(f"✅ Welcome channel set to {channel.mention}!", ephemeral=True)
+
+@bot.tree.command(name="testwelcome", description="Generates and posts a test welcome card in this channel!")
+async def test_welcome_cmd(interaction: discord.Interaction):
+    if not is_mod_or_admin(interaction):
+        await interaction.response.send_message("❌ **Access Denied!** Only moderators and admins can test welcome card! 🥺", ephemeral=True)
+        return
+    await interaction.response.defer()
+    
+    server_name = interaction.guild.name if interaction.guild else os.getenv("SERVER_NAME", "Differential Degens")
+    user_display_name = getattr(interaction.user, 'global_name', None) or getattr(interaction.user, 'display_name', None) or interaction.user.name
+    member_count = interaction.guild.member_count if interaction.guild else 15
+    avatar_url = interaction.user.display_avatar.with_format("png").with_size(512).url
+    
+    card_buf = await create_welcome_card(
+        avatar_url=avatar_url,
+        member_name=user_display_name,
+        member_count=member_count,
+        server_name=server_name
+    )
+    
+    welcome_text = f"Welcome <@{interaction.user.id}> to **{server_name}** ❤️"
+    
+    if card_buf:
+        card_buf.seek(0)
+        file = discord.File(fp=card_buf, filename="welcome.png")
+        await interaction.followup.send(content=welcome_text, file=file)
+    else:
+        await interaction.followup.send(content=welcome_text)
+
+@bot.tree.command(name="sharelink", description="Posts a rich, beautiful embed for any Discord server invite link!")
+@app_commands.describe(
+    invite="The Discord invite link or code (e.g. discord.gg/code)",
+    channel="Optional: Channel to post the invite embed in",
+    note="Optional: Custom note or description to include",
+    thumbnail_file="Optional: Upload custom logo/thumbnail GIF/image from phone gallery",
+    banner_file="Optional: Upload custom banner/GIF image from phone gallery",
+    banner_url="Optional: Custom banner or GIF URL"
+)
+async def share_link_cmd(
+    interaction: discord.Interaction,
+    invite: str,
+    channel: Optional[discord.TextChannel] = None,
+    note: Optional[str] = None,
+    thumbnail_file: Optional[discord.Attachment] = None,
+    banner_file: Optional[discord.Attachment] = None,
+    banner_url: Optional[str] = None
+):
+    if not is_mod_or_admin(interaction):
+        await interaction.response.send_message("❌ **Access Denied!** Only moderators and admins can use this command! 🥺", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    target_channel = channel or interaction.channel
+    info = await fetch_invite_info(invite)
+    if not info:
+        await interaction.followup.send("⚠️ Could not fetch details for that Discord invite link! Check if the link is valid! 🥺", ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title=f"✨ {info['guild_name']}",
+        color=discord.Color.from_rgb(0, 168, 252)
+    )
+
+    desc_parts = []
+    if note:
+        desc_parts.append(note)
+    if info['description']:
+        desc_parts.append(f"*{info['description']}*")
+
+    desc_parts.append(f"\n👉 **Join Link:** {info['invite_url']}")
+    embed.description = "\n\n".join(desc_parts)
+
+    if thumbnail_file and thumbnail_file.url:
+        embed.set_thumbnail(url=thumbnail_file.url)
+    elif info['icon_url']:
+        embed.set_thumbnail(url=info['icon_url'])
+
+    # Set banner (custom file > custom url > official server banner)
+    if banner_file and banner_file.url:
+        embed.set_image(url=banner_file.url)
+    elif banner_url:
+        res_banner = await resolve_image_url(banner_url)
+        if res_banner:
+            embed.set_image(url=res_banner)
+    elif info['banner_url']:
+        embed.set_image(url=info['banner_url'])
+
+    embed.add_field(name="👥 Total Members", value=f"`{info['member_count']:,}`", inline=True)
+    embed.add_field(name="🟢 Online Members", value=f"`{info['online_count']:,}`", inline=True)
+    embed.set_footer(text=f"Server ID: {info['guild_id']} • Shared by {interaction.user.display_name}")
+
+    view = discord.ui.View()
+    join_btn = discord.ui.Button(label=f"Join {info['guild_name']} 🚀", url=info['invite_url'], style=discord.ButtonStyle.link)
+    view.add_item(join_btn)
+
+    try:
+        await target_channel.send(embed=embed, view=view)
+        await interaction.followup.send(f"✅ Successfully posted server invite embed for **{info['guild_name']}** in {target_channel.mention}!", ephemeral=True)
+    except Exception as e:
+        print(f"[SHARELINK ERROR] {e}")
+        await interaction.followup.send("Failed to post server invite embed! Check my channel permissions! 🥺", ephemeral=True)
+
+@bot.tree.command(name="delete", description="Deletes a specified number of messages from this channel!")
+@app_commands.describe(amount="Number of messages to delete", target="Optional: Delete messages only from this user")
+async def delete_cmd(interaction: discord.Interaction, amount: int, target: Optional[discord.User] = None):
+    if not is_mod_or_admin(interaction):
+        await interaction.response.send_message("❌ **Access Denied!** Only moderators and admins can delete messages! 🥺", ephemeral=True)
+        return
+
+    if amount <= 0:
+        await interaction.response.send_message("Give me a real number greater than 0, babe! 💕", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        if target:
+            deleted_count = 0
+            async for msg in interaction.channel.history(limit=500):
+                if msg.author.id == target.id:
+                    try:
+                        await msg.delete()
+                        deleted_count += 1
+                        if deleted_count >= amount:
+                            break
+                    except Exception:
+                        pass
+            await interaction.followup.send(f"Successfully deleted **{deleted_count}** message(s) sent by <@{target.id}>! ✨")
+        else:
+            deleted_count = 0
+            left_to_delete = amount
+            while left_to_delete > 0:
+                fetch_amount = min(100, left_to_delete)
+                messages = [m async for m in interaction.channel.history(limit=fetch_amount)]
+                if not messages:
+                    break
+                deleted = await interaction.channel.purge(limit=len(messages), bulk=True)
+                deleted_count += len(deleted)
+                left_to_delete -= len(messages)
+                if len(deleted) < len(messages):
+                    break
+            await interaction.followup.send(f"Successfully wiped **{deleted_count}** message(s) from the channel! ✨\n*(Note: Discord prevents wiping messages older than 14 days)*")
+    except Exception as e:
+        print(f"[DELETE ERROR] {e}")
+        await interaction.followup.send("Whoops! Discord threw a weird error trying to delete those... 🥺")
+
+@bot.tree.command(name="stats", description="Displays chat and voice activity statistics for a user!")
+@app_commands.describe(target="The user to check stats for")
+async def stats_cmd(interaction: discord.Interaction, target: Optional[discord.User] = None):
+    await interaction.response.defer()
+    usr = target or interaction.user
+    embed = await build_user_stats_embed(usr, interaction.guild)
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="serverinfo", description="Displays information about the current server!")
+async def serverinfo_cmd(interaction: discord.Interaction):
+    embed = discord.Embed(title=f"{interaction.guild.name} | Server Info", color=discord.Color.from_rgb(43, 45, 49))
+    if interaction.guild.icon:
+        embed.set_thumbnail(url=interaction.guild.icon.url)
+    embed.add_field(name="👑 Owner", value=f"<@{interaction.guild.owner_id}>", inline=True)
+    embed.add_field(name="👥 Members", value=f"{interaction.guild.member_count}", inline=True)
+    embed.add_field(name="📅 Created On", value=f"<t:{int(interaction.guild.created_at.timestamp())}:D>", inline=True)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="userinfo", description="Displays information about a user!")
+@app_commands.describe(target="The user to check")
+async def userinfo_cmd(interaction: discord.Interaction, target: Optional[discord.User] = None):
+    usr = target or interaction.user
+    member = interaction.guild.get_member(usr.id) if interaction.guild else None
+    embed = discord.Embed(color=member.color if member else discord.Color.from_rgb(43, 45, 49))
+    embed.set_author(name=usr.name, icon_url=usr.display_avatar.url)
+    embed.add_field(name="ID", value=str(usr.id), inline=True)
+    if member and member.joined_at:
+        embed.add_field(name="Joined Server", value=f"<t:{int(member.joined_at.timestamp())}:R>", inline=True)
+# -------- Welcome Event Listener -------- #
+@bot.event
+async def on_member_join(member: discord.Member):
+    channel_id_str = os.getenv("WELCOME_CHANNEL_ID", "1530862954143023184")
+    try:
+        channel_id = int(channel_id_str)
+    except ValueError:
+        print(f"[WELCOME ERROR] Invalid WELCOME_CHANNEL_ID: {channel_id_str}")
+        return
+
+    channel = member.guild.get_channel(channel_id) or bot.get_channel(channel_id)
+    if not channel:
+        print(f"[WELCOME ERROR] Could not find channel with ID {channel_id}")
+        return
+
+    user_display_name = getattr(member, 'global_name', None) or getattr(member, 'display_name', None) or member.name
+    server_name = os.getenv("SERVER_NAME", member.guild.name if member.guild else "Differential Degens")
+    member_count = member.guild.member_count or 0
+
+    avatar_url = member.display_avatar.with_format("png").with_size(512).url
+    card_buf = await create_welcome_card(
+        avatar_url=avatar_url,
+        member_name=user_display_name,
+        member_count=member_count,
+        server_name=server_name
+    )
+    
+    welcome_text = f"Welcome {member.mention} to **{server_name}** ❤️"
+    
+    if card_buf:
+        card_buf.seek(0)
+        file = discord.File(fp=card_buf, filename=f"welcome_{member.id}.png")
+        try:
+            await channel.send(content=welcome_text, file=file)
+            print(f"[WELCOME SUCCESS] Welcome card sent for {member.name} in channel {channel_id}")
+        except Exception as e:
+            print(f"[WELCOME SEND ERROR] {e}")
+    else:
+        try:
+            await channel.send(content=welcome_text)
+            print(f"[WELCOME SUCCESS] Welcome message sent for {member.name} in channel {channel_id}")
+        except Exception as e:
+            print(f"[WELCOME SEND ERROR] {e}")
+
+# -------- Giveaway System UI Views, Modals & Handlers -------- #
+
+def build_giveaway_embed(g: dict) -> discord.Embed:
+    title = g.get("title", "Giveaway")
+    description = g.get("description", "")
+    hosted_by = g.get("hosted_by", "Admin")
+    guaranteed = g.get("guaranteed_spots", 0)
+    fcfs = g.get("fcfs_spots", 0)
+    min_per_user = g.get("min_per_user", 1)
+    max_per_user = g.get("max_per_user", 1)
+    ends_at = g.get("ends_at", 0)
+    network = g.get("network", "Ethereum")
+    banner_url = g.get("banner_url", None)
+    tasks = g.get("tasks", {})
+    winners_text = g.get("winners_text", None)
+
+    g_id = g.get("id", "")
+    entries_count = len(giveaway_entries.get(g_id, [])) if g_id else g.get("entries_count", 0)
+
+    color = discord.Color.from_rgb(43, 92, 255)
+    
+    desc_body = (
+        f"{description}\n\n"
+        f"**Type**\nRaffle\n\n"
+        f"**Spots**\n"
+        f"💎 Guaranteed (GTD): **{guaranteed}** (Min: {min_per_user} | Max: {max_per_user} per user)\n"
+        f"⚡ FCFS: **{fcfs}** (Min: {min_per_user} | Max: {max_per_user} per user)\n\n"
+        f"👥 **Live Participants**: **{entries_count}** entered\n\n"
+        f"**Ends**\n<t:{ends_at}:R>\n\n"
+        f"**Network**\n{network}"
+    )
+    if winners_text:
+        desc_body += f"\n\n🏆 **Winners Announced!**\n{winners_text}"
+
+    embed = discord.Embed(
+        title=f"**{title}**",
+        description=desc_body,
+        color=color
+    )
+    embed.set_author(name=f"Hosted by {hosted_by}")
+
+    req_lines = []
+    dynamic_tasks = tasks.get("dynamic_tasks", [])
+    if dynamic_tasks:
+        for t in dynamic_tasks:
+            t_type = t.get("type")
+            t_val = t.get("value", "")
+            if t_type == "twitter_follow":
+                handle = t_val if not t_val.startswith("@") else t_val[1:]
+                req_lines.append(f"🐦 Follow [{t_val}](https://twitter.com/{handle})")
+            elif t_type == "twitter_like":
+                req_lines.append(f"❤️ Like [this tweet]({t_val})")
+            elif t_type == "twitter_retweet":
+                req_lines.append(f"🔄 Retweet [this tweet]({t_val})")
+            elif t_type == "tiktok_follow":
+                req_lines.append(f"🎵 Follow TikTok `{t_val}`")
+            elif t_type == "youtube_follow":
+                req_lines.append(f"▶️ Subscribe YouTube `{t_val}`")
+            elif t_type == "role_require":
+                req_lines.append(f"🏅 Require Role `{t_val}`")
+            else:
+                req_lines.append(f"📝 {t_val}")
+    else:
+        roles = tasks.get("roles", [])
+        if roles:
+            req_lines.append(f"🏅 Have one of the following roles: {', '.join(roles)}")
+        if tasks.get("twitter_follow"):
+            req_lines.append(f"🐦 Follow [{tasks['twitter_follow']}](https://twitter.com/{tasks['twitter_follow']})")
+        if tasks.get("twitter_like"):
+            req_lines.append(f"❤️ Like [this tweet]({tasks['twitter_like']})")
+        if tasks.get("twitter_retweet"):
+            req_lines.append(f"🔄 Retweet [this tweet]({tasks['twitter_retweet']})")
+        if tasks.get("tiktok_follow"):
+            req_lines.append(f"🎵 Follow TikTok `{tasks['tiktok_follow']}`")
+        if tasks.get("youtube_follow"):
+            req_lines.append(f"▶️ Subscribe YouTube `{tasks['youtube_follow']}`")
+        if tasks.get("manual_task"):
+            req_lines.append(f"📝 {tasks['manual_task']}")
+
+    if tasks.get("require_evm"):
+        req_lines.append("🔷 Require EVM Wallet Address")
+    if tasks.get("require_solana"):
+        req_lines.append("🟣 Require Solana Wallet Address")
+
+    if req_lines:
+        embed.add_field(name="Requirements:", value="\n".join(req_lines), inline=False)
+
+    if banner_url:
+        embed.set_image(url=banner_url)
+
+    embed.set_footer(text="Powered by Arcie Bot")
+    return embed
+
+
+class JoinGiveawayModal(discord.ui.Modal, title="Giveaway Profile & Wallet Setup"):
+    twitter = discord.ui.TextInput(label="Twitter Handle", placeholder="@yourhandle", required=False)
+    telegram = discord.ui.TextInput(label="Telegram Handle", placeholder="@username", required=False)
+    evm_wallet = discord.ui.TextInput(label="EVM Wallet Address (0x...)", placeholder="0x1234...5678", required=False)
+    solana_wallet = discord.ui.TextInput(label="Solana Wallet Address", placeholder="Solana Wallet Public Key", required=False)
+
+    def __init__(self, giveaway_id: str):
+        super().__init__()
+        self.giveaway_id = giveaway_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
+        if uid not in user_profiles:
+            user_profiles[uid] = {
+                "display_name": interaction.user.display_name,
+                "username": interaction.user.name,
+                "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+            }
+        
+        if self.twitter.value: user_profiles[uid]["twitter"] = self.twitter.value.strip()
+        if self.telegram.value: user_profiles[uid]["telegram"] = self.telegram.value.strip()
+        if self.evm_wallet.value: user_profiles[uid]["evm_wallet"] = self.evm_wallet.value.strip()
+        if self.solana_wallet.value: user_profiles[uid]["solana_wallet"] = self.solana_wallet.value.strip()
+        save_user_profiles()
+
+        await register_giveaway_entry(interaction, self.giveaway_id)
+
+
+class GiveawayView(discord.ui.View):
+    def __init__(self, giveaway_id: str, web_url: str = ""):
+        super().__init__(timeout=None)
+        self.giveaway_id = giveaway_id
+
+        # Counter buttons matching screenshot design: 🟢 valid, 🟡 pending, 🔴 ineligible
+        g_entries = giveaway_entries.get(giveaway_id, [])
+        valid_count = len([e for e in g_entries if e.get("task_status") == "verified"])
+        pending_count = len([e for e in g_entries if e.get("task_status") == "pending"])
+        ineligible_count = len([e for e in g_entries if e.get("task_status") == "ineligible"])
+
+        self.add_item(discord.ui.Button(label=f"🟢 {valid_count}", style=discord.ButtonStyle.secondary, disabled=True, row=1))
+        self.add_item(discord.ui.Button(label=f"🟡 {pending_count}", style=discord.ButtonStyle.secondary, disabled=True, row=1))
+        self.add_item(discord.ui.Button(label=f"🔴 {ineligible_count}", style=discord.ButtonStyle.secondary, disabled=True, row=1))
+
+    @discord.ui.button(label="Join Giveaway", style=discord.ButtonStyle.primary, custom_id="join_giveaway_main_btn", row=0)
+    async def join_giveaway(self, interaction: discord.Interaction, button: discord.ui.Button):
+        g = giveaways.get(self.giveaway_id)
+        if not g:
+            await interaction.response.send_message("❌ Giveaway not found or has been removed.", ephemeral=True)
+            return
+
+        now = int(time.time())
+        if not g.get("is_active", True) or g.get("ends_at", 0) <= now:
+            await interaction.response.send_message("🔒 This giveaway has already ended!", ephemeral=True)
+            return
+
+        uid = str(interaction.user.id)
+        prof = user_profiles.get(uid, {})
+        tasks = g.get("tasks", {})
+
+        req_evm = tasks.get("require_evm", False)
+        req_solana = tasks.get("require_solana", False)
+
+        missing_evm = req_evm and not prof.get("evm_wallet")
+        missing_solana = req_solana and not prof.get("solana_wallet")
+
+        if missing_evm or missing_solana:
+            modal = JoinGiveawayModal(self.giveaway_id)
+            if prof.get("twitter"): modal.twitter.default = prof.get("twitter")
+            if prof.get("telegram"): modal.telegram.default = prof.get("telegram")
+            if prof.get("evm_wallet"): modal.evm_wallet.default = prof.get("evm_wallet")
+            if prof.get("solana_wallet"): modal.solana_wallet.default = prof.get("solana_wallet")
+            await interaction.response.send_modal(modal)
+            return
+
+        await register_giveaway_entry(interaction, self.giveaway_id)
+
+    @discord.ui.button(label="View Your Entry", style=discord.ButtonStyle.secondary, custom_id="view_your_entry_main_btn", row=0)
+    async def view_entry(self, interaction: discord.Interaction, button: discord.ui.Button):
+        g_id = self.giveaway_id
+        g = giveaways.get(g_id)
+        entries = giveaway_entries.get(g_id, [])
+        uid = str(interaction.user.id)
+
+        my_entry = next((e for e in entries if e.get("user_id") == uid), None)
+        if not my_entry:
+            await interaction.response.send_message("❌ You have not entered this giveaway yet. Click **[Join Giveaway]** to enter!", ephemeral=True)
+            return
+
+        title_name = g.get('title', 'Giveaway') if g else 'Giveaway'
+        embed = discord.Embed(title=f"📋 Your Entry Details for {title_name}", color=discord.Color.from_rgb(43, 92, 255))
+        embed.add_field(name="Joined At", value=f"<t:{my_entry['joined_at']}:f>", inline=True)
+        embed.add_field(name="Task Status", value=f"**{my_entry.get('task_status', 'pending').upper()}**", inline=True)
+        if my_entry.get("winner_type"):
+            embed.add_field(name="🏆 Result", value=f"**{my_entry['winner_type'].upper()} WINNER!**", inline=False)
+        embed.add_field(name="EVM Wallet", value=f"`{my_entry.get('evm_wallet') or 'Not provided'}`", inline=False)
+        embed.add_field(name="Solana Wallet", value=f"`{my_entry.get('solana_wallet') or 'Not provided'}`", inline=False)
+        embed.add_field(name="Twitter", value=my_entry.get("twitter") or "Not provided", inline=True)
+        embed.add_field(name="Telegram", value=my_entry.get("telegram") or "Not provided", inline=True)
+
+        embed.set_footer(text="Powered by Arcie Bot")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+async def register_giveaway_entry(interaction: discord.Interaction, giveaway_id: str):
+    g = giveaways.get(giveaway_id)
+    if not g:
+        msg = "❌ Giveaway not found."
+        if not interaction.response.is_done(): await interaction.response.send_message(msg, ephemeral=True)
+        else: await interaction.followup.send(msg, ephemeral=True)
+        return
+
+    entries = giveaway_entries.setdefault(giveaway_id, [])
+    uid = str(interaction.user.id)
+    
+    existing = next((e for e in entries if e["user_id"] == uid), None)
+    if existing:
+        msg = f"✅ You are already registered for **{g['title']}**!"
+        if not interaction.response.is_done(): await interaction.response.send_message(msg, ephemeral=True)
+        else: await interaction.followup.send(msg, ephemeral=True)
+        return
+
+    prof = user_profiles.get(uid, {})
+    new_entry = {
+        "user_id": uid,
+        "username": str(interaction.user),
+        "display_name": interaction.user.display_name,
+        "joined_at": int(time.time()),
+        "evm_wallet": prof.get("evm_wallet", ""),
+        "solana_wallet": prof.get("solana_wallet", ""),
+        "twitter": prof.get("twitter", ""),
+        "telegram": prof.get("telegram", ""),
+        "task_status": "pending",
+        "winner_type": None
+    }
+    entries.append(new_entry)
+    g["entries_count"] = len(entries)
+    save_giveaways()
+    save_giveaway_entries()
+
+    await update_giveaway_discord_message(giveaway_id)
+
+    msg = f"🎉 **Success!** You have joined **{g['title']}**! Complete all requirements to qualify."
+    if not interaction.response.is_done(): await interaction.response.send_message(msg, ephemeral=True)
+    else: await interaction.followup.send(msg, ephemeral=True)
+
+
+async def update_giveaway_discord_message(giveaway_id: str):
+    g = giveaways.get(giveaway_id)
+    if not g or not g.get("channel_id") or not g.get("message_id"):
+        return
+    try:
+        channel = bot.get_channel(int(g["channel_id"]))
+        if not channel:
+            return
+        msg = await channel.fetch_message(int(g["message_id"]))
+        if msg:
+            embed = build_giveaway_embed(g)
+            port = os.getenv("PORT", "3000")
+            domain = os.getenv("APP_URL", f"http://localhost:{port}")
+            view = GiveawayView(giveaway_id, domain)
+            await msg.edit(embed=embed, view=view)
+    except Exception as e:
+        print(f"[UPDATE EMBED ERROR] {e}")
+
+
+# -------- Slash Commands for Profile & Giveaways -------- #
+
+class UserProfileModal(discord.ui.Modal, title="Update Web3 Socials & Wallets"):
+    twitter = discord.ui.TextInput(label="Twitter / X Handle", placeholder="@yourhandle", required=False)
+    telegram = discord.ui.TextInput(label="Telegram Handle", placeholder="@username", required=False)
+    evm = discord.ui.TextInput(label="EVM Wallet Address", placeholder="0x1234...5678", required=False)
+    solana = discord.ui.TextInput(label="Solana Wallet Address", placeholder="Public Key...", required=False)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
+        if uid not in user_profiles:
+            user_profiles[uid] = {
+                "display_name": interaction.user.display_name,
+                "username": interaction.user.name,
+                "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+            }
+        
+        user_profiles[uid]["twitter"] = self.twitter.value.strip() if self.twitter.value else ""
+        user_profiles[uid]["telegram"] = self.telegram.value.strip() if self.telegram.value else ""
+        user_profiles[uid]["evm_wallet"] = self.evm.value.strip() if self.evm.value else ""
+        user_profiles[uid]["solana_wallet"] = self.solana.value.strip() if self.solana.value else ""
+        save_user_profiles()
+
+        embed = discord.Embed(title="👤 Profile & Wallets Saved", color=discord.Color.green())
+        embed.add_field(name="Twitter", value=self.twitter.value or "Not set", inline=True)
+        embed.add_field(name="Telegram", value=self.telegram.value or "Not set", inline=True)
+        embed.add_field(name="EVM Wallet", value=f"`{self.evm.value}`" if self.evm.value else "Not set", inline=False)
+        embed.add_field(name="Solana Wallet", value=f"`{self.solana.value}`" if self.solana.value else "Not set", inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="profile", description="Manage your Web3 wallets & social handles for giveaways!")
+async def profile_cmd(interaction: discord.Interaction):
+    uid = str(interaction.user.id)
+    prof = user_profiles.get(uid, {})
+    modal = UserProfileModal()
+    if prof.get("twitter"): modal.twitter.default = prof.get("twitter")
+    if prof.get("telegram"): modal.telegram.default = prof.get("telegram")
+    if prof.get("evm_wallet"): modal.evm.default = prof.get("evm_wallet")
+    if prof.get("solana_wallet"): modal.solana.default = prof.get("solana_wallet")
+    await interaction.response.send_modal(modal)
+
+
+@bot.tree.command(name="set-evm-wallet", description="Set your EVM (Ethereum) wallet address.")
+@app_commands.describe(address="EVM Wallet Address (0x...)")
+async def set_evm_wallet_cmd(interaction: discord.Interaction, address: str):
+    uid = str(interaction.user.id)
+    if uid not in user_profiles:
+        user_profiles[uid] = {
+            "display_name": interaction.user.display_name,
+            "username": interaction.user.name,
+            "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        }
+    user_profiles[uid]["evm_wallet"] = address.strip()
+    save_user_profiles()
+    await interaction.response.send_message(f"✅ **EVM Wallet Updated!**\nAddress: `{address.strip()}`", ephemeral=True)
+
+
+@bot.tree.command(name="set-solana-wallet", description="Set your Solana wallet address.")
+@app_commands.describe(address="Solana Wallet Public Key")
+async def set_solana_wallet_cmd(interaction: discord.Interaction, address: str):
+    uid = str(interaction.user.id)
+    if uid not in user_profiles:
+        user_profiles[uid] = {
+            "display_name": interaction.user.display_name,
+            "username": interaction.user.name,
+            "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        }
+    user_profiles[uid]["solana_wallet"] = address.strip()
+    save_user_profiles()
+    await interaction.response.send_message(f"✅ **Solana Wallet Updated!**\nAddress: `{address.strip()}`", ephemeral=True)
+
+
+@bot.tree.command(name="set-twitter", description="Set your Twitter / X handle.")
+@app_commands.describe(handle="Twitter handle (e.g. @yourhandle)")
+async def set_twitter_cmd(interaction: discord.Interaction, handle: str):
+    uid = str(interaction.user.id)
+    clean_handle = handle.strip()
+    if not clean_handle.startswith("@"):
+        clean_handle = f"@{clean_handle}"
+    if uid not in user_profiles:
+        user_profiles[uid] = {
+            "display_name": interaction.user.display_name,
+            "username": interaction.user.name,
+            "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        }
+    user_profiles[uid]["twitter"] = clean_handle
+    save_user_profiles()
+    await interaction.response.send_message(f"✅ **Twitter Handle Updated!**\nHandle: **{clean_handle}**", ephemeral=True)
+
+
+@bot.tree.command(name="set-telegram", description="Set your Telegram username.")
+@app_commands.describe(username="Telegram username (e.g. @username)")
+async def set_telegram_cmd(interaction: discord.Interaction, username: str):
+    uid = str(interaction.user.id)
+    clean_username = username.strip()
+    if not clean_username.startswith("@"):
+        clean_username = f"@{clean_username}"
+    if uid not in user_profiles:
+        user_profiles[uid] = {
+            "display_name": interaction.user.display_name,
+            "username": interaction.user.name,
+            "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        }
+    user_profiles[uid]["telegram"] = clean_username
+    save_user_profiles()
+    await interaction.response.send_message(f"✅ **Telegram Handle Updated!**\nUsername: **{clean_username}**", ephemeral=True)
+
+
+@bot.tree.command(name="user", description="Displays complete Web3 profile & wallet details for a user.")
+@app_commands.describe(target="The user to view details for")
+async def user_details_cmd(interaction: discord.Interaction, target: Optional[discord.User] = None):
+    try:
+        await interaction.response.defer()
+        usr = target or interaction.user
+        uid = str(usr.id)
+        prof = user_profiles.get(uid, {})
+
+        twitter_val = f"**{prof.get('twitter')}**" if prof.get("twitter") else "*Not set by user yet*"
+        telegram_val = f"**{prof.get('telegram')}**" if prof.get("telegram") else "*Not set by user yet*"
+        evm_val = f"`{prof.get('evm_wallet')}`" if prof.get("evm_wallet") else "*Not set by user yet*"
+        solana_val = f"`{prof.get('solana_wallet')}`" if prof.get("solana_wallet") else "*Not set by user yet*"
+
+        embed = discord.Embed(
+            title=f"👤 Web3 Profile - {usr.display_name}",
+            color=discord.Color.from_rgb(43, 92, 255)
+        )
+        embed.set_thumbnail(url=usr.display_avatar.url)
+        embed.add_field(name="User", value=f"{usr.mention} (`{usr.id}`)", inline=False)
+        embed.add_field(name="🐦 Twitter", value=twitter_val, inline=True)
+        embed.add_field(name="✈️ Telegram", value=telegram_val, inline=True)
+        embed.add_field(name="🔷 EVM Wallet", value=evm_val, inline=False)
+        embed.add_field(name="🟣 Solana Wallet", value=solana_val, inline=False)
+
+        if is_bot_admin_by_id(uid):
+            embed.set_footer(text="👑 Bot Administrator | Powered by Arcie Bot")
+        else:
+            embed.set_footer(text="Powered by Arcie Bot")
+
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        print(f"[USER CMD ERROR] {e}")
+        if not interaction.response.is_done():
+            await interaction.response.send_message("❌ Failed to fetch user profile.", ephemeral=True)
+        else:
+            await interaction.followup.send("❌ Failed to fetch user profile.", ephemeral=True)
+
+
+@bot.tree.command(name="set-wallet", description="Quickly set your EVM or Solana wallet address.")
+@app_commands.describe(evm="EVM Wallet (0x...)", solana="Solana Wallet Address")
+async def set_wallet_cmd(interaction: discord.Interaction, evm: Optional[str] = None, solana: Optional[str] = None):
+    if not evm and not solana:
+        await interaction.response.send_message("Please provide at least one wallet address (evm or solana).", ephemeral=True)
+        return
+    uid = str(interaction.user.id)
+    if uid not in user_profiles:
+        user_profiles[uid] = {
+            "display_name": interaction.user.display_name,
+            "username": interaction.user.name,
+            "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        }
+    if evm: user_profiles[uid]["evm_wallet"] = evm.strip()
+    if solana: user_profiles[uid]["solana_wallet"] = solana.strip()
+    save_user_profiles()
+    await interaction.response.send_message("✅ Wallet address(es) updated successfully!", ephemeral=True)
+
+
+@bot.tree.command(name="set-socials", description="Quickly set your Twitter and Telegram handles.")
+@app_commands.describe(twitter="Twitter @handle", telegram="Telegram @username")
+async def set_socials_cmd(interaction: discord.Interaction, twitter: Optional[str] = None, telegram: Optional[str] = None):
+    if not twitter and not telegram:
+        await interaction.response.send_message("Please provide at least one handle (twitter or telegram).", ephemeral=True)
+        return
+    uid = str(interaction.user.id)
+    if uid not in user_profiles:
+        user_profiles[uid] = {
+            "display_name": interaction.user.display_name,
+            "username": interaction.user.name,
+            "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        }
+    if twitter: user_profiles[uid]["twitter"] = twitter.strip()
+    if telegram: user_profiles[uid]["telegram"] = telegram.strip()
+    save_user_profiles()
+    await interaction.response.send_message("✅ Social handles updated successfully!", ephemeral=True)
+
+
+@bot.tree.command(name="giveaways", description="List active giveaways and access the Web Dashboard.")
+async def giveaways_cmd(interaction: discord.Interaction):
+    port = os.getenv("PORT", "3000")
+    domain = os.getenv("APP_URL", f"http://localhost:{port}")
+    active_g = [g for g in giveaways.values() if g.get("is_active") and g.get("ends_at", 0) > time.time()]
+
+    embed = discord.Embed(
+        title="🎁 Web3 Giveaway Hub",
+        description=f"There are currently **{len(active_g)}** active giveaway(s)!\n\nVisit our web dashboard to participate and create giveaways:",
+        color=discord.Color.from_rgb(43, 92, 255)
+    )
+    view = discord.ui.View()
+    view.add_item(discord.ui.Button(label="Open Web Dashboard ↗", url=domain, style=discord.ButtonStyle.link))
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+# -------- Live Token Price Helper & Listener -------- #
+# Common ticker → CoinGecko ID mapping for fast lookups
+COINGECKO_MAP = {
+    "btc": "bitcoin", "bitcoin": "bitcoin",
+    "eth": "ethereum", "ethereum": "ethereum",
+    "sol": "solana", "solana": "solana",
+    "bnb": "binancecoin", "xrp": "ripple",
+    "ada": "cardano", "doge": "dogecoin",
+    "shib": "shiba-inu", "pepe": "pepe",
+    "sui": "sui", "apt": "aptos",
+    "avax": "avalanche-2", "matic": "matic-network",
+    "pol": "matic-network", "near": "near",
+    "ftm": "fantom", "arb": "arbitrum",
+    "op": "optimism", "link": "chainlink",
+    "uni": "uniswap", "ton": "the-open-network",
+    "bonk": "bonk", "wif": "dogwifhat",
+    "render": "render-token", "rndr": "render-token",
+    "fet": "fetch-ai", "inj": "injective-protocol",
+    "monad": "monad", "dot": "polkadot",
+    "atom": "cosmos", "algo": "algorand",
+    "vet": "vechain", "hbar": "hedera-hashgraph",
+    "fil": "filecoin", "icp": "internet-computer",
+    "sand": "the-sandbox", "mana": "decentraland",
+    "aave": "aave", "mkr": "maker",
+    "crv": "curve-dao-token", "ldo": "lido-dao",
+    "grt": "the-graph", "enj": "enjincoin",
+    "gala": "gala", "axs": "axie-infinity",
+    "cake": "pancakeswap-token", "1inch": "1inch",
+    "snx": "havven", "comp": "compound-governance-token",
+    "xlm": "stellar", "trx": "tron",
+    "ltc": "litecoin", "bch": "bitcoin-cash",
+    "etc": "ethereum-classic", "mina": "mina-protocol",
+    "sei": "sei-network", "tia": "celestia",
+    "jup": "jupiter-exchange-solana", "pyth": "pyth-network",
+    "w": "wormhole", "strk": "starknet",
+    "zk": "zksync", "blast": "blast",
+    "eigen": "eigenlayer", "pendle": "pendle",
+    "ondo": "ondo-finance", "ethfi": "ether-fi",
+    "ena": "ethena", "aero": "aerodrome-finance",
+    "kas": "kaspa", "floki": "floki",
+    "popcat": "popcat", "mog": "mog-coin",
+    "brett": "brett", "neiro": "neiro-on-eth",
+    "turbo": "turbo", "trump": "official-trump",
+    "virtual": "virtual-protocol", "ai16z": "ai16z",
+    "grass": "grass", "io": "io-net",
+    "tao": "bittensor", "arkm": "arkham",
+    "ar": "arweave", "rune": "thorchain",
+    "osmo": "osmosis", "sonic": "sonic-3",
+    "s": "sonic-3", "bera": "berachain",
+    "move": "movement", "ip": "story-protocol",
+    "form": "binaryx", "gensyn": "gensyn",
+}
+
+async def _coingecko_search(symbol: str) -> Optional[str]:
+    """Search CoinGecko for a token by symbol, returns coingecko id or None."""
+    url = f"https://api.coingecko.com/api/v3/search?query={symbol}"
+    headers = {"Accept": "application/json", "User-Agent": "ArcieBot/1.0"}
+    global session
+    if session is None or session.closed:
+        session = aiohttp.ClientSession()
+    try:
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                coins = data.get("coins", [])
+                sym_lower = symbol.lower()
+                # Exact symbol match first
+                for coin in coins:
+                    if coin.get("symbol", "").lower() == sym_lower:
+                        return coin.get("id")
+                # Fallback to first result
+                if coins:
+                    return coins[0].get("id")
+    except Exception as e:
+        print(f"[CG SEARCH ERROR] {e}")
+    return None
+
+async def fetch_token_price(symbol: str) -> Optional[dict]:
+    """Fetch detailed token data from CoinGecko /coins/{id} endpoint."""
+    clean_sym = symbol.lower().strip().lstrip("$")
+    
+    # Resolve CoinGecko ID
+    cg_id = COINGECKO_MAP.get(clean_sym)
+    if not cg_id:
+        cg_id = await _coingecko_search(clean_sym)
+    if not cg_id:
+        return None
+    
+    url = f"https://api.coingecko.com/api/v3/coins/{cg_id}?localization=false&tickers=false&community_data=false&developer_data=false&sparkline=false"
+    headers = {"Accept": "application/json", "User-Agent": "ArcieBot/1.0"}
+    
+    global session
+    if session is None or session.closed:
+        session = aiohttp.ClientSession()
+
+    try:
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=6)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                market = data.get("market_data", {})
+                
+                price = market.get("current_price", {}).get("usd", 0.0)
+                change_24h = market.get("price_change_percentage_24h") or 0.0
+                market_cap = market.get("market_cap", {}).get("usd", 0)
+                fdv = market.get("fully_diluted_valuation", {}).get("usd", 0)
+                rank = data.get("market_cap_rank") or 0
+                
+                name = data.get("name", clean_sym.upper())
+                sym = (data.get("symbol") or clean_sym).upper()
+                
+                # Get first category
+                categories = data.get("categories", [])
+                category = None
+                for cat in categories:
+                    if cat and cat.lower() not in ("cryptocurrency", "coins"):
+                        category = cat
+                        break
+                if not category and categories:
+                    category = categories[0] if categories[0] else None
+                
+                return {
+                    "symbol": sym,
+                    "name": name,
+                    "category": category,
+                    "rank": rank,
+                    "price": price or 0.0,
+                    "market_cap": market_cap or 0,
+                    "fdv": fdv or 0,
+                    "change_24h": change_24h or 0.0
+                }
+    except Exception as e:
+        print(f"[PRICE FETCH ERROR] {e}")
+
+    return None
+
+
+def _format_usd(val: float) -> str:
+    """Format a USD value with smart decimal places."""
+    if val == 0:
+        return "$0.00"
+    if val < 0.00001:
+        return f"${val:.10f}"
+    if val < 0.001:
+        return f"${val:.8f}"
+    if val < 1:
+        return f"${val:.6f}"
+    if val < 100:
+        return f"${val:,.4f}"
+    return f"${val:,.2f}"
+
+def _format_big(val: float) -> str:
+    """Format large numbers with commas."""
+    if val == 0:
+        return "N/A"
+    return f"${val:,.0f}"
+
+
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
+
+    content_lower = message.content.lower().strip()
+    bot_mentioned = (bot.user in message.mentions) if bot.user else False
+    has_hey_arcie = "hey arcie" in content_lower or "hey arciebot" in content_lower
+    has_price_word = "price" in content_lower
+
+    # Match $TOKEN format (e.g. $btc, $eth, $sol)
+    match = re.search(r'\$([a-zA-Z0-9]{2,10})\b', message.content)
+
+    if match and has_price_word and (bot_mentioned or has_hey_arcie):
+        ticker = match.group(1)
+        
+        async with message.channel.typing():
+            data = await fetch_token_price(ticker)
+        
+        if data:
+            # Build title: "Name (Category) (Rank: X)"
+            title_parts = [data['name']]
+            if data.get('category'):
+                title_parts.append(f"({data['category']})")
+            if data.get('rank') and data['rank'] > 0:
+                title_parts.append(f"(Rank: {data['rank']})")
+            title_str = " ".join(title_parts)
+
+            change_val = data['change_24h']
+            
+            # Build description lines matching screenshot format
+            desc_lines = [
+                f"💰 **Price:** {_format_usd(data['price'])} USD",
+                f"📊 **Market Cap:** {_format_big(data['market_cap'])}",
+                f"📈 **FDV:** {_format_big(data['fdv'])}",
+                f"📅 **24h Change:** {change_val:+.2f}%"
+            ]
+
+            embed = discord.Embed(
+                title=title_str,
+                description="\n".join(desc_lines),
+                color=discord.Color.green() if change_val >= 0 else discord.Color.red()
+            )
+            embed.set_footer(text="Powered by Arcie Bot • Data from CoinGecko")
+            
+            await message.reply(embed=embed, mention_author=False)
+            return
+
+    await bot.process_commands(message)
+
+
+@bot.event
+async def on_ready():
+    print(f"[READY] Logged in as {bot.user.name} ({bot.user.id})")
+    
+    if FIREBASE_URL:
+        try:
+            fb_profiles = await firebase_get("user_profiles")
+            if fb_profiles and isinstance(fb_profiles, dict):
+                user_profiles.update(fb_profiles)
+                print(f"[FIREBASE] Synced {len(fb_profiles)} user profiles from Cloud DB.")
+
+            fb_giveaways = await firebase_get("giveaways")
+            if fb_giveaways and isinstance(fb_giveaways, dict):
+                giveaways.update(fb_giveaways)
+                print(f"[FIREBASE] Synced {len(fb_giveaways)} giveaways from Cloud DB.")
+
+            fb_entries = await firebase_get("giveaway_entries")
+            if fb_entries and isinstance(fb_entries, dict):
+                giveaway_entries.update(fb_entries)
+                print(f"[FIREBASE] Synced {len(fb_entries)} giveaway entries from Cloud DB.")
+        except Exception as fe:
+            print(f"[FIREBASE SYNC ERROR] {fe}")
+
+    port = os.getenv("PORT", "3000")
+    web_url = os.getenv("APP_URL", f"http://localhost:{port}")
+    
+    for g_id in giveaways:
+        bot.add_view(GiveawayView(g_id, web_url))
+
+    try:
+        synced = await bot.tree.sync()
+        print(f"[SLASH COMMANDS] Synced {len(synced)} slash commands.")
+    except Exception as e:
+        print(f"[SLASH ERROR] Failed to sync slash commands: {e}")
+
+
+# -------- Web Dashboard & HTTP API Server -------- #
+async def start_health_server():
+    app = web.Application()
+
+    # CORS Middleware — allows Vercel-hosted frontend to call this backend
+    @web.middleware
+    async def cors_middleware(request, handler):
+        if request.method == "OPTIONS":
+            resp = web.Response(status=200)
+        else:
+            try:
+                resp = await handler(request)
+            except web.HTTPException as ex:
+                resp = ex
+        origin = request.headers.get("Origin", "*")
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Access-Control-Allow-Credentials"] = "true"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        return resp
+
+    app.middlewares.append(cors_middleware)
+
+    # OPTIONS preflight handler
+    async def options_handler(request):
+        return web.Response(status=200)
+    app.router.add_route("OPTIONS", "/{path:.*}", options_handler)
+
+    def get_session_user(request: web.Request) -> Optional[dict]:
+        token = request.cookies.get("session_token")
+        if not token or token not in active_sessions:
+            return None
+        s = active_sessions[token]
+        if s.get("expires_at", 0) < time.time():
+            del active_sessions[token]
+            return None
+        return s.get("user")
+
+    # Static Files Handlers
+    static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+    async def serve_index(request):
+        index_path = os.path.join(static_dir, "index.html")
+        if os.path.exists(index_path):
+            return web.FileResponse(index_path)
+        return web.Response(text="<h2>Arcie Bot Web Dashboard</h2><p>Static folder missing.</p>", content_type="text/html", status=404)
+
+    async def serve_static(request):
+        filename = request.match_info.get("filename", "")
+        file_path = os.path.join(static_dir, filename)
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            return web.FileResponse(file_path)
+        return web.HTTPNotFound()
+
+    async def health_handler(request):
+        bot_tag = f"{bot.user.name}#{bot.user.discriminator}" if bot.user else "booting"
+        return web.json_response({"status": "alive", "bot": bot_tag})
+
+    # OAuth Routes
+    async def auth_login_handler(request):
+        client_id = os.getenv("DISCORD_CLIENT_ID")
+        port = os.getenv("PORT", "3000")
+        redirect_uri = os.getenv("DISCORD_REDIRECT_URI", f"http://localhost:{port}/api/auth/callback")
+
+        if not client_id:
+            # Fallback dev mode admin session
+            admin_user = {
+                "id": "1066987338204459049",
+                "username": "AdminDev",
+                "avatar": "https://cdn.discordapp.com/embed/avatars/0.png",
+                "is_admin": True
+            }
+            token = base64.b64encode(os.urandom(24)).decode('utf-8')
+            active_sessions[token] = {"user": admin_user, "expires_at": time.time() + 86400 * 7}
+            resp = web.HTTPFound("/")
+            resp.set_cookie("session_token", token, max_age=86400 * 7, path="/")
+            return resp
+
+        auth_url = f"https://discord.com/api/oauth2/authorize?client_id={client_id}&redirect_uri={urllib.parse.quote(redirect_uri)}&response_type=code&scope=identify"
+        return web.HTTPFound(auth_url)
+
+    async def auth_callback_handler(request):
+        code = request.query.get("code")
+        if not code: return web.HTTPFound("/?error=no_code")
+        client_id = os.getenv("DISCORD_CLIENT_ID")
+        client_secret = os.getenv("DISCORD_CLIENT_SECRET")
+        port = os.getenv("PORT", "3000")
+        redirect_uri = os.getenv("DISCORD_REDIRECT_URI", f"http://localhost:{port}/api/auth/callback")
+
+        data = {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri
+        }
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
+        global session
+        if session is None or session.closed: session = aiohttp.ClientSession()
+
+        async with session.post("https://discord.com/api/oauth2/token", data=data, headers=headers) as resp:
+            if resp.status != 200: return web.HTTPFound("/?error=token_failed")
+            token_data = await resp.json()
+            access_token = token_data.get("access_token")
+
+        async with session.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"}) as resp:
+            if resp.status != 200: return web.HTTPFound("/?error=user_failed")
+            u = await resp.json()
+
+        uid = str(u["id"])
+        avatar_url = f"https://cdn.discordapp.com/avatars/{uid}/{u['avatar']}.png" if u.get("avatar") else "https://cdn.discordapp.com/embed/avatars/0.png"
+        prof = user_profiles.get(uid, {})
+
+        user_info = {
+            "id": uid,
+            "username": u.get("username", "DiscordUser"),
+            "avatar": avatar_url,
+            "is_admin": is_bot_admin_by_id(uid),
+            "twitter": prof.get("twitter", ""),
+            "telegram": prof.get("telegram", ""),
+            "evm_wallet": prof.get("evm_wallet", ""),
+            "solana_wallet": prof.get("solana_wallet", "")
+        }
+        token = base64.b64encode(os.urandom(24)).decode('utf-8')
+        active_sessions[token] = {"user": user_info, "expires_at": time.time() + 86400 * 7}
+
+        resp = web.HTTPFound("/")
+        resp.set_cookie("session_token", token, max_age=86400 * 7, path="/")
+        return resp
+
+    async def auth_me_handler(request):
+        user = get_session_user(request)
+        if not user:
+            return web.json_response({"authenticated": False})
+        return web.json_response({"authenticated": True, "user": user})
+
+    # Guild Channels Endpoint
+    async def guilds_handler(request):
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin required"}, status=403)
+        channels = []
+        for guild in bot.guilds:
+            for ch in guild.text_channels:
+                if ch.permissions_for(guild.me).send_messages:
+                    channels.append({
+                        "id": str(ch.id),
+                        "name": ch.name,
+                        "guild_name": guild.name
+                    })
+        return web.json_response(channels)
+
+    # Giveaway REST Endpoints
+    async def get_giveaways_handler(request):
+        return web.json_response(list(giveaways.values()))
+
+    async def get_giveaway_detail_handler(request):
+        g_id = request.match_info.get("id")
+        g = giveaways.get(g_id)
+        if not g: return web.json_response({"error": "Not found"}, status=404)
+        entries = giveaway_entries.get(g_id, [])
+        return web.json_response({"giveaway": g, "entries": entries})
+
+    # Password Sign-In Handler
+    async def auth_password_login_handler(request):
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+            
+        username = body.get("username", "Admin").strip()
+        password = body.get("password", "").strip()
+        
+        admin_pass = os.getenv("ADMIN_PASSWORD", "innercircle78@1")
+        
+        if not password:
+            return web.json_response({"error": "Password required"}, status=400)
+            
+        if password != admin_pass:
+            return web.json_response({"error": "Invalid admin password"}, status=401)
+            
+        admin_user = {
+            "id": f"admin_{int(time.time())}",
+            "username": username or "Admin",
+            "avatar": "https://cdn.discordapp.com/embed/avatars/0.png",
+            "is_admin": True
+        }
+        token = base64.b64encode(os.urandom(24)).decode('utf-8')
+        active_sessions[token] = {"user": admin_user, "expires_at": time.time() + 86400 * 30}
+        
+        resp = web.json_response({"success": True, "user": admin_user})
+        resp.set_cookie("session_token", token, max_age=86400 * 30, path="/")
+        return resp
+
+    async def create_giveaway_handler(request):
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin permission required"}, status=403)
+        
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        g_id = f"g_{int(time.time())}_{random.randint(1000, 9999)}"
+        created_at = int(time.time())
+        
+        duration_val = float(body.get("duration_val") or body.get("duration_hours", 24))
+        duration_unit = body.get("duration_unit", "hours")
+        
+        if duration_unit == "minutes":
+            duration_seconds = duration_val * 60
+        elif duration_unit == "days":
+            duration_seconds = duration_val * 86400
+        else:
+            duration_seconds = duration_val * 3600
+
+        ends_at = created_at + int(duration_seconds)
+
+        spot_tiers = body.get("spot_tiers", [])
+        if not spot_tiers:
+            g_guaranteed = int(body.get("guaranteed_spots", 3))
+            g_fcfs = int(body.get("fcfs_spots", 20))
+            spot_tiers = [
+                {"name": "Guaranteed", "count": g_guaranteed},
+                {"name": "FCFS", "count": g_fcfs}
+            ]
+
+        g_data = {
+            "id": g_id,
+            "title": body.get("title", "NFT Giveaway"),
+            "description": body.get("description", ""),
+            "banner_url": body.get("banner_url", ""),
+            "channel_id": str(body.get("channel_id", "")),
+            "spot_tiers": spot_tiers,
+            "min_per_user": int(body.get("min_per_user", 1)),
+            "max_per_user": int(body.get("max_per_user", 1)),
+            "duration_hours": duration_hours,
+            "created_at": created_at,
+            "ends_at": ends_at,
+            "hosted_by": user.get("username", "Admin"),
+            "network": body.get("network", "Ethereum"),
+            "tasks": body.get("tasks", {}),
+            "is_active": True,
+            "entries_count": 0,
+            "message_id": None
+        }
+
+        giveaways[g_id] = g_data
+        save_giveaways()
+
+        # Post Embed in Discord
+        channel_id = body.get("channel_id")
+        if channel_id:
+            try:
+                ch = bot.get_channel(int(channel_id))
+                if ch:
+                    embed = build_giveaway_embed(g_data)
+                    port = os.getenv("PORT", "3000")
+                    web_url = os.getenv("APP_URL", f"http://localhost:{port}")
+                    view = GiveawayView(g_id, web_url)
+                    msg = await ch.send(embed=embed, view=view)
+                    g_data["message_id"] = str(msg.id)
+                    save_giveaways()
+            except Exception as e:
+                print(f"[DISCORD POST ERROR] {e}")
+
+        return web.json_response(g_data)
+
+    async def draw_winners_handler(request):
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin required"}, status=403)
+        g_id = request.match_info.get("id")
+        g = giveaways.get(g_id)
+        if not g: return web.json_response({"error": "Not found"}, status=404)
+
+        entries = giveaway_entries.get(g_id, [])
+        if not entries:
+            return web.json_response({"error": "No entries to draw from"}, status=400)
+
+        spot_tiers = g.get("spot_tiers", [])
+        eligible = [e for e in entries if e.get("task_status") != "ineligible"]
+        random.shuffle(eligible)
+
+        winner_summary_lines = []
+
+        if spot_tiers:
+            available_pool = list(eligible)
+            for tier in spot_tiers:
+                t_name = tier.get("name", "Spot")
+                t_count = tier.get("count", 1)
+                
+                tier_winners = available_pool[:t_count]
+                available_pool = available_pool[t_count:]
+                
+                for w in tier_winners:
+                    w["winner_type"] = t_name
+
+                w_mentions = [f"<@{w['user_id']}>" for w in tier_winners]
+                winner_summary_lines.append(f"**{t_name}:** {', '.join(w_mentions) if w_mentions else 'None'}")
+        else:
+            guaranteed_count = g.get("guaranteed_spots", 0)
+            fcfs_count = g.get("fcfs_spots", 0)
+            
+            guaranteed_winners = eligible[:guaranteed_count]
+            remaining = [e for e in eligible if e not in guaranteed_winners]
+            fcfs_winners = remaining[:fcfs_count]
+
+            for e in entries:
+                if e in guaranteed_winners:
+                    e["winner_type"] = "guaranteed"
+                elif e in fcfs_winners:
+                    e["winner_type"] = "fcfs"
+                else:
+                    e["winner_type"] = None
+
+            winner_names_g = [f"<@{w['user_id']}>" for w in guaranteed_winners]
+            winner_names_f = [f"<@{w['user_id']}>" for w in fcfs_winners]
+            winner_summary_lines.append(f"**Guaranteed:** {', '.join(winner_names_g) or 'None'}")
+            winner_summary_lines.append(f"**FCFS:** {', '.join(winner_names_f) or 'None'}")
+
+        g["is_active"] = False
+        g["winners_text"] = "\n".join(winner_summary_lines)
+
+        save_giveaways()
+        save_giveaway_entries()
+
+        await update_giveaway_discord_message(g_id)
+        return web.json_response({"success": True, "winners_text": g["winners_text"]})
+
+    async def redraw_winners_handler(request):
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin required"}, status=403)
+        g_id = request.match_info.get("id")
+        g = giveaways.get(g_id)
+        if not g: return web.json_response({"error": "Not found"}, status=404)
+
+        entries = giveaway_entries.get(g_id, [])
+        if not entries:
+            return web.json_response({"error": "No entries available"}, status=400)
+
+        guaranteed_target = g.get("guaranteed_spots", 0)
+        fcfs_target = g.get("fcfs_spots", 0)
+
+        # Clear winner_type for disqualified (ineligible) entries
+        for e in entries:
+            if e.get("task_status") == "ineligible":
+                e["winner_type"] = None
+
+        # Count current valid winners
+        valid_guaranteed = [e for e in entries if e.get("winner_type") == "guaranteed" and e.get("task_status") != "ineligible"]
+        valid_fcfs = [e for e in entries if e.get("winner_type") == "fcfs" and e.get("task_status") != "ineligible"]
+
+        needed_guaranteed = max(0, guaranteed_target - len(valid_guaranteed))
+        needed_fcfs = max(0, fcfs_target - len(valid_fcfs))
+
+        # Available pool for re-drawing: eligible participants who are not winners yet
+        available_pool = [e for e in entries if e.get("task_status") != "ineligible" and not e.get("winner_type")]
+        random.shuffle(available_pool)
+
+        # Pick new Guaranteed winners
+        new_guaranteed = available_pool[:needed_guaranteed]
+        for w in new_guaranteed:
+            w["winner_type"] = "guaranteed"
+
+        # Update available pool for FCFS
+        remaining_pool = [e for e in available_pool if e not in new_guaranteed]
+        remaining_pool.sort(key=lambda x: x.get("joined_at", 0))
+
+        # Pick new FCFS winners
+        new_fcfs = remaining_pool[:needed_fcfs]
+        for w in new_fcfs:
+            w["winner_type"] = "fcfs"
+
+        g["is_active"] = False
+
+        # Re-build winners text
+        all_guaranteed = [e for e in entries if e.get("winner_type") == "guaranteed"]
+        all_fcfs = [e for e in entries if e.get("winner_type") == "fcfs"]
+
+        winner_names_g = [f"<@{w['user_id']}>" for w in all_guaranteed]
+        winner_names_f = [f"<@{w['user_id']}>" for w in all_fcfs]
+        
+        g["winners_text"] = f"**Guaranteed:** {', '.join(winner_names_g) or 'None'}\n**FCFS:** {', '.join(winner_names_f) or 'None'}"
+
+        save_giveaways()
+        save_giveaway_entries()
+
+        await update_giveaway_discord_message(g_id)
+
+        return web.json_response({
+            "success": True,
+            "new_guaranteed_count": len(new_guaranteed),
+            "new_fcfs_count": len(new_fcfs),
+            "total_guaranteed_winners": len(all_guaranteed),
+            "total_fcfs_winners": len(all_fcfs)
+        })
+
+    async def verify_winner_handler(request):
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin required"}, status=403)
+        g_id = request.match_info.get("id")
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        target_uid = body.get("user_id")
+        task_status = body.get("task_status", "pending")
+
+        entries = giveaway_entries.get(g_id, [])
+        target_entry = next((e for e in entries if e["user_id"] == target_uid), None)
+        if target_entry:
+            target_entry["task_status"] = task_status
+            save_giveaway_entries()
+            await update_giveaway_discord_message(g_id)
+            return web.json_response({"success": True})
+        return web.json_response({"error": "Participant entry not found"}, status=404)
+
+    async def save_profile_handler(request):
+        user = get_session_user(request)
+        if not user:
+            return web.json_response({"error": "Authentication required"}, status=401)
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        uid = user["id"]
+        if uid not in user_profiles:
+            user_profiles[uid] = {
+                "display_name": user.get("username"),
+                "username": user.get("username"),
+                "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+            }
+
+        user_profiles[uid]["twitter"] = body.get("twitter", "").strip()
+        user_profiles[uid]["telegram"] = body.get("telegram", "").strip()
+        user_profiles[uid]["evm_wallet"] = body.get("evm_wallet", "").strip()
+        user_profiles[uid]["solana_wallet"] = body.get("solana_wallet", "").strip()
+        save_user_profiles()
+
+        # Update session user object
+        user["twitter"] = user_profiles[uid]["twitter"]
+        user["telegram"] = user_profiles[uid]["telegram"]
+        user["evm_wallet"] = user_profiles[uid]["evm_wallet"]
+        user["solana_wallet"] = user_profiles[uid]["solana_wallet"]
+
+        return web.json_response({"success": True, "profile": user_profiles[uid]})
+
+    # Add routes
+    app.router.add_get("/", serve_index)
+    app.router.add_get("/static/{filename}", serve_static)
+    app.router.add_get("/health", health_handler)
+    app.router.add_get("/api/auth/login", auth_login_handler)
+    app.router.add_get("/api/auth/callback", auth_callback_handler)
+    app.router.add_get("/api/auth/me", auth_me_handler)
+    app.router.add_post("/api/auth/password-login", auth_password_login_handler)
+    app.router.add_get("/api/guilds", guilds_handler)
+    app.router.add_get("/api/giveaways", get_giveaways_handler)
+    app.router.add_get("/api/giveaways/{id}", get_giveaway_detail_handler)
+    app.router.add_post("/api/giveaways", create_giveaway_handler)
+    app.router.add_post("/api/giveaways/{id}/draw", draw_winners_handler)
+    app.router.add_post("/api/giveaways/{id}/redraw", redraw_winners_handler)
+    app.router.add_post("/api/giveaways/{id}/verify-winner", verify_winner_handler)
+    app.router.add_post("/api/user/profile", save_profile_handler)
+
+    port_env = os.getenv("PORT") or os.getenv("SERVER_PORT") or "3000"
+    port = int(port_env)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
+    app_url = os.getenv("APP_URL")
+    if not app_url:
+        try:
+            global session
+            if session is None or session.closed:
+                session = aiohttp.ClientSession()
+            async with session.get("https://api.ipify.org?format=json", timeout=aiohttp.ClientTimeout(total=3)) as r:
+                if r.status == 200:
+                    ip_data = await r.json()
+                    public_ip = ip_data.get("ip")
+                    if public_ip:
+                        app_url = f"http://{public_ip}:{port}"
+        except Exception:
+            pass
+    if not app_url:
+        app_url = f"http://localhost:{port}"
+
+    print(f"\n" + "="*60)
+    print(f"🌐 WEB DASHBOARD IS LIVE AT: {app_url}")
+    print(f"=======================================================\n")
+
+# -------- Main Entrypoint -------- #
+async def main():
+    token = os.getenv("DISCORD_TOKEN")
+    if not token:
+        print("[ERROR] DISCORD_TOKEN environment variable is missing!")
+        sys.exit(1)
+
+    async with bot:
+        await start_health_server()
+        try:
+            await bot.start(token)
+        except discord.errors.PrivilegedIntentsRequired:
+            print("\n" + "="*70)
+            print("❌ ERROR: Privileged Intents are NOT enabled in Discord Developer Portal!")
+            print("👉 Fix: Go to https://discord.com/developers/applications/")
+            print("👉 Select your bot -> Click 'Bot' menu -> Scroll to 'Privileged Gateway Intents'")
+            print("👉 Toggle ON: [x] Server Members Intent & [x] Message Content Intent")
+            print("👉 Save changes and restart your server!")
+            print("="*70 + "\n")
+            sys.exit(1)
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("[SHUTDOWN] Bot stopped by user.")

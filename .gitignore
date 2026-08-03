@@ -1,0 +1,34 @@
+# Environment variables (SECRETS - never push!)
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Zip packages
+bot-upload.zip
+vercel-deploy.zip
+
+# Temp files
+_vercel_temp/
+*.tmp
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Test/sample images
+test_welcome*.png
+welcome_card_preview.png
+welcome_sample*.png
+
+# Data files (stored in Firebase now)
+memories.json
+admins.json
+user_stats.json
+reaction_roles.json
