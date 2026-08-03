@@ -3561,10 +3561,15 @@ async def sync_firebase_loop():
                         
                         # Post Discord embed if active and missing message_id
                         if g_data.get("is_active") and not g_data.get("message_id"):
-                            ch_id_str = str(g_data.get("channel_id", ""))
+                            ch_id_str = str(g_data.get("channel_id", "")).strip()
                             channel = None
                             if ch_id_str.isdigit():
                                 channel = bot.get_channel(int(ch_id_str))
+                                if not channel:
+                                    try:
+                                        channel = await bot.fetch_channel(int(ch_id_str))
+                                    except Exception as fe:
+                                        print(f"[FETCH CHANNEL ERROR] Could not fetch channel {ch_id_str}: {fe}")
                             
                             if not channel:
                                 for guild in bot.guilds:
@@ -3573,31 +3578,34 @@ async def sync_firebase_loop():
                                         break
 
                             if channel:
-                                embed = discord.Embed(
-                                    title=f"🎁 {g_data.get('title', 'Giveaway')}",
-                                    description=g_data.get("description", ""),
-                                    color=discord.Color.gold()
-                                )
-                                if g_data.get("banner_url"):
-                                    embed.set_image(url=g_data["banner_url"])
+                                try:
+                                    embed = discord.Embed(
+                                        title=f"🎁 {g_data.get('title', 'Giveaway')}",
+                                        description=g_data.get("description", ""),
+                                        color=discord.Color.gold()
+                                    )
+                                    if g_data.get("banner_url"):
+                                        embed.set_image(url=g_data["banner_url"])
 
-                                embed.add_field(name="Hosted by", value=g_data.get("hosted_by", "Admin"), inline=True)
-                                embed.add_field(name="Network", value=g_data.get("network", "Ethereum"), inline=True)
-                                embed.add_field(name="Ends At", value=f"<t:{int(g_data.get('ends_at', time.time()))}:R>", inline=True)
-                                embed.set_footer(text="Click [Join Giveaway] below to participate!")
+                                    embed.add_field(name="Hosted by", value=g_data.get("hosted_by", "Admin"), inline=True)
+                                    embed.add_field(name="Network", value=g_data.get("network", "Ethereum"), inline=True)
+                                    embed.add_field(name="Ends At", value=f"<t:{int(g_data.get('ends_at', time.time()))}:R>", inline=True)
+                                    embed.set_footer(text="Click [Join Giveaway] below to participate!")
 
-                                view = GiveawayView(g_id, web_url)
-                                msg = await channel.send(embed=embed, view=view)
-                                g_data["message_id"] = str(msg.id)
-                                g_data["channel_id"] = str(channel.id)
-                                giveaways[g_id] = g_data
-                                save_giveaways()
-                                await firebase_put(f"giveaways/{g_id}", g_data)
-                                print(f"[GIVEAWAY POSTED] Posted giveaway {g_id} in #{channel.name}")
+                                    view = GiveawayView(g_id, web_url)
+                                    msg = await channel.send(embed=embed, view=view)
+                                    g_data["message_id"] = str(msg.id)
+                                    g_data["channel_id"] = str(channel.id)
+                                    giveaways[g_id] = g_data
+                                    save_giveaways()
+                                    await firebase_put(f"giveaways/{g_id}", g_data)
+                                    print(f"[GIVEAWAY POSTED] Posted giveaway {g_id} in #{channel.name} ({channel.id})")
+                                except Exception as send_err:
+                                    print(f"[GIVEAWAY SEND ERROR] Failed to send to #{channel.name}: {send_err}")
         except Exception as e:
             print(f"[FIREBASE LOOP ERROR] {e}")
 
-        await asyncio.sleep(10)
+        await asyncio.sleep(3)
 
 
 @bot.event
