@@ -2202,8 +2202,18 @@ async def on_message(message: discord.Message):
                 await message.reply("Could not find any football news right now! Try again later 🙏")
             return
 
-    # AI Chat Trigger
-    is_mentioned = ("diffy" in text or "unemployed girl" in text or "unemployed" in text) or (bot.user in message.mentions)
+    # AI Chat / Auto-Reply Trigger
+    ref_bot = False
+    if message.reference and message.reference.cached_message:
+        ref_bot = (message.reference.cached_message.author == bot.user)
+
+    is_mentioned = (
+        ("arcie" in text or "hey arcie" in text or "arciebot" in text or "diffy" in text) or
+        (bot.user in message.mentions) or
+        isinstance(message.channel, discord.DMChannel) or
+        ref_bot
+    )
+
     if is_mentioned:
         # Clear Memory Command
         if "clear memory" in text or "forget everything" in text:
@@ -2282,6 +2292,8 @@ async def on_message(message: discord.Message):
 
             await message.reply(response, **kwargs)
             return
+
+    await bot.process_commands(message)
 
 # -------- Slash Commands -------- #
 @bot.tree.command(name="addreactionrole", description="Attaches a reaction role to ANY existing message by Message ID!")
@@ -2901,7 +2913,6 @@ def build_giveaway_embed(g: dict) -> discord.Embed:
         description=desc_body,
         color=color
     )
-    embed.set_author(name=f"Hosted by {hosted_by}")
 
     req_lines = []
     dynamic_tasks = tasks.get("dynamic_tasks", [])
@@ -3498,56 +3509,6 @@ def _format_big(val: float) -> str:
     return f"${val:,.0f}"
 
 
-@bot.event
-async def on_message(message: discord.Message):
-    if message.author.bot:
-        return
-
-    content_lower = message.content.lower().strip()
-    bot_mentioned = (bot.user in message.mentions) if bot.user else False
-    has_hey_arcie = "hey arcie" in content_lower or "hey arciebot" in content_lower
-    has_price_word = "price" in content_lower
-
-    # Match $TOKEN format (e.g. $btc, $eth, $sol)
-    match = re.search(r'\$([a-zA-Z0-9]{2,10})\b', message.content)
-
-    if match and has_price_word and (bot_mentioned or has_hey_arcie):
-        ticker = match.group(1)
-        
-        async with message.channel.typing():
-            data = await fetch_token_price(ticker)
-        
-        if data:
-            # Build title: "Name (Category) (Rank: X)"
-            title_parts = [data['name']]
-            if data.get('category'):
-                title_parts.append(f"({data['category']})")
-            if data.get('rank') and data['rank'] > 0:
-                title_parts.append(f"(Rank: {data['rank']})")
-            title_str = " ".join(title_parts)
-
-            change_val = data['change_24h']
-            
-            # Build description lines without emojis
-            desc_lines = [
-                f"**Price:** {_format_usd(data['price'])} USD",
-                f"**Market Cap:** {_format_big(data['market_cap'])}",
-                f"**FDV:** {_format_big(data['fdv'])}",
-                f"**24h Change:** {change_val:+.2f}%"
-            ]
-
-            embed = discord.Embed(
-                title=title_str,
-                description="\n".join(desc_lines),
-                color=discord.Color.green() if change_val >= 0 else discord.Color.red()
-            )
-            embed.set_footer(text="Powered by Arcie Bot • Data from CoinGecko")
-            
-            await message.reply(embed=embed, mention_author=False)
-            return
-
-    await bot.process_commands(message)
-
 
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
@@ -3649,7 +3610,6 @@ def build_giveaway_embed(g_data: dict):
         elif (banner_url.startswith("http://") or banner_url.startswith("https://")) and len(banner_url) <= 2048:
             embed.set_image(url=banner_url)
 
-    embed.add_field(name="Hosted by", value=g_data.get("hosted_by", "Admin"), inline=True)
     embed.add_field(name="Network", value=g_data.get("network", "Ethereum"), inline=True)
     embed.add_field(name="Ends At", value=f"<t:{int(g_data.get('ends_at', time.time()))}:R>", inline=True)
 
@@ -4565,6 +4525,36 @@ async def start_health_server():
             print(f"[IMAGE UPLOAD ERROR] {e}")
             return web.json_response({"error": str(e)}, status=500)
 
+    async def delete_entry_handler(request):
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin permission required"}, status=403)
+        g_id = request.match_info.get("id")
+        target_uid = request.match_info.get("uid")
+
+        # Fetch latest entries from Firebase
+        fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
+        if fb_entries and isinstance(fb_entries, (dict, list)):
+            fetched = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+            if fetched:
+                giveaway_entries[g_id] = fetched
+
+        entries = giveaway_entries.get(g_id, [])
+        filtered_entries = [e for e in entries if str(e.get("user_id", "")) != str(target_uid)]
+        giveaway_entries[g_id] = filtered_entries
+
+        save_giveaway_entries()
+        await firebase_put(f"giveaway_entries/{g_id}", filtered_entries)
+
+        g = giveaways.get(g_id)
+        if g:
+            g["entries_count"] = len(filtered_entries)
+            save_giveaways()
+            await firebase_put(f"giveaways/{g_id}", g)
+            await update_giveaway_discord_message(g_id)
+
+        return web.json_response({"success": True, "entries_count": len(filtered_entries)})
+
     async def draw_winners_handler(request):
         user = get_session_user(request)
         if not user or not user.get("is_admin"):
@@ -4572,6 +4562,13 @@ async def start_health_server():
         g_id = request.match_info.get("id")
         g = giveaways.get(g_id)
         if not g: return web.json_response({"error": "Not found"}, status=404)
+
+        # Fetch fresh entries from Firebase Cloud DB first
+        fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
+        if fb_entries and isinstance(fb_entries, (dict, list)):
+            fetched = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+            if fetched:
+                giveaway_entries[g_id] = fetched
 
         entries = giveaway_entries.get(g_id, [])
         if not entries:
@@ -4613,6 +4610,11 @@ async def start_health_server():
                 else:
                     e["winner_type"] = None
 
+            winner_names_g = [f"<@{w['user_id']}>" for w in guaranteed_winners]
+            winner_names_f = [f"<@{w['user_id']}>" for w in fcfs_winners]
+            winner_summary_lines.append(f"**Guaranteed:** {', '.join(winner_names_g) or 'None'}")
+            winner_summary_lines.append(f"**FCFS:** {', '.join(winner_names_f) or 'None'}")
+
         g["is_active"] = False
         g["winners_text"] = "\n".join(winner_summary_lines)
         save_giveaways()
@@ -4621,7 +4623,15 @@ async def start_health_server():
         await firebase_put(f"giveaway_entries/{g_id}", entries)
         await update_giveaway_discord_message(g_id)
         await announce_winners_in_discord(g_id, winner_summary_lines)
-        return web.json_response({"success": True, "winners_text": g["winners_text"]})
+
+        total_winners = len([e for e in entries if e.get("winner_type")])
+        return web.json_response({
+            "success": True,
+            "winners_text": g["winners_text"],
+            "guaranteed_winners_count": len([e for e in entries if str(e.get("winner_type", "")).lower() in ("guaranteed", "gtd")]),
+            "fcfs_winners_count": len([e for e in entries if str(e.get("winner_type", "")).lower() == "fcfs"]),
+            "total_winners_count": total_winners
+        })
 
     async def redraw_winners_handler(request):
         user = get_session_user(request)
@@ -4798,6 +4808,8 @@ async def start_health_server():
     app.router.add_delete("/api/giveaways/{id}", delete_giveaway_handler)
     app.router.add_post("/api/giveaways/{id}/delete", delete_giveaway_handler)
     app.router.add_post("/api/upload", upload_image_handler)
+    app.router.add_delete("/api/giveaways/{id}/entries/{uid}", delete_entry_handler)
+    app.router.add_post("/api/giveaways/{id}/entries/{uid}/delete", delete_entry_handler)
     app.router.add_post("/api/giveaways/{id}/draw", draw_winners_handler)
     app.router.add_post("/api/giveaways/{id}/redraw", redraw_winners_handler)
     app.router.add_post("/api/giveaways/{id}/announce", send_announcement_handler)

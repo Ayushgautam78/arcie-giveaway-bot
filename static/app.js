@@ -285,9 +285,12 @@ function renderGiveaways() {
 
         <div class="g-card-footer">
           <span style="font-size: 0.85rem; color: var(--text-muted);">👥 ${g.entries_count || 0} Entered</span>
-          <button class="btn btn-primary btn-sm" onclick="openDetailModal('${g.id}')">
-            ${isEnded ? 'View Results' : 'View Giveaway'}
-          </button>
+          <div style="display: flex; gap: 6px; align-items: center;">
+            ${currentUser && currentUser.is_admin ? `<button type="button" class="btn btn-danger btn-sm" style="padding: 4px 8px;" onclick="deleteGiveaway('${g.id}')" title="Delete Giveaway">🗑️</button>` : ''}
+            <button class="btn btn-primary btn-sm" onclick="openDetailModal('${g.id}')">
+              ${isEnded ? 'View Results' : 'View Giveaway'}
+            </button>
+          </div>
         </div>
       </div>
     `;
@@ -934,11 +937,14 @@ async function loadGiveawayParticipants(giveawayId) {
             </span>
           </td>
           <td>
-            <select onchange="updateVerificationStatus('${giveawayId}', '${e.user_id}', this.value)" class="form-select" style="padding: 4px 8px; font-size: 0.8rem;">
-              <option value="verified" ${e.task_status === 'verified' || !e.task_status ? 'selected' : ''}>🟢 Verified</option>
-              <option value="pending" ${e.task_status === 'pending' ? 'selected' : ''}>🟡 Pending</option>
-              <option value="ineligible" ${e.task_status === 'ineligible' ? 'selected' : ''}>🔴 Ineligible</option>
-            </select>
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <select onchange="updateVerificationStatus('${giveawayId}', '${e.user_id}', this.value)" class="form-select" style="padding: 4px 8px; font-size: 0.8rem;">
+                <option value="verified" ${e.task_status === 'verified' || !e.task_status ? 'selected' : ''}>🟢 Verified</option>
+                <option value="pending" ${e.task_status === 'pending' ? 'selected' : ''}>🟡 Pending</option>
+                <option value="ineligible" ${e.task_status === 'ineligible' ? 'selected' : ''}>🔴 Ineligible</option>
+              </select>
+              <button type="button" class="btn btn-danger btn-sm" style="padding: 3px 7px; font-size: 0.8rem;" onclick="deleteParticipantEntry('${giveawayId}', '${e.user_id}')" title="Delete Entry">🗑️</button>
+            </div>
           </td>
         </tr>
       `;
@@ -956,7 +962,7 @@ async function drawWinners(giveawayId) {
     const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}/draw`), { method: 'POST', credentials: 'include' });
     const data = await res.json();
     if (res.ok) {
-      showToast(`🎉 Selected ${data.guaranteed_winners_count} Guaranteed & ${data.fcfs_winners_count} FCFS winners!`, 'success');
+      showToast(`🎉 Winners selected! Announcement posted to Discord!`, 'success');
       await loadGiveawayParticipants(giveawayId);
       await loadGiveaways();
     } else {
@@ -974,7 +980,7 @@ async function redrawWinners(giveawayId) {
     const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}/redraw`), { method: 'POST', credentials: 'include' });
     const data = await res.json();
     if (res.ok) {
-      showToast(`🔄 Re-raffled! Selected ${data.new_guaranteed_count} new Guaranteed & ${data.new_fcfs_count} new FCFS winners!`, 'success');
+      showToast(`🔄 Replacement winners re-raffled & posted to Discord!`, 'success');
       await loadGiveawayParticipants(giveawayId);
       await loadGiveaways();
     } else {
@@ -982,6 +988,29 @@ async function redrawWinners(giveawayId) {
     }
   } catch (err) {
     showToast('Error re-raffling winners', 'error');
+  }
+}
+
+// Admin: Delete single participant entry
+async function deleteParticipantEntry(giveawayId, userId) {
+  if (!confirm('Are you sure you want to remove this participant entry?')) return;
+  try {
+    try {
+      await fetch(apiUrl(`/api/giveaways/${giveawayId}/entries/${userId}/delete`), { method: 'POST', credentials: 'include' });
+    } catch (e) {}
+
+    // Direct Firebase REST delete sync
+    const fbData = await firebaseGet('giveaway_entries/' + giveawayId);
+    if (fbData && typeof fbData === 'object') {
+      const entries = Array.isArray(fbData) ? fbData : Object.values(fbData);
+      const filtered = entries.filter(e => e && String(e.user_id) !== String(userId));
+      await firebasePut('giveaway_entries/' + giveawayId, filtered);
+    }
+    showToast('🗑️ Participant entry removed!', 'success');
+    await loadGiveawayParticipants(giveawayId);
+    await loadGiveaways();
+  } catch (err) {
+    showToast('Error deleting entry', 'error');
   }
 }
 
