@@ -3263,18 +3263,18 @@ async def user_details_cmd(interaction: discord.Interaction, target: Optional[di
         solana_val = f"`{prof.get('solana_wallet')}`" if prof.get("solana_wallet") else "*Not set by user yet*"
 
         embed = discord.Embed(
-            title=f"👤 Web3 Profile - {usr.display_name}",
+            title=f"Web3 Profile - {usr.display_name}",
             color=discord.Color.from_rgb(43, 92, 255)
         )
         embed.set_thumbnail(url=usr.display_avatar.url)
         embed.add_field(name="User", value=f"{usr.mention} (`{usr.id}`)", inline=False)
-        embed.add_field(name="🐦 Twitter", value=twitter_val, inline=True)
-        embed.add_field(name="✈️ Telegram", value=telegram_val, inline=True)
-        embed.add_field(name="🔷 EVM Wallet", value=evm_val, inline=False)
-        embed.add_field(name="🟣 Solana Wallet", value=solana_val, inline=False)
+        embed.add_field(name="Twitter", value=twitter_val, inline=True)
+        embed.add_field(name="Telegram", value=telegram_val, inline=True)
+        embed.add_field(name="EVM Wallet", value=evm_val, inline=False)
+        embed.add_field(name="Solana Wallet", value=solana_val, inline=False)
 
         if is_bot_admin_by_id(uid):
-            embed.set_footer(text="👑 Bot Administrator | Powered by Arcie Bot")
+            embed.set_footer(text="Bot Administrator | Powered by Arcie Bot")
         else:
             embed.set_footer(text="Powered by Arcie Bot")
 
@@ -3528,12 +3528,12 @@ async def on_message(message: discord.Message):
 
             change_val = data['change_24h']
             
-            # Build description lines matching screenshot format
+            # Build description lines without emojis
             desc_lines = [
-                f"💰 **Price:** {_format_usd(data['price'])} USD",
-                f"📊 **Market Cap:** {_format_big(data['market_cap'])}",
-                f"📈 **FDV:** {_format_big(data['fdv'])}",
-                f"📅 **24h Change:** {change_val:+.2f}%"
+                f"**Price:** {_format_usd(data['price'])} USD",
+                f"**Market Cap:** {_format_big(data['market_cap'])}",
+                f"**FDV:** {_format_big(data['fdv'])}",
+                f"**24h Change:** {change_val:+.2f}%"
             ]
 
             embed = discord.Embed(
@@ -3549,10 +3549,27 @@ async def on_message(message: discord.Message):
     await bot.process_commands(message)
 
 
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    """Global persistent interaction router ensuring Join Giveaway buttons work permanently across server restarts."""
+    if interaction.type == discord.InteractionType.component:
+        custom_id = interaction.data.get("custom_id", "")
+        if custom_id.startswith("join_giveaway_"):
+            g_id = custom_id.replace("join_giveaway_", "")
+            view = GiveawayView(g_id)
+            await view.join_giveaway_callback(interaction)
+            return
+        elif custom_id.startswith("view_entry_"):
+            g_id = custom_id.replace("view_entry_", "")
+            view = GiveawayView(g_id)
+            await view.view_entry_callback(interaction)
+            return
+
+
 def build_giveaway_embed(g_data: dict):
-    """Build a rich Discord Embed object and optional discord.File attachment for a giveaway."""
+    """Build a rich Discord Embed object without emojis and optional discord.File attachment for a giveaway."""
     embed = discord.Embed(
-        title=f"🎁 {g_data.get('title', 'Giveaway')}",
+        title=g_data.get('title', 'Giveaway'),
         description=g_data.get("description", ""),
         color=discord.Color.gold()
     )
@@ -3577,9 +3594,67 @@ def build_giveaway_embed(g_data: dict):
     embed.add_field(name="Hosted by", value=g_data.get("hosted_by", "Admin"), inline=True)
     embed.add_field(name="Network", value=g_data.get("network", "Ethereum"), inline=True)
     embed.add_field(name="Ends At", value=f"<t:{int(g_data.get('ends_at', time.time()))}:R>", inline=True)
-    embed.set_footer(text="Click [Join Giveaway] below to participate!")
+
+    spot_tiers = g_data.get("spot_tiers", [])
+    if spot_tiers:
+        tier_str = ", ".join([f"{t.get('name', 'Tier')}: {t.get('count', 1)}" for t in spot_tiers])
+        embed.add_field(name="Spot Tiers", value=tier_str, inline=False)
+    else:
+        guaranteed = g_data.get("guaranteed_spots", 0)
+        fcfs = g_data.get("fcfs_spots", 0)
+        if guaranteed or fcfs:
+            embed.add_field(name="Spot Tiers", value=f"Guaranteed: {guaranteed} | FCFS: {fcfs}", inline=False)
+
+    g_id = g_data.get("id", "")
+    entries_count = len(giveaway_entries.get(g_id, [])) if g_id else 0
+    embed.add_field(name="Total Entries", value=f"{entries_count} Users Joined", inline=True)
+
+    embed.set_footer(text="Click [Join Giveaway] below to participate | Powered by Arcie Bot")
 
     return embed, file_to_send
+
+
+async def announce_winners_in_discord(g_id: str, winner_summary_lines: list):
+    """Post an official Winners Announcement Embed directly to the Discord giveaway channel."""
+    g = giveaways.get(g_id)
+    if not g or not g.get("channel_id"):
+        return
+
+    try:
+        channel_id = int(g["channel_id"])
+        channel = bot.get_channel(channel_id)
+        if not channel:
+            channel = await bot.fetch_channel(channel_id)
+
+        if channel:
+            embed = discord.Embed(
+                title=f"Raffle Winners Announced - {g.get('title', 'Giveaway')}",
+                description="Congratulations to all the selected winners!\n\n" + "\n".join(winner_summary_lines),
+                color=discord.Color.green()
+            )
+            banner_url = str(g.get("banner_url", "")).strip()
+            file_to_send = None
+            if banner_url:
+                if banner_url.startswith("data:image"):
+                    try:
+                        header, encoded = banner_url.split(",", 1)
+                        img_bytes = base64.b64decode(encoded)
+                        fp = io.BytesIO(img_bytes)
+                        file_to_send = discord.File(fp, filename="banner.png")
+                        embed.set_image(url="attachment://banner.png")
+                    except Exception:
+                        pass
+                elif (banner_url.startswith("http://") or banner_url.startswith("https://")) and len(banner_url) <= 2048:
+                    embed.set_image(url=banner_url)
+
+            embed.set_footer(text="Powered by Arcie Bot")
+            if file_to_send:
+                await channel.send(embed=embed, file=file_to_send)
+            else:
+                await channel.send(embed=embed)
+            print(f"[WINNERS ANNOUNCED] Posted winners announcement for '{g.get('title')}' in #{channel.name}")
+    except Exception as e:
+        print(f"[ANNOUNCE WINNERS ERROR] {e}")
 
 
 async def sync_and_post_giveaways():
@@ -4201,8 +4276,11 @@ async def start_health_server():
 
         save_giveaways()
         save_giveaway_entries()
+        await firebase_put(f"giveaways/{g_id}", g)
+        await firebase_put(f"giveaway_entries/{g_id}", entries)
 
         await update_giveaway_discord_message(g_id)
+        await announce_winners_in_discord(g_id, winner_summary_lines)
         return web.json_response({"success": True, "winners_text": g["winners_text"]})
 
     async def redraw_winners_handler(request):
