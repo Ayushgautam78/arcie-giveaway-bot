@@ -3763,19 +3763,50 @@ async def set_custom_winners_cmd(interaction: discord.Interaction, giveaway_id: 
     )
 
 
+@bot.tree.command(name="clear-winners", description="Admin: Remove winner names section from a live Discord giveaway embed.")
+@app_commands.describe(giveaway_id="Giveaway ID, Discord Message ID, or Discord Message Link")
+async def clear_winners_cmd(interaction: discord.Interaction, giveaway_id: str):
+    if not is_bot_admin_by_id(str(interaction.user.id)):
+        await interaction.response.send_message("❌ Admin permission required.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    g = await resolve_giveaway_by_identifier(giveaway_id)
+
+    if not g:
+        await interaction.followup.send("❌ Giveaway not found by ID, Message ID, or Message Link.", ephemeral=True)
+        return
+
+    g_id = g.get("id", giveaway_id)
+    g["winners_text"] = ""
+    save_giveaways()
+    if FIREBASE_URL:
+        await firebase_put(f"giveaways/{g_id}", g)
+
+    await update_giveaway_discord_message(g_id)
+
+    await interaction.followup.send(
+        f"🧹 **Winners Field Removed!**\n"
+        f"The embed for **{g.get('title')}** has been restored to clean format (original timestamp preserved).",
+        ephemeral=True
+    )
+
+
 @bot.tree.command(name="edit-announcement", description="Admin: Silently edit a giveaway embed or announcement on Discord.")
 @app_commands.describe(
     giveaway_id="Giveaway ID, Discord Message ID, or Discord Message Link",
     new_title="Optional: New Title for the Embed",
     new_description="Optional: New Description / Mint Details text",
-    new_winners="Optional: New Winners text (e.g. GTD: @user1 | FCFS: @user2)"
+    new_winners="Optional: New Winners text (e.g. GTD: @user1 | FCFS: @user2)",
+    clear_winners="Set True to remove winner names field from embed"
 )
 async def edit_announcement_cmd(
     interaction: discord.Interaction,
     giveaway_id: str,
     new_title: Optional[str] = None,
     new_description: Optional[str] = None,
-    new_winners: Optional[str] = None
+    new_winners: Optional[str] = None,
+    clear_winners: Optional[bool] = False
 ):
     if not is_bot_admin_by_id(str(interaction.user.id)):
         await interaction.response.send_message("❌ Admin permission required.", ephemeral=True)
@@ -3790,6 +3821,9 @@ async def edit_announcement_cmd(
         return
 
     g_id = g.get("id", giveaway_id)
+
+    if clear_winners:
+        g["winners_text"] = ""
 
     if new_title and new_title.strip():
         g["title"] = new_title.strip()
@@ -3836,7 +3870,16 @@ async def edit_announcement_cmd(
 
     save_giveaways()
     if FIREBASE_URL:
-        await firebase_put(f"giveaways/{giveaway_id}", g)
+        await firebase_put(f"giveaways/{g_id}", g)
+
+    # Force in-place edit on Discord!
+    await update_giveaway_discord_message(g_id)
+
+    await interaction.followup.send(
+        f"🤫 **Announcement Embed Silently Updated!**\n"
+        f"Giveaway **{g.get('title')}** has been refreshed in Discord (original timestamp preserved).",
+        ephemeral=True
+    )
 
     # Force delete old Discord embed & post fresh updated embed!
     await update_giveaway_discord_message(giveaway_id)
