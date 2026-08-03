@@ -269,29 +269,6 @@
     </div>
   </div>
 
-  <!-- Admin Password Sign-In Modal -->
-  <div id="passLoginModal" class="modal-overlay">
-    <div class="modal-content" style="max-width: 420px;">
-      <div class="modal-header">
-        <h3 class="modal-title">🔐 Admin Password Sign-In</h3>
-        <button class="modal-close" onclick="closeModal('passLoginModal')">&times;</button>
-      </div>
-      <div class="modal-body">
-        <form id="passLoginForm" onsubmit="submitPasswordLogin(event)">
-          <div class="form-group">
-            <label class="form-label">Admin Username / User ID</label>
-            <input type="text" id="passUser" class="form-input" placeholder="Admin username" value="Admin" required>
-          </div>
-          <div class="form-group" style="margin-top: 10px;">
-            <label class="form-label">Admin Password</label>
-            <input type="password" id="passWord" class="form-input" placeholder="Enter admin password" required>
-          </div>
-          <button type="submit" class="btn btn-purple" style="width: 100%; margin-top: 15px;">🚀 Sign In as Admin</button>
-        </form>
-      </div>
-    </div>
-  </div>
-
   <!-- Toast Notifications Container -->
   <div id="toastContainer" class="toast-container"></div>
 

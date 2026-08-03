@@ -3605,6 +3605,34 @@ async def start_health_server():
             return None
         return s.get("user")
 
+    def is_bot_admin_by_id(user_id: str) -> bool:
+        # 1. Environment variable ADMIN_USER_IDS (comma-separated IDs)
+        admin_ids_env = os.getenv("ADMIN_USER_IDS", "").strip()
+        if admin_ids_env:
+            admin_ids = [x.strip() for x in admin_ids_env.split(",") if x.strip()]
+            if str(user_id) in admin_ids:
+                return True
+
+        # 2. Check if in bot_admins set
+        if str(user_id) in bot_admins:
+            return True
+
+        # 3. Check Discord Guild Administrator permissions
+        try:
+            uid_int = int(user_id)
+            for guild in bot.guilds:
+                member = guild.get_member(uid_int)
+                if member and (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
+                    return True
+        except Exception:
+            pass
+
+        # 4. If no ADMIN_USER_IDS is configured, default to True for convenience
+        if not admin_ids_env:
+            return True
+
+        return False
+
     # Static Files Handlers
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
