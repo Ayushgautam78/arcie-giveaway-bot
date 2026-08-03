@@ -3566,6 +3566,64 @@ async def on_interaction(interaction: discord.Interaction):
             return
 
 
+def format_task_link(ttype: str, val: str) -> str:
+    """Format task values as clean clickable Markdown links [text](url) for Discord embeds."""
+    clean = val.strip()
+    if not clean:
+        return ""
+    
+    is_url = clean.startswith("http://") or clean.startswith("https://")
+
+    if ttype == "twitter_follow":
+        if is_url:
+            parts = clean.rstrip("/").split("/")
+            handle = parts[-1] if parts else "Twitter"
+            if handle.startswith("@"): handle = handle[1:]
+            return f"• Follow [{handle}]({clean})"
+        else:
+            handle = clean.lstrip("@")
+            return f"• Follow [{handle}](https://x.com/{handle})"
+
+    elif ttype == "twitter_like":
+        if is_url:
+            return f"• Like [this tweet]({clean})"
+        else:
+            return f"• Like Tweet: {clean}"
+
+    elif ttype == "twitter_retweet":
+        if is_url:
+            return f"• Retweet [this tweet]({clean})"
+        else:
+            return f"• Retweet Tweet: {clean}"
+
+    elif ttype == "tiktok_follow":
+        if is_url:
+            return f"• Follow [TikTok]({clean})"
+        else:
+            handle = clean.lstrip("@")
+            return f"• Follow [TikTok (@{handle})](https://www.tiktok.com/@{handle})"
+
+    elif ttype == "youtube_follow":
+        if is_url:
+            return f"• Subscribe [YouTube]({clean})"
+        else:
+            return f"• Subscribe YouTube: {clean}"
+
+    elif ttype == "role_require":
+        return f"• Required Role: {clean}"
+
+    else:
+        # Manual task or custom instruction
+        if is_url:
+            return f"• [Click Here]({clean})"
+        url_match = re.search(r'https?://\S+', clean)
+        if url_match:
+            target_url = url_match.group(0)
+            text_without_url = clean.replace(target_url, "").strip()
+            return f"• {text_without_url} [this link]({target_url})" if text_without_url else f"• [Click Here]({target_url})"
+        return f"• {clean}"
+
+
 def build_giveaway_embed(g_data: dict):
     """Build a rich Discord Embed object without emojis and optional discord.File attachment for a giveaway."""
     embed = discord.Embed(
@@ -3595,7 +3653,7 @@ def build_giveaway_embed(g_data: dict):
     embed.add_field(name="Network", value=g_data.get("network", "Ethereum"), inline=True)
     embed.add_field(name="Ends At", value=f"<t:{int(g_data.get('ends_at', time.time()))}:R>", inline=True)
 
-    # Render Tasks / Requirements Field
+    # Render Tasks / Requirements Field with Clickable Markdown Links
     tasks = g_data.get("tasks", {})
     task_lines = []
     if isinstance(tasks, dict):
@@ -3604,22 +3662,17 @@ def build_giveaway_embed(g_data: dict):
             for t in dyn_tasks:
                 val = t.get("value", "").strip()
                 ttype = t.get("type", "")
-                if val:
-                    if ttype == "twitter_follow": task_lines.append(f"• Follow @{val}")
-                    elif ttype == "twitter_like": task_lines.append(f"• Like Tweet: {val}")
-                    elif ttype == "twitter_retweet": task_lines.append(f"• Retweet: {val}")
-                    elif ttype == "tiktok_follow": task_lines.append(f"• TikTok: {val}")
-                    elif ttype == "youtube_follow": task_lines.append(f"• YouTube: {val}")
-                    elif ttype == "role_require": task_lines.append(f"• Required Role: {val}")
-                    else: task_lines.append(f"• {val}")
+                formatted = format_task_link(ttype, val)
+                if formatted:
+                    task_lines.append(formatted)
 
         if not task_lines:
-            if tasks.get("twitter_follow"): task_lines.append(f"• Follow @{tasks['twitter_follow']}")
-            if tasks.get("twitter_like"): task_lines.append(f"• Like Tweet")
-            if tasks.get("twitter_retweet"): task_lines.append(f"• Retweet Tweet")
-            if tasks.get("tiktok_follow"): task_lines.append(f"• TikTok: {tasks['tiktok_follow']}")
-            if tasks.get("youtube_follow"): task_lines.append(f"• YouTube: {tasks['youtube_follow']}")
-            if tasks.get("manual_task"): task_lines.append(f"• {tasks['manual_task']}")
+            if tasks.get("twitter_follow"): task_lines.append(format_task_link("twitter_follow", tasks['twitter_follow']))
+            if tasks.get("twitter_like"): task_lines.append(format_task_link("twitter_like", tasks['twitter_like']))
+            if tasks.get("twitter_retweet"): task_lines.append(format_task_link("twitter_retweet", tasks['twitter_retweet']))
+            if tasks.get("tiktok_follow"): task_lines.append(format_task_link("tiktok_follow", tasks['tiktok_follow']))
+            if tasks.get("youtube_follow"): task_lines.append(format_task_link("youtube_follow", tasks['youtube_follow']))
+            if tasks.get("manual_task"): task_lines.append(format_task_link("manual_task", tasks['manual_task']))
             if tasks.get("roles"): task_lines.append(f"• Required Roles: {', '.join(tasks['roles'])}")
 
         if tasks.get("require_evm"):
@@ -3628,7 +3681,7 @@ def build_giveaway_embed(g_data: dict):
             task_lines.append("• Require Solana Wallet")
 
     if task_lines:
-        embed.add_field(name="Tasks / Requirements", value="\n".join(task_lines), inline=False)
+        embed.add_field(name="Tasks / Requirements", value="\n".join([tl for tl in task_lines if tl]), inline=False)
 
     spot_tiers = g_data.get("spot_tiers", [])
     if spot_tiers:
