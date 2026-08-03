@@ -1,0 +1,10 @@
+*.py
+requirements.txt
+Dockerfile
+make_zip.ps1
+make_vercel_zip.ps1
+discloud.config
+squarecloud.app
+temp.png
+temp_cutout.png
+template.png
