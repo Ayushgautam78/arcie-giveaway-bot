@@ -57,18 +57,25 @@ function setupEventListeners() {
 
 // Load Guild Channels for Channel Selector from Firebase
 async function loadGuildChannels() {
-  const select = document.getElementById('gChannel');
-  if (!select) return;
-  select.innerHTML = '<option value="">Loading channels...</option>';
+  const selects = [document.getElementById('gChannel'), document.getElementById('gWinnerChannel'), document.getElementById('editGWinnerChannel')].filter(Boolean);
+  if (selects.length === 0) return;
   
   try {
     const channels = await firebaseGet('channels');
     if (channels && typeof channels === 'object') {
       const channelArray = Array.isArray(channels) ? channels : Object.values(channels);
       if (channelArray.length > 0) {
-        select.innerHTML = '<option value="auto">📢 Auto-Detect Main Channel (Default)</option>' + channelArray.map(c => `
-          <option value="${c.id}">#${escapeHtml(c.name)} (${escapeHtml(c.guild_name || 'Server')})</option>
-        `).join('');
+        const options = channelArray.map(c => `<option value="${c.id}">#${escapeHtml(c.name)} (${escapeHtml(c.guild_name || 'Server')})</option>`).join('');
+        
+        if (document.getElementById('gChannel')) {
+          document.getElementById('gChannel').innerHTML = '<option value="auto">📢 Auto-Detect Main Channel (Default)</option>' + options;
+        }
+        if (document.getElementById('gWinnerChannel')) {
+          document.getElementById('gWinnerChannel').innerHTML = '<option value="">Same as Giveaway Channel (Default)</option>' + options;
+        }
+        if (document.getElementById('editGWinnerChannel')) {
+          document.getElementById('editGWinnerChannel').innerHTML = '<option value="">Same as Giveaway Channel (Default)</option>' + options;
+        }
         return;
       }
     }
@@ -76,9 +83,9 @@ async function loadGuildChannels() {
     console.error('Failed to load channels:', err);
   }
 
-  select.innerHTML = `
-    <option value="auto">📢 Auto-Detect Main Channel (Default)</option>
-  `;
+  if (document.getElementById('gChannel')) {
+    document.getElementById('gChannel').innerHTML = '<option value="auto">📢 Auto-Detect Main Channel (Default)</option>';
+  }
 }
 
 // Check Authentication (localStorage-based)
@@ -435,6 +442,11 @@ async function submitCreateGiveaway() {
   const channelManual = document.getElementById('gChannelManual') ? document.getElementById('gChannelManual').value.trim() : '';
   const channel_id = channelManual || channelSelect || 'auto';
 
+  const mention_role = document.getElementById('gMentionRole') ? document.getElementById('gMentionRole').value.trim() : '';
+  const winnerChannelSelect = document.getElementById('gWinnerChannel') ? document.getElementById('gWinnerChannel').value : '';
+  const winnerChannelManual = document.getElementById('gWinnerChannelManual') ? document.getElementById('gWinnerChannelManual').value.trim() : '';
+  const winner_channel_id = winnerChannelManual || winnerChannelSelect || '';
+
   if (!title || !description) {
     showToast('Please fill in Title and Description', 'error');
     return;
@@ -461,6 +473,8 @@ async function submitCreateGiveaway() {
     description,
     banner_url,
     channel_id: channel_id || 'general',
+    winner_channel_id,
+    mention_role,
     spot_tiers,
     min_per_user,
     max_per_user,
@@ -606,6 +620,10 @@ function openEditModal(giveawayId) {
   document.getElementById('editGDesc').value = g.description || '';
   document.getElementById('editGBanner').value = g.banner_url || '';
   document.getElementById('editGNetwork').value = g.network || 'Ethereum';
+  document.getElementById('editGMentionRole').value = g.mention_role || '';
+  if (document.getElementById('editGWinnerChannel')) {
+    document.getElementById('editGWinnerChannel').value = g.winner_channel_id || '';
+  }
   document.getElementById('editGMinPerUser').value = g.min_per_user || 1;
   document.getElementById('editGMaxPerUser').value = g.max_per_user || 1;
   document.getElementById('editGDurationVal').value = g.duration_val || 15;
@@ -662,6 +680,11 @@ async function submitEditGiveaway() {
   const description = document.getElementById('editGDesc').value.trim();
   const banner_url = document.getElementById('editGBanner').value.trim();
   const network = document.getElementById('editGNetwork').value.trim() || 'Ethereum';
+  const mention_role = document.getElementById('editGMentionRole').value.trim();
+  const winnerChannelSelect = document.getElementById('editGWinnerChannel') ? document.getElementById('editGWinnerChannel').value : '';
+  const winnerChannelManual = document.getElementById('editGWinnerChannelManual') ? document.getElementById('editGWinnerChannelManual').value.trim() : '';
+  const winner_channel_id = winnerChannelManual || winnerChannelSelect || '';
+
   const min_per_user = parseInt(document.getElementById('editGMinPerUser').value) || 1;
   const max_per_user = parseInt(document.getElementById('editGMaxPerUser').value) || 1;
   const duration_val = parseFloat(document.getElementById('editGDurationVal').value) || 15;
@@ -680,6 +703,8 @@ async function submitEditGiveaway() {
   g.description = description;
   g.banner_url = banner_url;
   g.network = network;
+  g.mention_role = mention_role;
+  g.winner_channel_id = winner_channel_id;
   g.min_per_user = min_per_user;
   g.max_per_user = max_per_user;
   g.duration_val = duration_val;

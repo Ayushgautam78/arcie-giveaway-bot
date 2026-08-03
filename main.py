@@ -3105,7 +3105,7 @@ async def register_giveaway_entry(interaction: discord.Interaction, giveaway_id:
         "solana_wallet": prof.get("solana_wallet", ""),
         "twitter": prof.get("twitter", ""),
         "telegram": prof.get("telegram", ""),
-        "task_status": "pending",
+        "task_status": "verified",
         "winner_type": None
     }
     entries.append(new_entry)
@@ -3115,7 +3115,7 @@ async def register_giveaway_entry(interaction: discord.Interaction, giveaway_id:
 
     await update_giveaway_discord_message(giveaway_id)
 
-    msg = f"🎉 **Success!** You have joined **{g['title']}**! Complete all requirements to qualify."
+    msg = f"Success! You have joined **{g['title']}**!"
     if not interaction.response.is_done(): await interaction.response.send_message(msg, ephemeral=True)
     else: await interaction.followup.send(msg, ephemeral=True)
 
@@ -3614,14 +3614,34 @@ def build_giveaway_embed(g_data: dict):
     return embed, file_to_send
 
 
+def format_role_mention(mention_str) -> Optional[str]:
+    if not mention_str:
+        return None
+    clean = str(mention_str).strip()
+    if not clean:
+        return None
+    if clean in ("@everyone", "@here"):
+        return clean
+    if clean.isdigit():
+        return f"<@&{clean}>"
+    return clean
+
+
 async def announce_winners_in_discord(g_id: str, winner_summary_lines: list):
-    """Post an official Winners Announcement Embed directly to the Discord giveaway channel."""
+    """Post an official Winners Announcement Embed directly to the Discord giveaway or specified winner channel."""
     g = giveaways.get(g_id)
-    if not g or not g.get("channel_id"):
+    if not g:
+        return
+
+    target_ch_str = str(g.get("winner_channel_id", "")).strip() or str(g.get("channel_id", "")).strip()
+    if not target_ch_str or not target_ch_str.isdigit():
+        target_ch_str = str(g.get("channel_id", "")).strip()
+
+    if not target_ch_str or not target_ch_str.isdigit():
         return
 
     try:
-        channel_id = int(g["channel_id"])
+        channel_id = int(target_ch_str)
         channel = bot.get_channel(channel_id)
         if not channel:
             channel = await bot.fetch_channel(channel_id)
@@ -3648,10 +3668,11 @@ async def announce_winners_in_discord(g_id: str, winner_summary_lines: list):
                     embed.set_image(url=banner_url)
 
             embed.set_footer(text="Powered by Arcie Bot")
+            mention_text = format_role_mention(g.get("mention_role"))
             if file_to_send:
-                await channel.send(embed=embed, file=file_to_send)
+                await channel.send(content=mention_text, embed=embed, file=file_to_send)
             else:
-                await channel.send(embed=embed)
+                await channel.send(content=mention_text, embed=embed)
             print(f"[WINNERS ANNOUNCED] Posted winners announcement for '{g.get('title')}' in #{channel.name}")
     except Exception as e:
         print(f"[ANNOUNCE WINNERS ERROR] {e}")
@@ -3712,10 +3733,11 @@ async def sync_and_post_giveaways():
                         try:
                             embed, file_to_send = build_giveaway_embed(g_data)
                             view = GiveawayView(g_id, web_url)
+                            mention_text = format_role_mention(g_data.get("mention_role"))
                             if file_to_send:
-                                msg = await channel.send(embed=embed, view=view, file=file_to_send)
+                                msg = await channel.send(content=mention_text, embed=embed, view=view, file=file_to_send)
                             else:
-                                msg = await channel.send(embed=embed, view=view)
+                                msg = await channel.send(content=mention_text, embed=embed, view=view)
 
                             g_data["message_id"] = str(msg.id)
                             g_data["channel_id"] = str(channel.id)
@@ -4045,6 +4067,8 @@ async def start_health_server():
             "description": body.get("description", ""),
             "banner_url": body.get("banner_url", ""),
             "channel_id": str(body.get("channel_id", "")),
+            "winner_channel_id": str(body.get("winner_channel_id", "")),
+            "mention_role": body.get("mention_role", ""),
             "spot_tiers": spot_tiers,
             "min_per_user": int(body.get("min_per_user", 1)),
             "max_per_user": int(body.get("max_per_user", 1)),
@@ -4088,10 +4112,11 @@ async def start_health_server():
                 port = os.getenv("PORT", "3000")
                 web_url = os.getenv("APP_URL", f"http://localhost:{port}")
                 view = GiveawayView(g_id, web_url)
+                mention_text = format_role_mention(g_data.get("mention_role"))
                 if file_to_send:
-                    msg = await channel.send(embed=embed, view=view, file=file_to_send)
+                    msg = await channel.send(content=mention_text, embed=embed, view=view, file=file_to_send)
                 else:
-                    msg = await channel.send(embed=embed, view=view)
+                    msg = await channel.send(content=mention_text, embed=embed, view=view)
                 g_data["message_id"] = str(msg.id)
                 g_data["channel_id"] = str(channel.id)
                 giveaways[g_id] = g_data
