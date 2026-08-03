@@ -99,8 +99,12 @@
 
           <div class="form-row">
             <div class="form-group">
-              <label class="form-label">Banner Image URL</label>
-              <input type="url" id="gBanner" class="form-input" placeholder="https://i.imgur.com/example.png">
+              <label class="form-label">📷 Banner Image (Upload File or Paste URL)</label>
+              <input type="file" id="gBannerFile" accept="image/*" class="form-input" style="padding: 6px; margin-bottom: 6px;" onchange="handleBannerFileUpload(this, 'gBanner', 'gBannerPreview')">
+              <input type="url" id="gBanner" class="form-input" placeholder="https://i.imgur.com/example.png or uploaded URL">
+              <div id="gBannerPreview" style="margin-top: 6px; display: none;">
+                <img src="" style="max-height: 100px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);" alt="preview">
+              </div>
             </div>
             <div class="form-group">
               <label class="form-label">Discord Target Channel *</label>
@@ -190,6 +194,106 @@
     </div>
   </div>
 
+  <!-- Edit Giveaway Modal (Admin) -->
+  <div id="editModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">✏️ Edit Giveaway</h3>
+        <button class="modal-close" onclick="closeModal('editModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="editGiveawayForm">
+          <input type="hidden" id="editGId">
+          <div class="form-group">
+            <label class="form-label">Giveaway Title *</label>
+            <input type="text" id="editGTitle" class="form-input" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Description *</label>
+            <textarea id="editGDesc" class="form-textarea" rows="3" required></textarea>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">📷 Banner Image (Upload File or Paste URL)</label>
+              <input type="file" id="editGBannerFile" accept="image/*" class="form-input" style="padding: 6px; margin-bottom: 6px;" onchange="handleBannerFileUpload(this, 'editGBanner', 'editGBannerPreview')">
+              <input type="url" id="editGBanner" class="form-input" placeholder="https://i.imgur.com/example.png or uploaded URL">
+              <div id="editGBannerPreview" style="margin-top: 6px; display: none;">
+                <img src="" style="max-height: 100px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);" alt="preview">
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Network / Blockchain Name</label>
+              <input type="text" id="editGNetwork" class="form-input" value="Ethereum" required>
+            </div>
+          </div>
+
+          <!-- Spot Tiers -->
+          <div style="margin-top: 0.5rem; margin-bottom: 0.75rem;">
+            <label class="form-label" style="font-size: 1rem; color: var(--primary);">💎 Spot Tiers & Categories Builder</label>
+            <div id="editSpotTiersList" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;"></div>
+            <button type="button" class="btn btn-outline btn-sm" onclick="addEditSpotTier('Guaranteed', 3)">+ Add Custom Spot Tier</button>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Min Spots Per Person</label>
+              <input type="number" id="editGMinPerUser" class="form-input" min="1" value="1" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Max Spots Per Person</label>
+              <input type="number" id="editGMaxPerUser" class="form-input" min="1" value="1" required>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group" style="flex: 2;">
+              <label class="form-label">Duration Amount</label>
+              <input type="number" id="editGDurationVal" class="form-input" min="1" value="15" required>
+            </div>
+            <div class="form-group" style="flex: 1.5;">
+              <label class="form-label">Time Unit</label>
+              <select id="editGDurationUnit" class="form-select">
+                <option value="minutes">Minutes</option>
+                <option value="hours" selected>Hours</option>
+                <option value="days">Days</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Dynamic Tasks -->
+          <div style="border-top: 1px solid var(--border-color); margin-top: 0.75rem; padding-top: 1rem;">
+            <label class="form-label" style="font-size: 1.05rem; color: var(--primary);">📋 Dynamic Task Requirements Builder</label>
+            <div id="editDynamicTasksList" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px;"></div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;">
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('twitter_follow')">🐦 + Twitter Follow</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('twitter_like')">❤️ + Twitter Like</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('twitter_retweet')">🔄 + Twitter Retweet</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('tiktok_follow')">🎵 + TikTok Follow</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('youtube_follow')">▶️ + YouTube Subscribe</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('role_require')">🏅 + Discord Role</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('manual_task')">📝 + Custom Task</button>
+            </div>
+
+            <div style="display: flex; gap: 20px; border-top: 1px dashed var(--border-color); padding-top: 10px;">
+              <label style="display: flex; align-items: center; gap: 8px; font-size: 0.88rem; cursor: pointer; color: var(--text-main);">
+                <input type="checkbox" id="editReqEvm" style="accent-color: var(--primary);"> Require EVM Wallet (0x...)
+              </label>
+              <label style="display: flex; align-items: center; gap: 8px; font-size: 0.88rem; cursor: pointer; color: var(--text-main);">
+                <input type="checkbox" id="editReqSolana" style="accent-color: var(--purple);"> Require Solana Wallet
+              </label>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('editModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitEditGiveaway()">💾 Save Changes</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Giveaway Admin Detail / Winner Verification Modal -->
   <div id="detailModal" class="modal-overlay">
     <div class="modal-content">
@@ -202,12 +306,14 @@
 
         <!-- Admin Control Box -->
         <div id="adminControlBox" style="display: none; border-top: 1px solid var(--border-color); padding-top: 1rem;">
-          <h4 style="color: var(--primary); margin-bottom: 10px;">👑 Admin Winner Drawing & Manual Verification</h4>
+          <h4 style="color: var(--primary); margin-bottom: 10px;">👑 Admin Winner Drawing & Controls</h4>
           
           <div style="display: flex; gap: 10px; margin-bottom: 1rem; flex-wrap: wrap;">
+            <button id="editGiveawayAdminBtn" class="btn btn-primary btn-sm">✏️ Edit Giveaway</button>
             <button id="drawWinnersBtn" class="btn btn-purple btn-sm">🎲 Draw Initial Winners</button>
-            <button id="redrawWinnersBtn" class="btn btn-primary btn-sm">🔄 Re-Raffle Disqualified Spots</button>
+            <button id="redrawWinnersBtn" class="btn btn-outline btn-sm">🔄 Re-Raffle Disqualified Spots</button>
             <button id="exportWinnersBtn" class="btn btn-outline btn-sm">📥 Export Winners (CSV)</button>
+            <button id="deleteGiveawayAdminBtn" class="btn btn-danger btn-sm">🗑️ Delete Giveaway</button>
           </div>
 
           <h5 style="font-size: 0.9rem; margin-bottom: 8px;">Participants & Entries</h5>

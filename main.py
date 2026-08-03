@@ -2989,19 +2989,38 @@ class GiveawayView(discord.ui.View):
         super().__init__(timeout=None)
         self.giveaway_id = giveaway_id
 
+        # Unique Custom IDs per giveaway for persistent interaction routing across restarts
+        join_btn = discord.ui.Button(
+            label="Join Giveaway",
+            style=discord.ButtonStyle.primary,
+            custom_id=f"join_giveaway_{giveaway_id}",
+            row=0
+        )
+        join_btn.callback = self.join_giveaway_callback
+        self.add_item(join_btn)
+
+        view_btn = discord.ui.Button(
+            label="View Your Entry",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"view_entry_{giveaway_id}",
+            row=0
+        )
+        view_btn.callback = self.view_entry_callback
+        self.add_item(view_btn)
+
         # Counter buttons matching screenshot design: 🟢 valid, 🟡 pending, 🔴 ineligible
         g_entries = giveaway_entries.get(giveaway_id, [])
         valid_count = len([e for e in g_entries if e.get("task_status") == "verified"])
         pending_count = len([e for e in g_entries if e.get("task_status") == "pending"])
         ineligible_count = len([e for e in g_entries if e.get("task_status") == "ineligible"])
 
-        self.add_item(discord.ui.Button(label=f"🟢 {valid_count}", style=discord.ButtonStyle.secondary, disabled=True, row=1))
-        self.add_item(discord.ui.Button(label=f"🟡 {pending_count}", style=discord.ButtonStyle.secondary, disabled=True, row=1))
-        self.add_item(discord.ui.Button(label=f"🔴 {ineligible_count}", style=discord.ButtonStyle.secondary, disabled=True, row=1))
+        self.add_item(discord.ui.Button(label=f"🟢 {valid_count}", style=discord.ButtonStyle.secondary, disabled=True, custom_id=f"cnt_v_{giveaway_id}", row=1))
+        self.add_item(discord.ui.Button(label=f"🟡 {pending_count}", style=discord.ButtonStyle.secondary, disabled=True, custom_id=f"cnt_p_{giveaway_id}", row=1))
+        self.add_item(discord.ui.Button(label=f"🔴 {ineligible_count}", style=discord.ButtonStyle.secondary, disabled=True, custom_id=f"cnt_i_{giveaway_id}", row=1))
 
-    @discord.ui.button(label="Join Giveaway", style=discord.ButtonStyle.primary, custom_id="join_giveaway_main_btn", row=0)
-    async def join_giveaway(self, interaction: discord.Interaction, button: discord.ui.Button):
-        g = giveaways.get(self.giveaway_id)
+    async def join_giveaway_callback(self, interaction: discord.Interaction):
+        g_id = self.giveaway_id
+        g = giveaways.get(g_id)
         if not g:
             await interaction.response.send_message("❌ Giveaway not found or has been removed.", ephemeral=True)
             return
@@ -3022,7 +3041,7 @@ class GiveawayView(discord.ui.View):
         missing_solana = req_solana and not prof.get("solana_wallet")
 
         if missing_evm or missing_solana:
-            modal = JoinGiveawayModal(self.giveaway_id)
+            modal = JoinGiveawayModal(g_id)
             if prof.get("twitter"): modal.twitter.default = prof.get("twitter")
             if prof.get("telegram"): modal.telegram.default = prof.get("telegram")
             if prof.get("evm_wallet"): modal.evm_wallet.default = prof.get("evm_wallet")
@@ -3030,10 +3049,9 @@ class GiveawayView(discord.ui.View):
             await interaction.response.send_modal(modal)
             return
 
-        await register_giveaway_entry(interaction, self.giveaway_id)
+        await register_giveaway_entry(interaction, g_id)
 
-    @discord.ui.button(label="View Your Entry", style=discord.ButtonStyle.secondary, custom_id="view_your_entry_main_btn", row=0)
-    async def view_entry(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def view_entry_callback(self, interaction: discord.Interaction):
         g_id = self.giveaway_id
         g = giveaways.get(g_id)
         entries = giveaway_entries.get(g_id, [])
@@ -3910,6 +3928,7 @@ async def start_health_server():
             duration_seconds = duration_val * 3600
 
         ends_at = created_at + int(duration_seconds)
+        duration_hours = round(duration_seconds / 3600, 2)
 
         spot_tiers = body.get("spot_tiers", [])
         if not spot_tiers:
@@ -3930,6 +3949,8 @@ async def start_health_server():
             "min_per_user": int(body.get("min_per_user", 1)),
             "max_per_user": int(body.get("max_per_user", 1)),
             "duration_hours": duration_hours,
+            "duration_val": duration_val,
+            "duration_unit": duration_unit,
             "created_at": created_at,
             "ends_at": ends_at,
             "hosted_by": user.get("username", "Admin"),
@@ -3942,24 +3963,157 @@ async def start_health_server():
 
         giveaways[g_id] = g_data
         save_giveaways()
+        await firebase_put(f"giveaways/{g_id}", g_data)
 
-        # Post Embed in Discord
-        channel_id = body.get("channel_id")
-        if channel_id:
+        # Post Embed in Discord IMMEDIATELY on creation
+        ch_id_str = str(body.get("channel_id", "")).strip()
+        channel = None
+        if ch_id_str.isdigit():
+            channel = bot.get_channel(int(ch_id_str))
+            if not channel:
+                try:
+                    channel = await bot.fetch_channel(int(ch_id_str))
+                except Exception:
+                    channel = None
+
+        if not channel and bot.guilds:
+            for guild in bot.guilds:
+                channel = guild.system_channel or (guild.text_channels[0] if guild.text_channels else None)
+                if channel:
+                    break
+
+        if channel:
             try:
-                ch = bot.get_channel(int(channel_id))
-                if ch:
-                    embed = build_giveaway_embed(g_data)
-                    port = os.getenv("PORT", "3000")
-                    web_url = os.getenv("APP_URL", f"http://localhost:{port}")
-                    view = GiveawayView(g_id, web_url)
-                    msg = await ch.send(embed=embed, view=view)
-                    g_data["message_id"] = str(msg.id)
-                    save_giveaways()
+                embed = build_giveaway_embed(g_data)
+                port = os.getenv("PORT", "3000")
+                web_url = os.getenv("APP_URL", f"http://localhost:{port}")
+                view = GiveawayView(g_id, web_url)
+                msg = await channel.send(embed=embed, view=view)
+                g_data["message_id"] = str(msg.id)
+                g_data["channel_id"] = str(channel.id)
+                giveaways[g_id] = g_data
+                save_giveaways()
+                await firebase_put(f"giveaways/{g_id}", g_data)
+                bot.add_view(view)
+                print(f"[GIVEAWAY CREATED & POSTED] Sent giveaway '{g_data['title']}' to #{channel.name}")
             except Exception as e:
                 print(f"[DISCORD POST ERROR] {e}")
 
         return web.json_response(g_data)
+
+    async def edit_giveaway_handler(request):
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin permission required"}, status=403)
+        g_id = request.match_info.get("id")
+        g = giveaways.get(g_id)
+        if not g:
+            return web.json_response({"error": "Giveaway not found"}, status=404)
+
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        if "title" in body: g["title"] = body["title"]
+        if "description" in body: g["description"] = body["description"]
+        if "banner_url" in body: g["banner_url"] = body["banner_url"]
+        if "network" in body: g["network"] = body["network"]
+        if "min_per_user" in body: g["min_per_user"] = int(body["min_per_user"])
+        if "max_per_user" in body: g["max_per_user"] = int(body["max_per_user"])
+        if "tasks" in body: g["tasks"] = body["tasks"]
+        if "spot_tiers" in body: g["spot_tiers"] = body["spot_tiers"]
+        
+        if "duration_val" in body:
+            duration_val = float(body["duration_val"])
+            duration_unit = body.get("duration_unit", g.get("duration_unit", "hours"))
+            if duration_unit == "minutes": duration_seconds = duration_val * 60
+            elif duration_unit == "days": duration_seconds = duration_val * 86400
+            else: duration_seconds = duration_val * 3600
+            g["duration_val"] = duration_val
+            g["duration_unit"] = duration_unit
+            g["ends_at"] = g["created_at"] + int(duration_seconds)
+
+        giveaways[g_id] = g
+        save_giveaways()
+        await firebase_put(f"giveaways/{g_id}", g)
+
+        # Live update Discord announcement message embed
+        await update_giveaway_discord_message(g_id)
+
+        return web.json_response(g)
+
+    async def delete_giveaway_handler(request):
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin permission required"}, status=403)
+        g_id = request.match_info.get("id")
+        g = giveaways.pop(g_id, None)
+        if not g:
+            return web.json_response({"error": "Giveaway not found"}, status=404)
+
+        giveaway_entries.pop(g_id, None)
+        save_giveaways()
+        save_giveaway_entries()
+        await firebase_put(f"giveaways/{g_id}", None)
+        await firebase_put(f"giveaway_entries/{g_id}", None)
+
+        try:
+            if g.get("channel_id") and g.get("message_id"):
+                ch = bot.get_channel(int(g["channel_id"]))
+                if not ch:
+                    ch = await bot.fetch_channel(int(g["channel_id"]))
+                if ch:
+                    msg = await ch.fetch_message(int(g["message_id"]))
+                    if msg:
+                        await msg.delete()
+        except Exception as e:
+            print(f"[DELETE DISCORD MSG ERROR] {e}")
+
+        return web.json_response({"success": True, "message": "Giveaway deleted successfully"})
+
+    uploads_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "uploads")
+    os.makedirs(uploads_dir, exist_ok=True)
+
+    async def serve_upload(request):
+        filename = request.match_info.get("filename", "")
+        file_path = os.path.join(uploads_dir, filename)
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            return web.FileResponse(file_path)
+        return web.HTTPNotFound()
+
+    async def upload_image_handler(request):
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin permission required"}, status=403)
+        try:
+            reader = await request.multipart()
+            field = await reader.next()
+            if not field or field.name != "image":
+                return web.json_response({"error": "No image field found"}, status=400)
+
+            filename = field.filename or "upload.png"
+            ext = os.path.splitext(filename)[1].lower() or ".png"
+            if ext not in [".png", ".jpg", ".jpeg", ".gif", ".webp"]:
+                ext = ".png"
+
+            safe_name = f"banner_{int(time.time())}_{random.randint(1000, 9999)}{ext}"
+            file_path = os.path.join(uploads_dir, safe_name)
+
+            with open(file_path, "wb") as f:
+                while True:
+                    chunk = await field.read_chunk()
+                    if not chunk:
+                        break
+                    f.write(chunk)
+
+            port = os.getenv("PORT", "3000")
+            app_url = os.getenv("APP_URL", f"http://localhost:{port}").rstrip("/")
+            image_url = f"{app_url}/static/uploads/{safe_name}"
+            return web.json_response({"success": True, "url": image_url})
+        except Exception as e:
+            print(f"[IMAGE UPLOAD ERROR] {e}")
+            return web.json_response({"error": str(e)}, status=500)
 
     async def draw_winners_handler(request):
         user = get_session_user(request)
@@ -4148,6 +4302,7 @@ async def start_health_server():
     # Add routes
     app.router.add_get("/", serve_index)
     app.router.add_get("/static/{filename}", serve_static)
+    app.router.add_get("/static/uploads/{filename}", serve_upload)
     app.router.add_get("/health", health_handler)
     app.router.add_get("/api/auth/login", auth_login_handler)
     app.router.add_get("/api/auth/callback", auth_callback_handler)
@@ -4157,6 +4312,11 @@ async def start_health_server():
     app.router.add_get("/api/giveaways", get_giveaways_handler)
     app.router.add_get("/api/giveaways/{id}", get_giveaway_detail_handler)
     app.router.add_post("/api/giveaways", create_giveaway_handler)
+    app.router.add_put("/api/giveaways/{id}", edit_giveaway_handler)
+    app.router.add_post("/api/giveaways/{id}/edit", edit_giveaway_handler)
+    app.router.add_delete("/api/giveaways/{id}", delete_giveaway_handler)
+    app.router.add_post("/api/giveaways/{id}/delete", delete_giveaway_handler)
+    app.router.add_post("/api/upload", upload_image_handler)
     app.router.add_post("/api/giveaways/{id}/draw", draw_winners_handler)
     app.router.add_post("/api/giveaways/{id}/redraw", redraw_winners_handler)
     app.router.add_post("/api/giveaways/{id}/verify-winner", verify_winner_handler)

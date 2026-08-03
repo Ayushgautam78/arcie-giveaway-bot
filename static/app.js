@@ -381,7 +381,52 @@ function getDynamicTasksPayload() {
   return tasks;
 }
 
-// Submit Create Giveaway
+// Helper to handle banner image file uploads (saves to backend upload folder or Data URL fallback)
+async function handleBannerFileUpload(inputElement, targetUrlInputId, previewContainerId) {
+  const file = inputElement.files[0];
+  if (!file) return;
+
+  const formData = new FormData();
+  formData.append('image', file);
+
+  showToast('Uploading image...', 'info');
+  try {
+    const res = await fetch(apiUrl('/api/upload'), {
+      method: 'POST',
+      credentials: 'include',
+      body: formData
+    });
+    const data = await res.json();
+    if (res.ok && data.url) {
+      document.getElementById(targetUrlInputId).value = data.url;
+      const previewBox = document.getElementById(previewContainerId);
+      if (previewBox) {
+        previewBox.style.display = 'block';
+        previewBox.querySelector('img').src = data.url;
+      }
+      showToast('📷 Banner image uploaded successfully!', 'success');
+      return;
+    }
+  } catch (err) {
+    console.warn('Backend upload API unavailable, using local file reader preview:', err);
+  }
+
+  // Local fallback: read file as Data URL
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const dataUrl = e.target.result;
+    document.getElementById(targetUrlInputId).value = dataUrl;
+    const previewBox = document.getElementById(previewContainerId);
+    if (previewBox) {
+      previewBox.style.display = 'block';
+      previewBox.querySelector('img').src = dataUrl;
+    }
+    showToast('📷 Image loaded!', 'success');
+  };
+  reader.readAsDataURL(file);
+}
+
+// Submit Create Giveaway (Calls backend API so Discord announcement embed posts IMMEDIATELY)
 async function submitCreateGiveaway() {
   const title = document.getElementById('gTitle').value.trim();
   const description = document.getElementById('gDesc').value.trim();
@@ -421,13 +466,14 @@ async function submitCreateGiveaway() {
     max_per_user,
     duration_val,
     duration_unit,
+    duration_hours: duration_val,
     network,
     is_active: true,
     created_at: Math.floor(Date.now() / 1000),
     ends_at: Math.floor(Date.now() / 1000) + durationInSeconds,
     hosted_by: currentUser ? currentUser.username : 'Admin',
-    guaranteed_spots: (spot_tiers.find(t => t.type === 'guaranteed') || {}).spots || 0,
-    fcfs_spots: (spot_tiers.find(t => t.type === 'fcfs') || {}).spots || 0,
+    guaranteed_spots: (spot_tiers.find(t => t.name?.toLowerCase().includes('guarantee') || t.name === 'GTD') || {}).count || 0,
+    fcfs_spots: (spot_tiers.find(t => t.name?.toLowerCase().includes('fcfs')) || {}).count || 0,
     entries_count: 0,
     tasks: {
       dynamic_tasks,
@@ -437,13 +483,254 @@ async function submitCreateGiveaway() {
   };
 
   try {
-    await firebasePut('giveaways/' + giveawayId, giveawayObj);
-    showToast('🚀 Giveaway created successfully!', 'success');
-    closeModal('createModal');
-    await loadGiveaways();
+    // 1. Post to Backend Bot Server so Discord announcement embed is sent IN REAL-TIME
+    const res = await fetch(apiUrl('/api/giveaways'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(giveawayObj)
+    });
+    
+    if (res.ok) {
+      showToast('🚀 Giveaway published & posted to Discord!', 'success');
+    } else {
+      await firebasePut('giveaways/' + giveawayId, giveawayObj);
+      showToast('🚀 Giveaway created!', 'success');
+    }
   } catch (err) {
-    showToast('Error creating giveaway', 'error');
+    await firebasePut('giveaways/' + giveawayId, giveawayObj);
+    showToast('🚀 Giveaway created!', 'success');
   }
+
+  closeModal('createModal');
+  await loadGiveaways();
+}
+
+// Edit Giveaway Functions
+let editSpotTierCount = 0;
+function addEditSpotTier(defaultName = '', defaultCount = 1) {
+  const container = document.getElementById('editSpotTiersList');
+  if (!container) return;
+
+  editSpotTierCount++;
+  const id = `edit_spot_tier_${editSpotTierCount}`;
+  const div = document.createElement('div');
+  div.id = id;
+  div.style.display = 'flex';
+  div.style.gap = '8px';
+  div.style.alignItems = 'center';
+  div.style.background = 'rgba(0,0,0,0.2)';
+  div.style.padding = '6px 10px';
+  div.style.borderRadius = 'var(--radius-sm)';
+  div.style.border = '1px solid var(--border-color)';
+
+  div.innerHTML = `
+    <input type="text" class="form-input edit-spot-tier-name" value="${escapeHtml(defaultName)}" placeholder="Tier Name" style="flex: 2; padding: 6px 10px; font-size: 0.85rem;">
+    <input type="number" class="form-input edit-spot-tier-count" value="${defaultCount}" min="1" placeholder="Spots" style="flex: 1; padding: 6px 10px; font-size: 0.85rem;">
+    <button type="button" class="btn btn-danger btn-sm" onclick="document.getElementById('${id}').remove()" style="padding: 4px 8px;">🗑️</button>
+  `;
+
+  container.appendChild(div);
+}
+
+function getEditSpotTiersPayload() {
+  const tiers = [];
+  document.querySelectorAll('#editSpotTiersList > div').forEach(row => {
+    const nameInput = row.querySelector('.edit-spot-tier-name');
+    const countInput = row.querySelector('.edit-spot-tier-count');
+    if (nameInput && countInput) {
+      const name = nameInput.value.trim();
+      const count = parseInt(countInput.value) || 0;
+      if (name && count > 0) {
+        tiers.push({ name, count });
+      }
+    }
+  });
+  return tiers;
+}
+
+let editDynamicTaskCount = 0;
+function addEditDynamicTask(type, defaultVal = '') {
+  const container = document.getElementById('editDynamicTasksList');
+  if (!container) return;
+
+  editDynamicTaskCount++;
+  const id = `edit_task_item_${editDynamicTaskCount}`;
+  const div = document.createElement('div');
+  div.className = 'task-builder-item';
+  div.id = id;
+  div.style.display = 'flex';
+  div.style.gap = '8px';
+  div.style.alignItems = 'center';
+  div.style.background = 'rgba(0,0,0,0.2)';
+  div.style.padding = '8px 12px';
+  div.style.borderRadius = 'var(--radius-sm)';
+  div.style.border = '1px solid var(--border-color)';
+
+  let typeBadge = type;
+  if (type === 'twitter_follow') typeBadge = '🐦 Follow';
+  else if (type === 'twitter_like') typeBadge = '❤️ Like';
+  else if (type === 'twitter_retweet') typeBadge = '🔄 Retweet';
+  else if (type === 'tiktok_follow') typeBadge = '🎵 TikTok';
+  else if (type === 'youtube_follow') typeBadge = '▶️ YouTube';
+  else if (type === 'role_require') typeBadge = '🏅 Role';
+  else typeBadge = '📝 Custom';
+
+  div.innerHTML = `
+    <span class="g-badge g-badge-fcfs" style="min-width: 90px; text-align: center;">${typeBadge}</span>
+    <input type="text" class="form-input edit-dynamic-task-val" data-type="${type}" value="${escapeHtml(defaultVal)}" placeholder="Requirement value..." style="flex: 1; padding: 6px 10px; font-size: 0.85rem;">
+    <button type="button" class="btn btn-danger btn-sm" onclick="document.getElementById('${id}').remove()" style="padding: 4px 8px;">🗑️</button>
+  `;
+
+  container.appendChild(div);
+}
+
+function getEditDynamicTasksPayload() {
+  const tasks = [];
+  document.querySelectorAll('.edit-dynamic-task-val').forEach(input => {
+    const val = input.value.trim();
+    const type = input.dataset.type;
+    if (val) {
+      tasks.push({ type, value: val });
+    }
+  });
+  return tasks;
+}
+
+function openEditModal(giveawayId) {
+  const g = currentGiveaways.find(x => x.id === giveawayId);
+  if (!g) return;
+
+  document.getElementById('editGId').value = g.id;
+  document.getElementById('editGTitle').value = g.title || '';
+  document.getElementById('editGDesc').value = g.description || '';
+  document.getElementById('editGBanner').value = g.banner_url || '';
+  document.getElementById('editGNetwork').value = g.network || 'Ethereum';
+  document.getElementById('editGMinPerUser').value = g.min_per_user || 1;
+  document.getElementById('editGMaxPerUser').value = g.max_per_user || 1;
+  document.getElementById('editGDurationVal').value = g.duration_val || 15;
+  document.getElementById('editGDurationUnit').value = g.duration_unit || 'hours';
+
+  const previewBox = document.getElementById('editGBannerPreview');
+  if (previewBox) {
+    if (g.banner_url) {
+      previewBox.style.display = 'block';
+      previewBox.querySelector('img').src = g.banner_url;
+    } else {
+      previewBox.style.display = 'none';
+    }
+  }
+
+  // Populate spot tiers
+  const tierContainer = document.getElementById('editSpotTiersList');
+  tierContainer.innerHTML = '';
+  editSpotTierCount = 0;
+  if (g.spot_tiers && g.spot_tiers.length) {
+    g.spot_tiers.forEach(t => addEditSpotTier(t.name, t.count));
+  } else {
+    addEditSpotTier('Guaranteed', g.guaranteed_spots || 3);
+    addEditSpotTier('FCFS', g.fcfs_spots || 20);
+  }
+
+  // Populate dynamic tasks
+  const taskContainer = document.getElementById('editDynamicTasksList');
+  taskContainer.innerHTML = '';
+  editDynamicTaskCount = 0;
+  if (g.tasks?.dynamic_tasks && g.tasks.dynamic_tasks.length) {
+    g.tasks.dynamic_tasks.forEach(t => addEditDynamicTask(t.type, t.value));
+  } else if (g.tasks) {
+    if (g.tasks.twitter_follow) addEditDynamicTask('twitter_follow', g.tasks.twitter_follow);
+    if (g.tasks.twitter_like) addEditDynamicTask('twitter_like', g.tasks.twitter_like);
+    if (g.tasks.twitter_retweet) addEditDynamicTask('twitter_retweet', g.tasks.twitter_retweet);
+    if (g.tasks.tiktok_follow) addEditDynamicTask('tiktok_follow', g.tasks.tiktok_follow);
+    if (g.tasks.youtube_follow) addEditDynamicTask('youtube_follow', g.tasks.youtube_follow);
+    if (g.tasks.manual_task) addEditDynamicTask('manual_task', g.tasks.manual_task);
+  }
+
+  document.getElementById('editReqEvm').checked = !!g.tasks?.require_evm;
+  document.getElementById('editReqSolana').checked = !!g.tasks?.require_solana;
+
+  openModal('editModal');
+}
+
+async function submitEditGiveaway() {
+  const gId = document.getElementById('editGId').value;
+  const g = currentGiveaways.find(x => x.id === gId);
+  if (!g) return;
+
+  const title = document.getElementById('editGTitle').value.trim();
+  const description = document.getElementById('editGDesc').value.trim();
+  const banner_url = document.getElementById('editGBanner').value.trim();
+  const network = document.getElementById('editGNetwork').value.trim() || 'Ethereum';
+  const min_per_user = parseInt(document.getElementById('editGMinPerUser').value) || 1;
+  const max_per_user = parseInt(document.getElementById('editGMaxPerUser').value) || 1;
+  const duration_val = parseFloat(document.getElementById('editGDurationVal').value) || 15;
+  const duration_unit = document.getElementById('editGDurationUnit').value;
+
+  const spot_tiers = getEditSpotTiersPayload();
+  const dynamic_tasks = getEditDynamicTasksPayload();
+  const require_evm = document.getElementById('editReqEvm').checked;
+  const require_solana = document.getElementById('editReqSolana').checked;
+
+  let durationInSeconds = duration_val * 60;
+  if (duration_unit === 'hours') durationInSeconds = duration_val * 3600;
+  if (duration_unit === 'days') durationInSeconds = duration_val * 86400;
+
+  g.title = title;
+  g.description = description;
+  g.banner_url = banner_url;
+  g.network = network;
+  g.min_per_user = min_per_user;
+  g.max_per_user = max_per_user;
+  g.duration_val = duration_val;
+  g.duration_unit = duration_unit;
+  g.ends_at = g.created_at + durationInSeconds;
+  g.spot_tiers = spot_tiers;
+  g.tasks = {
+    dynamic_tasks,
+    require_evm,
+    require_solana
+  };
+
+  try {
+    const res = await fetch(apiUrl(`/api/giveaways/${gId}/edit`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(g)
+    });
+    await firebasePut(`giveaways/${gId}`, g);
+    showToast('✏️ Giveaway updated successfully!', 'success');
+  } catch (err) {
+    await firebasePut(`giveaways/${gId}`, g);
+    showToast('✏️ Giveaway updated!', 'success');
+  }
+
+  closeModal('editModal');
+  closeModal('detailModal');
+  await loadGiveaways();
+}
+
+async function deleteGiveaway(giveawayId) {
+  if (!confirm('Are you sure you want to delete this giveaway? This will remove it from the dashboard and Discord.')) return;
+
+  try {
+    await fetch(apiUrl(`/api/giveaways/${giveawayId}/delete`), {
+      method: 'POST',
+      credentials: 'include'
+    });
+    await firebasePut(`giveaways/${giveawayId}`, null);
+    await firebasePut(`giveaway_entries/${giveawayId}`, null);
+    showToast('🗑️ Giveaway deleted successfully!', 'success');
+  } catch (err) {
+    await firebasePut(`giveaways/${giveawayId}`, null);
+    await firebasePut(`giveaway_entries/${giveawayId}`, null);
+    showToast('🗑️ Giveaway deleted from DB', 'success');
+  }
+
+  closeModal('detailModal');
+  closeModal('editModal');
+  await loadGiveaways();
 }
 
 // Open Detail & Admin Verification Modal
@@ -467,6 +754,11 @@ async function openDetailModal(giveawayId) {
   if (g.tasks?.youtube_follow) reqs.push(`<li>▶️ Subscribe YouTube</li>`);
   if (g.tasks?.roles?.length) reqs.push(`<li>🏅 Required Roles: ${escapeHtml(g.tasks.roles.join(', '))}</li>`);
   if (g.tasks?.manual_task) reqs.push(`<li>📝 ${escapeHtml(g.tasks.manual_task)}</li>`);
+  if (g.tasks?.dynamic_tasks) {
+    g.tasks.dynamic_tasks.forEach(t => {
+      reqs.push(`<li>📝 ${escapeHtml(t.value)}</li>`);
+    });
+  }
 
   content.innerHTML = `
     <div style="display: flex; flex-direction: column; gap: 1rem;">
@@ -474,8 +766,8 @@ async function openDetailModal(giveawayId) {
       <p style="font-size: 1rem; color: var(--text-muted);">${escapeHtml(g.description)}</p>
       
       <div class="g-badge-container">
-        <span class="g-badge g-badge-guaranteed">💎 ${g.guaranteed_spots} Guaranteed Spots</span>
-        <span class="g-badge g-badge-fcfs">⚡ ${g.fcfs_spots} FCFS Spots</span>
+        ${g.guaranteed_spots ? `<span class="g-badge g-badge-guaranteed">💎 ${g.guaranteed_spots} Guaranteed</span>` : ''}
+        ${g.fcfs_spots ? `<span class="g-badge g-badge-fcfs">⚡ ${g.fcfs_spots} FCFS</span>` : ''}
         <span class="g-badge g-badge-timer">🌐 Network: ${escapeHtml(g.network || 'Ethereum')}</span>
         ${isEnded ? '<span class="g-badge g-badge-ended">Ended</span>' : `<span class="g-badge g-badge-timer">Ends ${getTimeLeftString(g.ends_at)}</span>`}
       </div>
@@ -500,6 +792,8 @@ async function openDetailModal(giveawayId) {
     adminBox.style.display = 'block';
     await loadGiveawayParticipants(giveawayId);
     
+    document.getElementById('editGiveawayAdminBtn').onclick = () => openEditModal(giveawayId);
+    document.getElementById('deleteGiveawayAdminBtn').onclick = () => deleteGiveaway(giveawayId);
     document.getElementById('drawWinnersBtn').onclick = () => drawWinners(giveawayId);
     document.getElementById('redrawWinnersBtn').onclick = () => redrawWinners(giveawayId);
     document.getElementById('exportWinnersBtn').onclick = () => exportWinnersCSV(giveawayId);
