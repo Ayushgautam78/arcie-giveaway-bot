@@ -4648,13 +4648,21 @@ async def start_health_server():
         save_giveaways()
         await firebase_put(f"giveaways/{g_id}", g)
 
-        if channel_changed and not g.get("message_id"):
-            # Re-post embed to new channel
+        if not g.get("message_id") or channel_changed:
+            # Re-post or initial post embed to Discord channel
             try:
-                ch_id = str(g["channel_id"])
-                new_ch = bot.get_channel(int(ch_id))
-                if not new_ch:
-                    new_ch = await bot.fetch_channel(int(ch_id))
+                ch_id = re.sub(r'[^0-9]', '', str(g.get("channel_id", "")))
+                new_ch = bot.get_channel(int(ch_id)) if ch_id else None
+                if not new_ch and ch_id:
+                    try:
+                        new_ch = await bot.fetch_channel(int(ch_id))
+                    except Exception:
+                        pass
+                if not new_ch and bot.guilds:
+                    for guild in bot.guilds:
+                        new_ch = guild.system_channel or (guild.text_channels[0] if guild.text_channels else None)
+                        if new_ch: break
+
                 if new_ch:
                     port = os.getenv("PORT", "3000")
                     web_url = os.getenv("APP_URL", f"http://localhost:{port}")
@@ -4666,15 +4674,16 @@ async def start_health_server():
                     else:
                         msg = await new_ch.send(content=mention_text, embed=embed, view=view)
                     g["message_id"] = str(msg.id)
+                    g["channel_id"] = str(new_ch.id)
                     giveaways[g_id] = g
                     save_giveaways()
                     await firebase_put(f"giveaways/{g_id}", g)
                     bot.add_view(view)
-                    print(f"[GIVEAWAY MOVED] Re-posted to #{new_ch.name}")
+                    print(f"[GIVEAWAY EDITED & POSTED] Re-posted/posted to #{new_ch.name}")
             except Exception as e:
                 print(f"[EDIT: RE-POST ERROR] {e}")
         else:
-            # Just update the existing embed in place
+            # Just update the existing embed in place for ongoing giveaway
             await update_giveaway_discord_message(g_id)
 
         # If this giveaway already has winners drawn, re-announce winners to winner_channel_id
