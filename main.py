@@ -4072,6 +4072,19 @@ async def sync_and_post_giveaways():
     except Exception as ge:
         print(f"[GIVEAWAY SYNC ERROR] {ge}")
 
+    # 4. LOCAL expiry check — catch ALL expired giveaways in memory (even if Firebase fetch failed)
+    now = int(time.time())
+    for g_id, g_data in list(giveaways.items()):
+        if not isinstance(g_data, dict):
+            continue
+        ends_at = int(g_data.get("ends_at", 0))
+        if g_data.get("is_active") and ends_at > 0 and now >= ends_at:
+            print(f"[AUTO-DRAW LOCAL] Giveaway '{g_data.get('title')}' ({g_id}) expired. Drawing winners & posting results NOW...")
+            try:
+                await auto_draw_giveaway_winners(g_id)
+            except Exception as ad_err:
+                print(f"[AUTO-DRAW ERROR] {g_id}: {ad_err}")
+
 
 async def auto_draw_giveaway_winners(g_id: str):
     """Automatically draw winners for an expired giveaway and post the Winners Announcement to Discord."""
@@ -4093,6 +4106,8 @@ async def auto_draw_giveaway_winners(g_id: str):
         save_giveaways()
         await firebase_put(f"giveaways/{g_id}", g)
         await update_giveaway_discord_message(g_id)
+        # Still announce "no participants" to the channel
+        await announce_winners_in_discord(g_id, ["No participants joined."])
         return
 
     spot_tiers = g.get("spot_tiers", [])
@@ -4144,11 +4159,12 @@ async def auto_draw_giveaway_winners(g_id: str):
     await firebase_put(f"giveaways/{g_id}", g)
     await firebase_put(f"giveaway_entries/{g_id}", entries)
 
-    # 1. Update the original giveaway embed in Discord
+    # 1. Update the original giveaway embed in Discord (marks it as ended)
     await update_giveaway_discord_message(g_id)
 
-    # 2. Post official Winners Announcement Embed directly into Discord channel!
+    # 2. Post official Winners Announcement Embed IMMEDIATELY to Discord channel!
     await announce_winners_in_discord(g_id, winner_summary_lines)
+    print(f"[AUTO-DRAW COMPLETE] Winners drawn & results posted for '{g.get('title')}' ({g_id})")
 
 
 async def bg_firebase_poster_task():
@@ -4158,7 +4174,7 @@ async def bg_firebase_poster_task():
             await sync_and_post_giveaways()
         except Exception as e:
             print(f"[BG TASK ERROR] {e}")
-        await asyncio.sleep(4)
+        await asyncio.sleep(2)
 
 
 @bot.event
