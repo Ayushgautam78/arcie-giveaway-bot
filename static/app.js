@@ -60,22 +60,25 @@ async function loadGuildChannels() {
   const select = document.getElementById('gChannel');
   if (!select) return;
   select.innerHTML = '<option value="">Loading channels...</option>';
+  
   try {
     const channels = await firebaseGet('channels');
     if (channels && typeof channels === 'object') {
       const channelArray = Array.isArray(channels) ? channels : Object.values(channels);
       if (channelArray.length > 0) {
-        select.innerHTML = '<option value="">-- Select Discord Channel --</option>' + channelArray.map(c => `
+        select.innerHTML = '<option value="auto">📢 Auto-Detect Main Channel (Default)</option>' + channelArray.map(c => `
           <option value="${c.id}">#${escapeHtml(c.name)} (${escapeHtml(c.guild_name || 'Server')})</option>
         `).join('');
         return;
       }
     }
-    select.innerHTML = '<option value="">Paste Channel ID below</option>';
   } catch (err) {
     console.error('Failed to load channels:', err);
-    select.innerHTML = '<option value="">Paste Channel ID below</option>';
   }
+
+  select.innerHTML = `
+    <option value="auto">📢 Auto-Detect Main Channel (Default)</option>
+  `;
 }
 
 // Check Authentication (localStorage-based)
@@ -385,10 +388,10 @@ async function submitCreateGiveaway() {
   const banner_url = document.getElementById('gBanner').value.trim();
   const channelSelect = document.getElementById('gChannel').value;
   const channelManual = document.getElementById('gChannelManual') ? document.getElementById('gChannelManual').value.trim() : '';
-  const channel_id = channelManual || channelSelect;
+  const channel_id = channelManual || channelSelect || 'auto';
 
-  if (!title || !description || !channel_id) {
-    showToast('Please fill in Title, Description, and Select or Paste a Channel ID', 'error');
+  if (!title || !description) {
+    showToast('Please fill in Title and Description', 'error');
     return;
   }
   const spot_tiers = getSpotTiersPayload();
