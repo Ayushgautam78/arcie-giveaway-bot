@@ -3307,15 +3307,55 @@ async def register_giveaway_entry(interaction: discord.Interaction, giveaway_id:
     else: await interaction.followup.send(msg, ephemeral=True)
 
 
+async def resolve_giveaway_by_identifier(identifier: str) -> Optional[dict]:
+    """Resolve a giveaway object using Giveaway ID, Discord Message ID, or Discord Message Link."""
+    if not identifier:
+        return None
+    clean_str = str(identifier).strip()
+    if not clean_str:
+        return None
+
+    # Extract ID if a Discord Message/Channel URL was passed
+    url_match = re.search(r'/(\d{17,20})$', clean_str)
+    search_id = url_match.group(1) if url_match else re.sub(r'[^0-9a-zA-Z_-]', '', clean_str)
+
+    # 1. Direct lookup by Giveaway ID in memory
+    if search_id in giveaways and isinstance(giveaways[search_id], dict):
+        return giveaways[search_id]
+
+    # 2. Search by message_id or id in memory
+    for g_id, g in giveaways.items():
+        if isinstance(g, dict):
+            if str(g.get("message_id", "")).strip() == search_id or str(g.get("id", "")).strip() == search_id:
+                return g
+
+    # 3. Search Firebase giveaways Cloud DB
+    if FIREBASE_URL:
+        try:
+            fb_g = await firebase_get(f"giveaways/{search_id}")
+            if fb_g and isinstance(fb_g, dict):
+                giveaways[search_id] = fb_g
+                return fb_g
+
+            fb_all = await firebase_get("giveaways")
+            if fb_all and isinstance(fb_all, dict):
+                for g_id, g_data in fb_all.items():
+                    if isinstance(g_data, dict):
+                        giveaways[g_id] = g_data
+                        if str(g_data.get("message_id", "")).strip() == search_id or str(g_data.get("id", "")).strip() == search_id:
+                            return g_data
+        except Exception:
+            pass
+
+    return None
+
+
 async def update_giveaway_discord_message(giveaway_id: str):
-    g = giveaways.get(giveaway_id)
-    if not g:
-        g = await firebase_get(f"giveaways/{giveaway_id}")
-        if g and isinstance(g, dict):
-            giveaways[giveaway_id] = g
+    g = await resolve_giveaway_by_identifier(giveaway_id)
     if not g or not isinstance(g, dict):
         print(f"[UPDATE EMBED FAIL] Giveaway '{giveaway_id}' not found in memory or Cloud DB.")
         return
+    giveaway_id = g.get("id", giveaway_id)
 
     # Resolve target channel
     ch_id_clean = re.sub(r'[^0-9]', '', str(g.get("channel_id", "")))
@@ -3593,23 +3633,21 @@ async def user_details_cmd(interaction: discord.Interaction, target: Optional[di
 
 
 @bot.tree.command(name="recover-entries", description="Admin: Automatically reconstruct entries into a giveaway from user profiles.")
-@app_commands.describe(giveaway_id="The Giveaway ID (e.g. g_1785773623079)")
+@app_commands.describe(giveaway_id="Giveaway ID, Discord Message ID, or Discord Message Link")
 async def recover_entries_cmd(interaction: discord.Interaction, giveaway_id: str):
     if not is_bot_admin_by_id(str(interaction.user.id)):
         await interaction.response.send_message("❌ Admin permission required.", ephemeral=True)
         return
 
     await interaction.response.defer(ephemeral=True)
-    g = giveaways.get(giveaway_id)
-    if not g and FIREBASE_URL:
-        g = await firebase_get(f"giveaways/{giveaway_id}")
-        if g: giveaways[giveaway_id] = g
+    g = await resolve_giveaway_by_identifier(giveaway_id)
 
     if not g:
-        await interaction.followup.send("❌ Giveaway not found.", ephemeral=True)
+        await interaction.followup.send("❌ Giveaway not found by ID, Message ID, or Message Link.", ephemeral=True)
         return
 
-    entries = giveaway_entries.setdefault(giveaway_id, [])
+    g_id = g.get("id", giveaway_id)
+    entries = giveaway_entries.setdefault(g_id, [])
     existing_uids = {e["user_id"] for e in entries if isinstance(e, dict) and "user_id" in e}
 
     recovered_count = 0
@@ -3637,10 +3675,10 @@ async def recover_entries_cmd(interaction: discord.Interaction, giveaway_id: str
     save_giveaways()
     save_giveaway_entries()
     if FIREBASE_URL:
-        await firebase_put(f"giveaways/{giveaway_id}", g)
-        await firebase_put(f"giveaway_entries/{giveaway_id}", entries)
+        await firebase_put(f"giveaways/{g_id}", g)
+        await firebase_put(f"giveaway_entries/{g_id}", entries)
 
-    await update_giveaway_discord_message(giveaway_id)
+    await update_giveaway_discord_message(g_id)
     await interaction.followup.send(
         f"✅ **Recovery Complete!**\n"
         f"Reconstructed **{recovered_count}** participant entries for **{g.get('title')}**!\n"
@@ -3651,9 +3689,9 @@ async def recover_entries_cmd(interaction: discord.Interaction, giveaway_id: str
 
 @bot.tree.command(name="set-custom-winners", description="Admin: Set custom GTD & FCFS winners for a fabricated giveaway and post to Discord.")
 @app_commands.describe(
-    giveaway_id="The Giveaway ID (e.g. g_1785773623079)",
-    guaranteed="GTD Winners (user mentions or IDs separated by comma)",
-    fcfs="FCFS Winners (user mentions or IDs separated by comma)"
+    giveaway_id="Giveaway ID, Discord Message ID, or Discord Message Link",
+    guaranteed="GTD Winners (user mentions or IDs separated by space/comma)",
+    fcfs="FCFS Winners (user mentions or IDs separated by space/comma)"
 )
 async def set_custom_winners_cmd(interaction: discord.Interaction, giveaway_id: str, guaranteed: Optional[str] = None, fcfs: Optional[str] = None):
     if not is_bot_admin_by_id(str(interaction.user.id)):
@@ -3661,14 +3699,13 @@ async def set_custom_winners_cmd(interaction: discord.Interaction, giveaway_id: 
         return
 
     await interaction.response.defer(ephemeral=True)
-    g = giveaways.get(giveaway_id)
-    if not g and FIREBASE_URL:
-        g = await firebase_get(f"giveaways/{giveaway_id}")
-        if g: giveaways[giveaway_id] = g
+    g = await resolve_giveaway_by_identifier(giveaway_id)
 
     if not g:
-        await interaction.followup.send("❌ Giveaway not found.", ephemeral=True)
+        await interaction.followup.send("❌ Giveaway not found by ID, Message ID, or Message Link.", ephemeral=True)
         return
+
+    g_id = g.get("id", giveaway_id)
 
     def format_list(raw):
         if not raw: return "None"
@@ -3712,10 +3749,10 @@ async def set_custom_winners_cmd(interaction: discord.Interaction, giveaway_id: 
 
     save_giveaways()
     if FIREBASE_URL:
-        await firebase_put(f"giveaways/{giveaway_id}", g)
+        await firebase_put(f"giveaways/{g_id}", g)
 
-    await update_giveaway_discord_message(giveaway_id)
-    await announce_winners_in_discord(giveaway_id, winner_summary_lines)
+    await update_giveaway_discord_message(g_id)
+    await announce_winners_in_discord(g_id, winner_summary_lines)
 
     await interaction.followup.send(
         f"✅ **Fabricated / Custom Winners Set & Announced!**\n\n"
@@ -3728,7 +3765,7 @@ async def set_custom_winners_cmd(interaction: discord.Interaction, giveaway_id: 
 
 @bot.tree.command(name="edit-announcement", description="Admin: Silently edit a giveaway embed or announcement on Discord.")
 @app_commands.describe(
-    giveaway_id="The Giveaway ID (e.g. g_1785773623079)",
+    giveaway_id="Giveaway ID, Discord Message ID, or Discord Message Link",
     new_title="Optional: New Title for the Embed",
     new_description="Optional: New Description / Mint Details text",
     new_winners="Optional: New Winners text (e.g. GTD: @user1 | FCFS: @user2)"
@@ -3746,14 +3783,13 @@ async def edit_announcement_cmd(
 
     await interaction.response.defer(ephemeral=True)
 
-    g = giveaways.get(giveaway_id)
-    if not g and FIREBASE_URL:
-        g = await firebase_get(f"giveaways/{giveaway_id}")
-        if g and isinstance(g, dict): giveaways[giveaway_id] = g
+    g = await resolve_giveaway_by_identifier(giveaway_id)
 
     if not g:
-        await interaction.followup.send("❌ Giveaway not found.", ephemeral=True)
+        await interaction.followup.send("❌ Giveaway not found by ID, Message ID, or Message Link.", ephemeral=True)
         return
+
+    g_id = g.get("id", giveaway_id)
 
     if new_title and new_title.strip():
         g["title"] = new_title.strip()
@@ -4880,13 +4916,10 @@ async def start_health_server():
 
     async def get_giveaway_detail_handler(request):
         g_id = request.match_info.get("id")
-        g = giveaways.get(g_id)
-        if not g:
-            g = await firebase_get(f"giveaways/{g_id}")
-            if g and isinstance(g, dict):
-                giveaways[g_id] = g
+        g = await resolve_giveaway_by_identifier(g_id)
         if not g:
             return web.json_response({"error": "Not found"}, status=404)
+        g_id = g.get("id", g_id)
 
         # Always fetch fresh entries directly from Firebase Cloud DB
         fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
@@ -4907,11 +4940,10 @@ async def start_health_server():
         if not user or not user.get("is_admin"):
             return web.json_response({"error": "Admin required"}, status=403)
         g_id = request.match_info.get("id")
-        g = giveaways.get(g_id)
+        g = await resolve_giveaway_by_identifier(g_id)
         if not g:
-            g = await firebase_get(f"giveaways/{g_id}")
-            if g:
-                giveaways[g_id] = g
+            return web.json_response({"error": "Giveaway not found"}, status=404)
+        g_id = g.get("id", g_id)
         if not g:
             return web.json_response({"error": "Giveaway not found"}, status=404)
 
@@ -5078,9 +5110,10 @@ async def start_health_server():
         if not user or not user.get("is_admin"):
             return web.json_response({"error": "Admin permission required"}, status=403)
         g_id = request.match_info.get("id")
-        g = giveaways.get(g_id)
+        g = await resolve_giveaway_by_identifier(g_id)
         if not g:
             return web.json_response({"error": "Giveaway not found"}, status=404)
+        g_id = g.get("id", g_id)
 
         try:
             body = await request.json()
@@ -5499,13 +5532,10 @@ async def start_health_server():
             return web.json_response({"error": "Admin permission required"}, status=403)
 
         g_id = request.match_info.get("id")
-        g = giveaways.get(g_id)
-        if not g and FIREBASE_URL:
-            g = await firebase_get(f"giveaways/{g_id}")
-            if g and isinstance(g, dict): giveaways[g_id] = g
-
+        g = await resolve_giveaway_by_identifier(g_id)
         if not g:
             return web.json_response({"error": "Giveaway not found"}, status=404)
+        g_id = g.get("id", g_id)
 
         try:
             body = await request.json()
