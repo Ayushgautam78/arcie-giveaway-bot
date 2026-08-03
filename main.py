@@ -1456,87 +1456,13 @@ class ReactionRoleButton(discord.ui.Button):
             except Exception as e:
                 await interaction.followup.send(f"Could not give role: {e}", ephemeral=True)
 
-# -------- Event Handlers -------- #
-@bot.event
-async def on_ready():
-    global session
-    if session is None or session.closed:
-        session = aiohttp.ClientSession()
-
-    try:
-        synced = await bot.tree.sync()
-        print(f"[BOOT] Synced {len(synced)} global slash commands.")
-        for guild in bot.guilds:
-            try:
-                bot.tree.clear_commands(guild=guild)
-                bot.tree.copy_global_to(guild=guild)
-                await bot.tree.sync(guild=guild)
-                print(f"[BOOT] Cleared old template commands & synced active slash commands for '{guild.name}'")
-            except Exception as ge:
-                print(f"[BOOT ERROR] Guild command sync failed for '{guild.name}': {ge}")
-    except Exception as e:
-        print(f"[BOOT] Slash command sync failed: {e}")
-
-    for guild in bot.guilds:
-        try:
-            await guild.chunk()
-            print(f"[MEMBERS] Cached {len(guild.members)} members in '{guild.name}'")
-        except Exception as e:
-            print(f"[MEMBERS ERROR] {guild.name}: {e}")
-
-    # Load / Sync Reaction Roles from Firebase Cloud DB
-    try:
-        fb_rr = await firebase_get("reaction_roles")
-        if fb_rr and isinstance(fb_rr, dict):
-            for k, v in fb_rr.items():
-                if k not in reaction_roles or not reaction_roles[k]:
-                    reaction_roles[k] = v
-            print(f"[FIREBASE] Synced {len(reaction_roles)} reaction role records from Cloud DB.")
-    except Exception as fbe:
-        print(f"[FIREBASE RR SYNC ERROR] {fbe}")
-
-    # Register persistent reaction role views across restarts
-    for msg_id, data in reaction_roles.items():
-        try:
-            view = discord.ui.View(timeout=None)
-            if "roles" in data and isinstance(data["roles"], list):
-                for r_item in data["roles"]:
-                    rid = r_item.get("role_id")
-                    emo = r_item.get("emoji")
-                    lbl = r_item.get("label", "Get Role")
-                    if rid:
-                        view.add_item(ReactionRoleButton(role_id=int(rid), emoji=emo, label=lbl))
-            elif data.get("role_id"):
-                rid = int(data["role_id"])
-                emo = data.get("emoji", "⭐")
-                lbl = data.get("title", "Get Role")
-                view.add_item(ReactionRoleButton(role_id=rid, emoji=emo, label=lbl))
-
-            if len(view.children) > 0:
-                bot.add_view(view, message_id=int(msg_id))
-                print(f"[RR RESTORE] Registered {len(view.children)} button(s) for message {msg_id}")
-        except Exception as r_err:
-            print(f"[RR RESTORE ERROR] message {msg_id}: {r_err}")
-
-    # Register persistent giveaway views across restarts
-    port = os.getenv("PORT", "3000")
-    domain = os.getenv("APP_URL", f"http://localhost:{port}")
-    for g_id, g in giveaways.items():
-        if g.get("message_id"):
-            try:
-                g_msg_id = int(re.sub(r'[^0-9]', '', str(g["message_id"])))
-                g_view = GiveawayView(g_id, domain)
-                bot.add_view(g_view, message_id=g_msg_id)
-                print(f"[GIVEAWAY RESTORE] Registered interactive view for giveaway '{g.get('title')}' (msg {g_msg_id})")
-            except Exception as g_err:
-                print(f"[GIVEAWAY RESTORE ERROR] {g_id}: {g_err}")
-
-    print(f"[BOOT] {bot.user.name} ({bot.user.id}) IS ONLINE AND READY TO CHAT.")
 
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
     if interaction.type == discord.InteractionType.component:
         custom_id = interaction.data.get("custom_id", "")
+
+        # ---- Reaction Role buttons (rr_<role_id>) ----
         if custom_id and custom_id.startswith("rr_"):
             try:
                 if not interaction.response.is_done():
@@ -1546,60 +1472,69 @@ async def on_interaction(interaction: discord.Interaction):
 
             try:
                 role_id_str = custom_id.replace("rr_", "").strip()
-                if role_id_str.isdigit():
-                    role_id = int(role_id_str)
-                    guild = interaction.guild
-                    if not guild:
-                        await interaction.followup.send("This action can only be used in a server!", ephemeral=True)
-                        return
-
-                    role = guild.get_role(role_id)
-                    if not role:
-                        await interaction.followup.send("❌ That role no longer exists in this server! 🥺", ephemeral=True)
-                        return
-
-                    member = interaction.user
-                    if not isinstance(member, discord.Member) and guild:
-                        member = guild.get_member(interaction.user.id)
-                        if not member:
-                            try:
-                                member = await guild.fetch_member(interaction.user.id)
-                            except Exception:
-                                pass
-
-                    if not member:
-                        await interaction.followup.send("❌ Could not fetch your server member profile! 🥺", ephemeral=True)
-                        return
-
-                    # Check Role Hierarchy
-                    if role >= guild.me.top_role:
-                        await interaction.followup.send(
-                            f"❌ **Role Hierarchy Error!** The role **{role.name}** is positioned HIGHER than (or equal to) my bot role (**Arcie**) in Discord!\n\n"
-                            f"👉 **Fix:** Open **Server Settings ➔ Roles**, and drag the bot role (**Arcie**) ABOVE **{role.name}**!",
-                            ephemeral=True
-                        )
-                        return
-
-                    if role in member.roles:
-                        try:
-                            await member.remove_roles(role, reason="Reaction Role button toggle")
-                            await interaction.followup.send(f"❌ Removed the **{role.name}** role from you!", ephemeral=True)
-                        except discord.Forbidden:
-                            await interaction.followup.send(f"❌ **Permission Denied!** Make sure my **Arcie** role has **Manage Roles** permission and is placed higher than **{role.name}** in Server Settings!", ephemeral=True)
-                        except Exception as e:
-                            await interaction.followup.send(f"Could not remove role: {e}", ephemeral=True)
-                    else:
-                        try:
-                            await member.add_roles(role, reason="Reaction Role button toggle")
-                            await interaction.followup.send(f"✅ Granted you the **{role.name}** role!", ephemeral=True)
-                        except discord.Forbidden:
-                            await interaction.followup.send(f"❌ **Permission Denied!** Make sure my **Arcie** role has **Manage Roles** permission and is placed higher than **{role.name}** in Server Settings!", ephemeral=True)
-                        except Exception as e:
-                            await interaction.followup.send(f"Could not give role: {e}", ephemeral=True)
+                if not role_id_str.isdigit():
+                    await interaction.followup.send("❌ Invalid role button configuration.", ephemeral=True)
                     return
+
+                role_id = int(role_id_str)
+                guild = interaction.guild
+                if not guild:
+                    await interaction.followup.send("This action can only be used in a server!", ephemeral=True)
+                    return
+
+                role = guild.get_role(role_id)
+                if not role:
+                    await interaction.followup.send("❌ That role no longer exists in this server! 🥺", ephemeral=True)
+                    return
+
+                member = interaction.user
+                if not isinstance(member, discord.Member) and guild:
+                    member = guild.get_member(interaction.user.id)
+                    if not member:
+                        try:
+                            member = await guild.fetch_member(interaction.user.id)
+                        except Exception:
+                            pass
+
+                if not member:
+                    await interaction.followup.send("❌ Could not fetch your server member profile! 🥺", ephemeral=True)
+                    return
+
+                # Check Role Hierarchy
+                if role >= guild.me.top_role:
+                    await interaction.followup.send(
+                        f"❌ **Role Hierarchy Error!** The role **{role.name}** is positioned HIGHER than (or equal to) my bot role (**Arcie**) in Discord!\n\n"
+                        f"👉 **Fix:** Open **Server Settings ➔ Roles**, and drag the bot role (**Arcie**) ABOVE **{role.name}**!",
+                        ephemeral=True
+                    )
+                    return
+
+                if role in member.roles:
+                    try:
+                        await member.remove_roles(role, reason="Reaction Role button toggle")
+                        await interaction.followup.send(f"❌ Removed the **{role.name}** role from you!", ephemeral=True)
+                    except discord.Forbidden:
+                        await interaction.followup.send(f"❌ **Permission Denied!** Make sure my **Arcie** role has **Manage Roles** permission and is placed higher than **{role.name}** in Server Settings!", ephemeral=True)
+                    except Exception as e:
+                        await interaction.followup.send(f"Could not remove role: {e}", ephemeral=True)
+                else:
+                    try:
+                        await member.add_roles(role, reason="Reaction Role button toggle")
+                        await interaction.followup.send(f"✅ Granted you the **{role.name}** role!", ephemeral=True)
+                    except discord.Forbidden:
+                        await interaction.followup.send(f"❌ **Permission Denied!** Make sure my **Arcie** role has **Manage Roles** permission and is placed higher than **{role.name}** in Server Settings!", ephemeral=True)
+                    except Exception as e:
+                        await interaction.followup.send(f"Could not give role: {e}", ephemeral=True)
+                return
             except Exception as e:
                 print(f"[REACTION ROLE INTERACTION ERROR] {e}")
+                try:
+                    await interaction.followup.send(f"❌ An error occurred processing this role button: {e}", ephemeral=True)
+                except Exception:
+                    pass
+                return
 
+        # ---- Join Giveaway buttons (join_giveaway_<id>) ----
         elif custom_id and custom_id.startswith("join_giveaway_"):
             try:
                 g_id = custom_id.replace("join_giveaway_", "").strip()
@@ -1642,7 +1577,16 @@ async def on_interaction(interaction: discord.Interaction):
                 return
             except Exception as e:
                 print(f"[JOIN GIVEAWAY INTERACTION ERROR] {e}")
+                try:
+                    if not interaction.response.is_done():
+                        await interaction.response.send_message(f"❌ Error joining giveaway: {e}", ephemeral=True)
+                    else:
+                        await interaction.followup.send(f"❌ Error joining giveaway: {e}", ephemeral=True)
+                except Exception:
+                    pass
+                return
 
+        # ---- View Entry buttons (view_entry_<id>) ----
         elif custom_id and custom_id.startswith("view_entry_"):
             try:
                 g_id = custom_id.replace("view_entry_", "").strip()
@@ -1673,6 +1617,14 @@ async def on_interaction(interaction: discord.Interaction):
                 return
             except Exception as e:
                 print(f"[VIEW ENTRY INTERACTION ERROR] {e}")
+                try:
+                    if not interaction.response.is_done():
+                        await interaction.response.send_message(f"❌ Error viewing entry: {e}", ephemeral=True)
+                    else:
+                        await interaction.followup.send(f"❌ Error viewing entry: {e}", ephemeral=True)
+                except Exception:
+                    pass
+                return
 
     await bot.process_application_commands(interaction)
 
@@ -3775,23 +3727,6 @@ def _format_big(val: float) -> str:
 
 
 
-@bot.event
-async def on_interaction(interaction: discord.Interaction):
-    """Global persistent interaction router ensuring Join Giveaway buttons work permanently across server restarts."""
-    if interaction.type == discord.InteractionType.component:
-        custom_id = interaction.data.get("custom_id", "")
-        if custom_id.startswith("join_giveaway_"):
-            g_id = custom_id.replace("join_giveaway_", "")
-            view = GiveawayView(g_id)
-            await view.join_giveaway_callback(interaction)
-            return
-        elif custom_id.startswith("view_entry_"):
-            g_id = custom_id.replace("view_entry_", "")
-            view = GiveawayView(g_id)
-            await view.view_entry_callback(interaction)
-            return
-
-
 def format_task_link(ttype: str, val: str) -> str:
     """Format task values as clean clickable Markdown links [text](url) for Discord embeds."""
     clean = val.strip()
@@ -4228,8 +4163,36 @@ async def bg_firebase_poster_task():
 
 @bot.event
 async def on_ready():
+    global session
+    if session is None or session.closed:
+        session = aiohttp.ClientSession()
+
     print(f"[READY] Logged in as {bot.user.name} ({bot.user.id})")
-    
+
+    # 1. Sync slash commands globally and per-guild
+    try:
+        synced = await bot.tree.sync()
+        print(f"[BOOT] Synced {len(synced)} global slash commands.")
+        for guild in bot.guilds:
+            try:
+                bot.tree.clear_commands(guild=guild)
+                bot.tree.copy_global_to(guild=guild)
+                await bot.tree.sync(guild=guild)
+                print(f"[BOOT] Synced active slash commands for '{guild.name}'")
+            except Exception as ge:
+                print(f"[BOOT ERROR] Guild command sync failed for '{guild.name}': {ge}")
+    except Exception as e:
+        print(f"[BOOT] Slash command sync failed: {e}")
+
+    # 2. Cache all guild members for role operations
+    for guild in bot.guilds:
+        try:
+            await guild.chunk()
+            print(f"[MEMBERS] Cached {len(guild.members)} members in '{guild.name}'")
+        except Exception as e:
+            print(f"[MEMBERS ERROR] {guild.name}: {e}")
+
+    # 3. Sync all data from Firebase Cloud DB
     if FIREBASE_URL:
         try:
             fb_profiles = await firebase_get("user_profiles")
@@ -4249,24 +4212,69 @@ async def on_ready():
         except Exception as fe:
             print(f"[FIREBASE SYNC ERROR] {fe}")
 
-    # Immediately sync channels & post any pending giveaways right now on startup
-    await sync_and_post_giveaways()
+    # 4. Load & Sync Reaction Roles from Firebase Cloud DB
+    try:
+        fb_rr = await firebase_get("reaction_roles")
+        if fb_rr and isinstance(fb_rr, dict):
+            for k, v in fb_rr.items():
+                if k not in reaction_roles or not reaction_roles[k]:
+                    reaction_roles[k] = v
+            print(f"[FIREBASE] Synced {len(reaction_roles)} reaction role records from Cloud DB.")
+    except Exception as fbe:
+        print(f"[FIREBASE RR SYNC ERROR] {fbe}")
 
+    # 5. Register persistent reaction role views across restarts (CRITICAL for existing embeds!)
+    rr_restored = 0
+    for msg_id, data in reaction_roles.items():
+        try:
+            view = discord.ui.View(timeout=None)
+            if "roles" in data and isinstance(data["roles"], list):
+                for r_item in data["roles"]:
+                    rid = r_item.get("role_id")
+                    emo = r_item.get("emoji")
+                    lbl = r_item.get("label", "Get Role")
+                    if rid:
+                        view.add_item(ReactionRoleButton(role_id=int(rid), emoji=emo, label=lbl))
+            elif data.get("role_id"):
+                rid = int(data["role_id"])
+                emo = data.get("emoji", "⭐")
+                lbl = data.get("title", "Get Role")
+                view.add_item(ReactionRoleButton(role_id=rid, emoji=emo, label=lbl))
+
+            if len(view.children) > 0:
+                bot.add_view(view, message_id=int(msg_id))
+                rr_restored += 1
+        except Exception as r_err:
+            print(f"[RR RESTORE ERROR] message {msg_id}: {r_err}")
+    if rr_restored:
+        print(f"[RR RESTORE] Registered persistent views for {rr_restored} reaction role message(s).")
+
+    # 6. Register persistent giveaway views across restarts (with message_id binding!)
     port = os.getenv("PORT", "3000")
     web_url = os.getenv("APP_URL", f"http://localhost:{port}")
-    
-    for g_id in giveaways:
-        bot.add_view(GiveawayView(g_id, web_url))
+    ga_restored = 0
+    for g_id, g in giveaways.items():
+        try:
+            g_view = GiveawayView(g_id, web_url)
+            msg_id_raw = str(g.get("message_id", ""))
+            msg_id_clean = re.sub(r'[^0-9]', '', msg_id_raw)
+            if msg_id_clean:
+                bot.add_view(g_view, message_id=int(msg_id_clean))
+            else:
+                bot.add_view(g_view)
+            ga_restored += 1
+        except Exception as g_err:
+            print(f"[GIVEAWAY RESTORE ERROR] {g_id}: {g_err}")
+    if ga_restored:
+        print(f"[GIVEAWAY RESTORE] Registered persistent views for {ga_restored} giveaway(s).")
 
-    # Launch continuous background channel sync & giveaway poster loop
+    # 7. Immediately sync channels & post any pending giveaways
+    await sync_and_post_giveaways()
+
+    # 8. Launch continuous background channel sync & giveaway poster loop
     bot.loop.create_task(bg_firebase_poster_task())
 
-    try:
-        synced = await bot.tree.sync()
-        print(f"[SLASH COMMANDS] Synced {len(synced)} slash commands.")
-    except Exception as e:
-        print(f"[SLASH ERROR] Failed to sync slash commands: {e}")
-
+    print(f"[BOOT] {bot.user.name} ({bot.user.id}) IS ONLINE AND READY TO CHAT.")
 
 # -------- Web Dashboard & HTTP API Server -------- #
 async def start_health_server():
@@ -4742,49 +4750,20 @@ async def start_health_server():
         save_giveaways()
         await firebase_put(f"giveaways/{g_id}", g)
 
-        if not g.get("message_id") or channel_changed:
-            # Re-post or initial post embed to Discord channel
-            try:
-                ch_id = re.sub(r'[^0-9]', '', str(g.get("channel_id", "")))
-                new_ch = bot.get_channel(int(ch_id)) if ch_id else None
-                if not new_ch and ch_id:
-                    try:
-                        new_ch = await bot.fetch_channel(int(ch_id))
-                    except Exception:
-                        pass
-                if not new_ch and bot.guilds:
-                    for guild in bot.guilds:
-                        new_ch = guild.system_channel or (guild.text_channels[0] if guild.text_channels else None)
-                        if new_ch: break
-
-                if new_ch:
-                    port = os.getenv("PORT", "3000")
-                    web_url = os.getenv("APP_URL", f"http://localhost:{port}")
-                    view = GiveawayView(g_id, web_url)
-                    embed, file_to_send = build_giveaway_embed(g)
-                    mention_text = format_role_mention(g.get("mention_role"))
-                    if file_to_send:
-                        msg = await new_ch.send(content=mention_text, embed=embed, view=view, file=file_to_send)
-                    else:
-                        msg = await new_ch.send(content=mention_text, embed=embed, view=view)
-                    g["message_id"] = str(msg.id)
-                    g["channel_id"] = str(new_ch.id)
-                    giveaways[g_id] = g
-                    save_giveaways()
-                    await firebase_put(f"giveaways/{g_id}", g)
-                    bot.add_view(view)
-                    print(f"[GIVEAWAY EDITED & POSTED] Re-posted/posted to #{new_ch.name}")
-            except Exception as e:
-                print(f"[EDIT: RE-POST ERROR] {e}")
-        else:
-            # Just update the existing embed in place for ongoing giveaway
+        # Always update/re-post the Discord embed (self-healing: posts fresh if message is missing)
+        try:
             await update_giveaway_discord_message(g_id)
+        except Exception as ue:
+            print(f"[EDIT: UPDATE EMBED ERROR] {ue}")
 
         # If this giveaway already has winners drawn, re-announce winners to winner_channel_id
         if g.get("winners_text"):
             lines = [l for l in g["winners_text"].split("\n") if l.strip()]
             if lines:
-                await announce_winners_in_discord(g_id, lines)
+                try:
+                    await announce_winners_in_discord(g_id, lines)
+                except Exception as ae:
+                    print(f"[EDIT: RE-ANNOUNCE ERROR] {ae}")
 
         return web.json_response(g)
 
