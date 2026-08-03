@@ -21,10 +21,14 @@ from discord import app_commands
 import aiohttp
 from aiohttp import web
 
-load_dotenv()
+DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
+
+env_file_path = os.path.join(DATA_DIR, ".env")
+if os.path.exists(env_file_path):
+    load_dotenv(env_file_path, override=True)
+load_dotenv(override=True)
 
 # -------- Global Safety Net & Persistent Memories -------- #
-DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
 MEMORY_FILE = os.path.join(DATA_DIR, "memories.json")
 ADMIN_FILE = os.path.join(DATA_DIR, "admins.json")
 USER_PROFILES_FILE = os.path.join(DATA_DIR, "user_profiles.json")
@@ -45,7 +49,12 @@ giveaway_entries: Dict[str, list] = {}
 active_sessions: Dict[str, dict] = {}
 
 # -------- Firebase Database Configuration -------- #
-FIREBASE_URL = os.getenv("FIREBASE_DATABASE_URL", "").rstrip("/")
+FIREBASE_URL = (
+    os.getenv("FIREBASE_DATABASE_URL") or 
+    os.getenv("FIREBASE_URL") or 
+    os.getenv("FIREBASE_DB_URL") or 
+    "https://arcie-bot-default-rtdb.asia-southeast1.firebasedatabase.app"
+).rstrip("/")
 
 async def firebase_get(path: str) -> Optional[dict]:
     if not FIREBASE_URL:
