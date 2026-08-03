@@ -209,6 +209,13 @@ def save_reaction_roles():
     except Exception as e:
         print(f"[RR ERROR] Failed to save reaction roles: {e}")
 
+    try:
+        loop = asyncio.get_event_loop()
+        if loop and loop.is_running():
+            loop.create_task(firebase_put("reaction_roles", reaction_roles))
+    except Exception:
+        pass
+
 # Load persistent memory
 if os.path.exists(MEMORY_FILE):
     try:
@@ -1465,6 +1472,17 @@ async def on_ready():
         except Exception as e:
             print(f"[MEMBERS ERROR] {guild.name}: {e}")
 
+    # Load / Sync Reaction Roles from Firebase Cloud DB
+    try:
+        fb_rr = await firebase_get("reaction_roles")
+        if fb_rr and isinstance(fb_rr, dict):
+            for k, v in fb_rr.items():
+                if k not in reaction_roles or not reaction_roles[k]:
+                    reaction_roles[k] = v
+            print(f"[FIREBASE] Synced {len(reaction_roles)} reaction role records from Cloud DB.")
+    except Exception as fbe:
+        print(f"[FIREBASE RR SYNC ERROR] {fbe}")
+
     # Register persistent reaction role views across restarts
     for msg_id, data in reaction_roles.items():
         try:
@@ -1489,6 +1507,79 @@ async def on_ready():
             print(f"[RR RESTORE ERROR] message {msg_id}: {r_err}")
 
     print(f"[BOOT] {bot.user.name} ({bot.user.id}) IS ONLINE AND READY TO CHAT.")
+
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    if interaction.type == discord.InteractionType.component:
+        custom_id = interaction.data.get("custom_id", "")
+        if custom_id and custom_id.startswith("rr_"):
+            try:
+                role_id_str = custom_id.replace("rr_", "").strip()
+                if role_id_str.isdigit():
+                    role_id = int(role_id_str)
+                    guild = interaction.guild
+                    if not guild:
+                        if not interaction.response.is_done():
+                            await interaction.response.send_message("This action can only be used in a server!", ephemeral=True)
+                        return
+
+                    role = guild.get_role(role_id)
+                    if not role:
+                        if not interaction.response.is_done():
+                            await interaction.response.send_message("❌ That role no longer exists in this server! 🥺", ephemeral=True)
+                        return
+
+                    member = interaction.user
+                    if not isinstance(member, discord.Member) and guild:
+                        member = guild.get_member(interaction.user.id)
+                        if not member:
+                            try:
+                                member = await guild.fetch_member(interaction.user.id)
+                            except Exception:
+                                pass
+
+                    if not member:
+                        if not interaction.response.is_done():
+                            await interaction.response.send_message("❌ Could not fetch your server member profile! 🥺", ephemeral=True)
+                        return
+
+                    # Check Role Hierarchy
+                    if role >= guild.me.top_role:
+                        if not interaction.response.is_done():
+                            await interaction.response.send_message(
+                                f"❌ **Role Hierarchy Error!** The role **{role.name}** is positioned HIGHER than (or equal to) my bot role (**Arcie**) in Discord!\n\n"
+                                f"👉 **Fix:** Open **Server Settings ➔ Roles**, and drag the bot role (**Arcie**) ABOVE **{role.name}**!",
+                                ephemeral=True
+                            )
+                        return
+
+                    if role in member.roles:
+                        try:
+                            await member.remove_roles(role, reason="Reaction Role button toggle")
+                            if not interaction.response.is_done():
+                                await interaction.response.send_message(f"❌ Removed the **{role.name}** role from you!", ephemeral=True)
+                        except discord.Forbidden:
+                            if not interaction.response.is_done():
+                                await interaction.response.send_message(f"❌ **Permission Denied!** Make sure my **Arcie** role has **Manage Roles** permission and is placed higher than **{role.name}** in Server Settings!", ephemeral=True)
+                        except Exception as e:
+                            if not interaction.response.is_done():
+                                await interaction.response.send_message(f"Could not remove role: {e}", ephemeral=True)
+                    else:
+                        try:
+                            await member.add_roles(role, reason="Reaction Role button toggle")
+                            if not interaction.response.is_done():
+                                await interaction.response.send_message(f"✅ Granted you the **{role.name}** role!", ephemeral=True)
+                        except discord.Forbidden:
+                            if not interaction.response.is_done():
+                                await interaction.response.send_message(f"❌ **Permission Denied!** Make sure my **Arcie** role has **Manage Roles** permission and is placed higher than **{role.name}** in Server Settings!", ephemeral=True)
+                        except Exception as e:
+                            if not interaction.response.is_done():
+                                await interaction.response.send_message(f"Could not give role: {e}", ephemeral=True)
+                    return
+            except Exception as e:
+                print(f"[REACTION ROLE INTERACTION ERROR] {e}")
+
+    await bot.process_application_commands(interaction)
 
 @bot.event
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
