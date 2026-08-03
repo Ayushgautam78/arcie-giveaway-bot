@@ -4219,10 +4219,55 @@ async def start_health_server():
 
     async def get_giveaway_detail_handler(request):
         g_id = request.match_info.get("id")
+        # Try local first, then Firebase
         g = giveaways.get(g_id)
-        if not g: return web.json_response({"error": "Not found"}, status=404)
+        if not g:
+            g = await firebase_get(f"giveaways/{g_id}")
+            if g and isinstance(g, dict):
+                giveaways[g_id] = g
+        if not g:
+            return web.json_response({"error": "Not found"}, status=404)
+
+        # Always get fresh entries from Firebase
         entries = giveaway_entries.get(g_id, [])
+        if not entries:
+            fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
+            if fb_entries and isinstance(fb_entries, (dict, list)):
+                entries = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+                if entries:
+                    giveaway_entries[g_id] = entries
+
+        # Keep entries_count in sync
+        g["entries_count"] = len(entries)
         return web.json_response({"giveaway": g, "entries": entries})
+
+    async def send_announcement_handler(request):
+        """Admin: manually send winner announcement embed to Discord."""
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin required"}, status=403)
+        g_id = request.match_info.get("id")
+        g = giveaways.get(g_id)
+        if not g:
+            g = await firebase_get(f"giveaways/{g_id}")
+            if g:
+                giveaways[g_id] = g
+        if not g:
+            return web.json_response({"error": "Giveaway not found"}, status=404)
+
+        winners_text = g.get("winners_text", "")
+        if not winners_text:
+            return web.json_response({"error": "No winners drawn yet — draw winners first"}, status=400)
+
+        winner_summary_lines = [ln for ln in winners_text.split("\n") if ln.strip()]
+        try:
+            await announce_winners_in_discord(g_id, winner_summary_lines)
+            return web.json_response({"success": True, "message": "Announcement sent to Discord!"})
+        except Exception as e:
+            print(f"[ANNOUNCE ERROR] {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+
 
     # Password Sign-In Handler
     async def auth_password_login_handler(request):
@@ -4755,6 +4800,7 @@ async def start_health_server():
     app.router.add_post("/api/upload", upload_image_handler)
     app.router.add_post("/api/giveaways/{id}/draw", draw_winners_handler)
     app.router.add_post("/api/giveaways/{id}/redraw", redraw_winners_handler)
+    app.router.add_post("/api/giveaways/{id}/announce", send_announcement_handler)
     app.router.add_post("/api/giveaways/{id}/verify-winner", verify_winner_handler)
     app.router.add_post("/api/user/profile", save_profile_handler)
 

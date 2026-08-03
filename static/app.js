@@ -853,6 +853,9 @@ async function openDetailModal(giveawayId) {
     document.getElementById('deleteGiveawayAdminBtn').onclick = () => deleteGiveaway(giveawayId);
     document.getElementById('drawWinnersBtn').onclick = () => drawWinners(giveawayId);
     document.getElementById('redrawWinnersBtn').onclick = () => redrawWinners(giveawayId);
+    if (document.getElementById('announceWinnersBtn')) {
+      document.getElementById('announceWinnersBtn').onclick = () => sendWinnersAnnouncement(giveawayId);
+    }
     document.getElementById('exportAllEntriesBtn').onclick = () => exportAllEntriesCSV(giveawayId);
     document.getElementById('exportWinnersBtn').onclick = () => exportWinnersCSV(giveawayId);
   } else {
@@ -960,6 +963,21 @@ async function redrawWinners(giveawayId) {
     }
   } catch (err) {
     showToast('Error re-raffling winners', 'error');
+  }
+}
+
+// Admin: Send Winners Announcement manually
+async function sendWinnersAnnouncement(giveawayId) {
+  try {
+    const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}/announce`), { method: 'POST', credentials: 'include' });
+    const data = await res.json();
+    if (res.ok) {
+      showToast('📢 Winners Announcement posted directly to Discord!', 'success');
+    } else {
+      showToast(data.error || 'Failed to post announcement', 'error');
+    }
+  } catch (err) {
+    showToast('Error sending announcement', 'error');
   }
 }
 
