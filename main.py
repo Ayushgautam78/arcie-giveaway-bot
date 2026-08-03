@@ -4184,10 +4184,6 @@ def build_giveaway_embed(g_data: dict):
     entries_count = int(g_data.get("entries_count", 0)) or len(giveaway_entries.get(g_id, [])) if g_id else 0
     embed.add_field(name="Total Entries", value=f"{entries_count} Users Joined", inline=True)
 
-    winners_text = g_data.get("winners_text", "")
-    if winners_text and winners_text.strip():
-        embed.add_field(name="🏆 Winners Announced!", value=winners_text.strip(), inline=False)
-
     embed.set_footer(text="Click [Join Giveaway] below to participate | Powered by Arcie Bot")
 
     return embed, file_to_send
