@@ -105,28 +105,36 @@
               <div id="gBannerPreview" style="margin-top: 6px; display: none;">
                 <img src="" style="max-height: 100px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);" alt="preview">
               </div>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Discord Target Channel *</label>
-              <select id="gChannel" class="form-select">
-                <option value="">Select Channel...</option>
-              </select>
-              <input type="text" id="gChannelManual" class="form-input" placeholder="Or paste Channel ID (e.g. 123456789)" style="margin-top: 6px; font-size: 0.82rem;">
-            </div>
           </div>
 
-          <div class="form-row" style="margin-top: 10px;">
-            <div class="form-group">
-              <label class="form-label">Mention Role (Ping on Post)</label>
-              <select id="gMentionRole" class="form-select">
-                <option value="">No ping (Silent post)</option>
-                <option value="@everyone">@everyone</option>
-                <option value="@here">@here</option>
-              </select>
+          <!-- Web3 Discord Target & Role Notification Panel -->
+          <div class="discord-config-card">
+            <div class="discord-config-header">
+              <div>🤖 Discord Server Attachment & Role Pings</div>
+              <div class="discord-config-header-tag">Live Server Sync</div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">📢 Discord Target Channel *</label>
+                <select id="gChannel" class="form-select">
+                  <option value="">Select Channel...</option>
+                </select>
+                <input type="text" id="gChannelManual" class="form-input" placeholder="Or paste Channel ID (e.g. 123456789)" style="margin-top: 6px; font-size: 0.82rem;">
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">🔔 Mention Role (Ping on Post)</label>
+                <select id="gMentionRole" class="form-select">
+                  <option value="">🔕 No ping (Silent post)</option>
+                  <option value="@everyone">🌐 @everyone</option>
+                  <option value="@here">⚡ @here</option>
+                </select>
+              </div>
             </div>
 
             <div class="form-group">
-              <label class="form-label">Winner Announcement Channel (Optional)</label>
+              <label class="form-label">🏆 Winner Announcement Channel (Optional)</label>
               <select id="gWinnerChannel" class="form-select">
                 <option value="">Same as Giveaway Channel (Default)</option>
               </select>
@@ -248,24 +256,33 @@
             </div>
           </div>
 
-          <div class="form-row" style="margin-top: 10px;">
-            <div class="form-group">
-              <label class="form-label">Mention Role (Ping on Post)</label>
-              <select id="editGMentionRole" class="form-select">
-                <option value="">No ping (Silent post)</option>
-                <option value="@everyone">@everyone</option>
-                <option value="@here">@here</option>
-              </select>
+          <!-- Web3 Discord Target & Role Notification Panel (Edit) -->
+          <div class="discord-config-card">
+            <div class="discord-config-header">
+              <div>🤖 Discord Server Channel & Mention Role Updates</div>
+              <div class="discord-config-header-tag">Live Server Sync</div>
             </div>
-            <div class="form-group">
-              <label class="form-label">Target Discord Channel</label>
-              <select id="editGChannel" class="form-select">
-                <option value="">-- Same as current --</option>
-              </select>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">📢 Target Discord Channel</label>
+                <select id="editGChannel" class="form-select">
+                  <option value="">-- Same as current --</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">🔔 Mention Role (Ping on Post)</label>
+                <select id="editGMentionRole" class="form-select">
+                  <option value="">🔕 No ping (Silent post)</option>
+                  <option value="@everyone">🌐 @everyone</option>
+                  <option value="@here">⚡ @here</option>
+                </select>
+              </div>
             </div>
 
             <div class="form-group">
-              <label class="form-label">Winner Announcement Channel (Optional)</label>
+              <label class="form-label">🏆 Winner Announcement Channel (Optional)</label>
               <select id="editGWinnerChannel" class="form-select">
                 <option value="">Same as Giveaway Channel (Default)</option>
               </select>

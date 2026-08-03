@@ -68,23 +68,23 @@ async function loadGuildChannels() {
 
     if (channelArray.length > 0) {
       const options = channelArray.map(c =>
-        `<option value="${c.id}">#${escapeHtml(c.name)} (${escapeHtml(c.guild_name || 'Server')})</option>`
+        `<option value="${c.id}">💬 #${escapeHtml(c.name)}  •  ${escapeHtml(c.guild_name || 'Server')}</option>`
       ).join('');
 
       const gCh = document.getElementById('gChannel');
-      if (gCh) gCh.innerHTML = '<option value="auto">📢 Auto-Detect Main Channel</option>' + options;
+      if (gCh) gCh.innerHTML = '<option value="auto">⚡ Auto-Detect Main Channel</option>' + options;
 
       const gWin = document.getElementById('gWinnerChannel');
-      if (gWin) gWin.innerHTML = '<option value="">Same as Giveaway Channel (Default)</option>' + options;
+      if (gWin) gWin.innerHTML = '<option value="">📢 Same as Giveaway Channel (Default)</option>' + options;
 
       const editGWin = document.getElementById('editGWinnerChannel');
-      if (editGWin) editGWin.innerHTML = '<option value="">Same as Giveaway Channel (Default)</option>' + options;
+      if (editGWin) editGWin.innerHTML = '<option value="">📢 Same as Giveaway Channel (Default)</option>' + options;
 
       const editGCh = document.getElementById('editGChannel');
-      if (editGCh) editGCh.innerHTML = '<option value="">-- Same as current --</option>' + options;
+      if (editGCh) editGCh.innerHTML = '<option value="">-- Same as current channel --</option>' + options;
     } else {
       const gCh = document.getElementById('gChannel');
-      if (gCh) gCh.innerHTML = '<option value="auto">📢 Auto-Detect Main Channel</option>';
+      if (gCh) gCh.innerHTML = '<option value="auto">⚡ Auto-Detect Main Channel</option>';
     }
   } catch (err) {
     console.error('Failed to load channels:', err);
@@ -94,27 +94,40 @@ async function loadGuildChannels() {
 // Load Guild Roles for Mention Role dropdowns from Firebase
 async function loadGuildRoles() {
   try {
-    // Try Firebase first (synced by bot)
     const roles = await firebaseGet('roles');
     let roleArray = [];
     if (roles && typeof roles === 'object') {
       roleArray = Array.isArray(roles) ? roles : Object.values(roles);
     }
 
-    if (roleArray.length > 0) {
-      const roleOpts = roleArray.map(r =>
-        `<option value="${r.id === '@everyone' ? '@everyone' : r.id}">@${escapeHtml(r.name)} (${escapeHtml(r.guild_name || 'Server')})</option>`
-      ).join('');
-
-      const gRole = document.getElementById('gMentionRole');
-      if (gRole && gRole.tagName === 'SELECT') {
-        gRole.innerHTML = '<option value="">No ping (Silent post)</option><option value="@everyone">@everyone</option><option value="@here">@here</option>' + roleOpts;
+    const uniqueRoles = [];
+    const seenIds = new Set();
+    roleArray.forEach(r => {
+      if (r && r.id && !seenIds.has(r.id)) {
+        seenIds.add(r.id);
+        uniqueRoles.push(r);
       }
+    });
 
-      const editRole = document.getElementById('editGMentionRole');
-      if (editRole && editRole.tagName === 'SELECT') {
-        editRole.innerHTML = '<option value="">No ping (Silent post)</option><option value="@everyone">@everyone</option><option value="@here">@here</option>' + roleOpts;
-      }
+    const roleOpts = uniqueRoles
+      .filter(r => r.id !== '@everyone')
+      .map(r => `<option value="${r.id}">🏷️ @${escapeHtml(r.name)}  •  ${escapeHtml(r.guild_name || 'Server')}</option>`)
+      .join('');
+
+    const baseOptions = `
+      <option value="">🔕 No Ping (Silent Announcement)</option>
+      <option value="@everyone">🌐 @everyone (Ping Entire Server)</option>
+      <option value="@here">⚡ @here (Ping Online Members Only)</option>
+    `;
+
+    const gRole = document.getElementById('gMentionRole');
+    if (gRole && gRole.tagName === 'SELECT') {
+      gRole.innerHTML = baseOptions + (roleOpts ? `<optgroup label="Server Roles">${roleOpts}</optgroup>` : '');
+    }
+
+    const editRole = document.getElementById('editGMentionRole');
+    if (editRole && editRole.tagName === 'SELECT') {
+      editRole.innerHTML = baseOptions + (roleOpts ? `<optgroup label="Server Roles">${roleOpts}</optgroup>` : '');
     }
   } catch (err) {
     console.error('Failed to load roles:', err);
