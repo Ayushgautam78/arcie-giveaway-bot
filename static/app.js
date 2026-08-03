@@ -796,6 +796,7 @@ async function openDetailModal(giveawayId) {
     document.getElementById('deleteGiveawayAdminBtn').onclick = () => deleteGiveaway(giveawayId);
     document.getElementById('drawWinnersBtn').onclick = () => drawWinners(giveawayId);
     document.getElementById('redrawWinnersBtn').onclick = () => redrawWinners(giveawayId);
+    document.getElementById('exportAllEntriesBtn').onclick = () => exportAllEntriesCSV(giveawayId);
     document.getElementById('exportWinnersBtn').onclick = () => exportWinnersCSV(giveawayId);
   } else {
     adminBox.style.display = 'none';
@@ -817,7 +818,7 @@ function copyShareLink(giveawayId) {
   }
 }
 
-// Load Participants into Admin Table
+// Load Participants into Admin Table with Winner Highlighting
 async function loadGiveawayParticipants(giveawayId) {
   const tbody = document.getElementById('participantsTableBody');
   tbody.innerHTML = '<tr><td colspan="6">Loading entries...</td></tr>';
@@ -831,32 +832,39 @@ async function loadGiveawayParticipants(giveawayId) {
       return;
     }
 
-    tbody.innerHTML = entries.map(e => `
-      <tr>
-        <td>
-          <b>${escapeHtml(e.username || 'User')}</b><br>
-          <span style="font-size: 0.75rem; color: var(--text-dim);">ID: ${e.user_id}</span>
-        </td>
-        <td>
-          ${e.winner_type ? `<span class="g-badge ${e.winner_type === 'guaranteed' ? 'g-badge-guaranteed' : 'g-badge-fcfs'}">${e.winner_type.toUpperCase()} WINNER</span>` : '<span style="color: var(--text-muted);">Entered</span>'}
-        </td>
-        <td><code>${escapeHtml(e.evm_wallet || 'None')}</code></td>
-        <td><code>${escapeHtml(e.solana_wallet || 'None')}</code></td>
-        <td>
-          <span style="font-size: 0.8rem;">
-            🐦 ${escapeHtml(e.twitter || '-')}<br>
-            ✈️ ${escapeHtml(e.telegram || '-')}
-          </span>
-        </td>
-        <td>
-          <select onchange="updateVerificationStatus('${giveawayId}', '${e.user_id}', this.value)" class="form-select" style="padding: 4px 8px; font-size: 0.8rem;">
-            <option value="pending" ${e.task_status === 'pending' ? 'selected' : ''}>🟡 Pending</option>
-            <option value="verified" ${e.task_status === 'verified' ? 'selected' : ''}>🟢 Verified</option>
-            <option value="ineligible" ${e.task_status === 'ineligible' ? 'selected' : ''}>🔴 Ineligible</option>
-          </select>
-        </td>
-      </tr>
-    `).join('');
+    tbody.innerHTML = entries.map(e => {
+      const isWinner = !!e.winner_type;
+      const winnerBadge = isWinner 
+        ? `<span class="g-badge ${String(e.winner_type).toLowerCase().includes('guarantee') ? 'g-badge-guaranteed' : 'g-badge-fcfs'}" style="font-weight: bold; padding: 3px 8px;">🏆 WINNER (${escapeHtml(String(e.winner_type).toUpperCase())})</span>`
+        : '<span style="color: var(--text-muted);">Participant</span>';
+      
+      const nameStyle = isWinner ? 'color: #ffd700; font-weight: bold;' : 'font-weight: bold;';
+
+      return `
+        <tr style="${isWinner ? 'background: rgba(255, 215, 0, 0.08);' : ''}">
+          <td>
+            <b style="${nameStyle}">${escapeHtml(e.username || 'User')}</b> ${isWinner ? '🏆' : ''}<br>
+            <span style="font-size: 0.75rem; color: var(--text-dim);">ID: ${e.user_id}</span>
+          </td>
+          <td>${winnerBadge}</td>
+          <td><code>${escapeHtml(e.evm_wallet || 'None')}</code></td>
+          <td><code>${escapeHtml(e.solana_wallet || 'None')}</code></td>
+          <td>
+            <span style="font-size: 0.8rem;">
+              Twitter: ${escapeHtml(e.twitter || '-')}<br>
+              Telegram: ${escapeHtml(e.telegram || '-')}
+            </span>
+          </td>
+          <td>
+            <select onchange="updateVerificationStatus('${giveawayId}', '${e.user_id}', this.value)" class="form-select" style="padding: 4px 8px; font-size: 0.8rem;">
+              <option value="pending" ${e.task_status === 'pending' ? 'selected' : ''}>🟡 Pending</option>
+              <option value="verified" ${e.task_status === 'verified' ? 'selected' : ''}>🟢 Verified</option>
+              <option value="ineligible" ${e.task_status === 'ineligible' ? 'selected' : ''}>🔴 Ineligible</option>
+            </select>
+          </td>
+        </tr>
+      `;
+    }).join('');
   } catch (err) {
     tbody.innerHTML = '<tr><td colspan="6">Error loading entries</td></tr>';
   }
@@ -914,6 +922,36 @@ async function updateVerificationStatus(giveawayId, userId, status) {
     }
   } catch (err) {
     showToast('Error updating status', 'error');
+  }
+}
+
+// Export All Entries as CSV
+async function exportAllEntriesCSV(giveawayId) {
+  try {
+    const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
+    const data = await res.json();
+    const entries = data.entries || [];
+    
+    if (entries.length === 0) {
+      showToast('No entries to download yet.', 'info');
+      return;
+    }
+
+    let csv = 'Discord Username,Discord ID,Twitter Handle,Telegram Handle,EVM Wallet,Solana Wallet,Task Status,Winner Status\n';
+    entries.forEach(e => {
+      const winnerStatus = e.winner_type ? `WINNER (${String(e.winner_type).toUpperCase()})` : 'Participant';
+      csv += `"${e.username || 'User'}","${e.user_id}","${e.twitter || ''}","${e.telegram || ''}","${e.evm_wallet || ''}","${e.solana_wallet || ''}","${e.task_status || 'pending'}","${winnerStatus}"\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `giveaway_${giveawayId}_all_entries.csv`;
+    a.click();
+    showToast('📥 Exported all entries to CSV!', 'success');
+  } catch (err) {
+    showToast('Failed to export entries', 'error');
   }
 }
 
