@@ -3782,8 +3782,93 @@ async def sync_and_post_giveaways():
                             print(f"[GIVEAWAY POSTED] Posted giveaway '{g_data.get('title')}' in #{channel.name} ({channel.id})")
                         except Exception as send_err:
                             print(f"[GIVEAWAY SEND ERROR] Failed to send to #{channel.name}: {send_err}")
+
+                # 3. Check for expired giveaways and AUTOMATICALLY draw winners & post Winners Announcement Embed
+                now = int(time.time())
+                ends_at = int(g_data.get("ends_at", 0))
+                if g_data.get("is_active") and ends_at > 0 and now >= ends_at:
+                    print(f"[AUTO-DRAW] Giveaway '{g_data.get('title')}' ({g_id}) expired. Drawing winners automatically...")
+                    await auto_draw_giveaway_winners(g_id)
     except Exception as ge:
         print(f"[GIVEAWAY SYNC ERROR] {ge}")
+
+
+async def auto_draw_giveaway_winners(g_id: str):
+    """Automatically draw winners for an expired giveaway and post the Winners Announcement to Discord."""
+    g = giveaways.get(g_id)
+    if not g or not g.get("is_active"):
+        return
+
+    # Fetch entries from Firebase if missing locally
+    fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
+    if fb_entries and isinstance(fb_entries, (dict, list)):
+        entries = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+        giveaway_entries[g_id] = entries
+    else:
+        entries = giveaway_entries.get(g_id, [])
+
+    if not entries:
+        g["is_active"] = False
+        g["winners_text"] = "No participants joined."
+        save_giveaways()
+        await firebase_put(f"giveaways/{g_id}", g)
+        await update_giveaway_discord_message(g_id)
+        return
+
+    spot_tiers = g.get("spot_tiers", [])
+    eligible = [e for e in entries if e.get("task_status") != "ineligible"]
+    random.shuffle(eligible)
+
+    winner_summary_lines = []
+
+    if spot_tiers:
+        available_pool = list(eligible)
+        for tier in spot_tiers:
+            t_name = tier.get("name", "Spot")
+            t_count = tier.get("count", 1)
+            
+            tier_winners = available_pool[:t_count]
+            available_pool = available_pool[t_count:]
+            
+            for w in tier_winners:
+                w["winner_type"] = t_name
+
+            w_mentions = [f"<@{w['user_id']}>" for w in tier_winners]
+            winner_summary_lines.append(f"**{t_name}:** {', '.join(w_mentions) if w_mentions else 'None'}")
+    else:
+        guaranteed_count = g.get("guaranteed_spots", 0)
+        fcfs_count = g.get("fcfs_spots", 0)
+        
+        guaranteed_winners = eligible[:guaranteed_count]
+        remaining = [e for e in eligible if e not in guaranteed_winners]
+        fcfs_winners = remaining[:fcfs_count]
+
+        for e in entries:
+            if e in guaranteed_winners:
+                e["winner_type"] = "guaranteed"
+            elif e in fcfs_winners:
+                e["winner_type"] = "fcfs"
+            else:
+                e["winner_type"] = None
+
+        winner_names_g = [f"<@{w['user_id']}>" for w in guaranteed_winners]
+        winner_names_f = [f"<@{w['user_id']}>" for w in fcfs_winners]
+        winner_summary_lines.append(f"**Guaranteed:** {', '.join(winner_names_g) or 'None'}")
+        winner_summary_lines.append(f"**FCFS:** {', '.join(winner_names_f) or 'None'}")
+
+    g["is_active"] = False
+    g["winners_text"] = "\n".join(winner_summary_lines)
+
+    save_giveaways()
+    save_giveaway_entries()
+    await firebase_put(f"giveaways/{g_id}", g)
+    await firebase_put(f"giveaway_entries/{g_id}", entries)
+
+    # 1. Update the original giveaway embed in Discord
+    await update_giveaway_discord_message(g_id)
+
+    # 2. Post official Winners Announcement Embed directly into Discord channel!
+    await announce_winners_in_discord(g_id, winner_summary_lines)
 
 
 async def bg_firebase_poster_task():
