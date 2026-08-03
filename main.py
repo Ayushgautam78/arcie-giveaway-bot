@@ -3726,6 +3726,92 @@ async def set_custom_winners_cmd(interaction: discord.Interaction, giveaway_id: 
     )
 
 
+@bot.tree.command(name="edit-announcement", description="Admin: Silently edit a giveaway embed or announcement on Discord.")
+@app_commands.describe(
+    giveaway_id="The Giveaway ID (e.g. g_1785773623079)",
+    new_title="Optional: New Title for the Embed",
+    new_description="Optional: New Description / Mint Details text",
+    new_winners="Optional: New Winners text (e.g. GTD: @user1 | FCFS: @user2)"
+)
+async def edit_announcement_cmd(
+    interaction: discord.Interaction,
+    giveaway_id: str,
+    new_title: Optional[str] = None,
+    new_description: Optional[str] = None,
+    new_winners: Optional[str] = None
+):
+    if not is_bot_admin_by_id(str(interaction.user.id)):
+        await interaction.response.send_message("❌ Admin permission required.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    g = giveaways.get(giveaway_id)
+    if not g and FIREBASE_URL:
+        g = await firebase_get(f"giveaways/{giveaway_id}")
+        if g and isinstance(g, dict): giveaways[giveaway_id] = g
+
+    if not g:
+        await interaction.followup.send("❌ Giveaway not found.", ephemeral=True)
+        return
+
+    if new_title and new_title.strip():
+        g["title"] = new_title.strip()
+
+    if new_description and new_description.strip():
+        g["description"] = new_description.strip()
+
+    if new_winners and new_winners.strip():
+        gtd_part = ""
+        fcfs_part = ""
+        raw_win = new_winners.strip()
+        if "|" in raw_win:
+            parts = raw_win.split("|", 1)
+            gtd_part = parts[0].strip()
+            fcfs_part = parts[1].strip()
+        else:
+            gtd_part = raw_win
+
+        def format_win_sub(val):
+            if not val: return "None"
+            ids = re.findall(r'\b\d{17,20}\b', val)
+            mentions = re.findall(r'<@!?(\d{17,20})>', val)
+            all_ids = []
+            for i in ids + mentions:
+                if i not in all_ids: all_ids.append(i)
+            if all_ids: return ", ".join([f"<@{i}>" for i in all_ids])
+            items = [x.strip() for x in re.split(r'[\s,\n]+', val) if x.strip()]
+            fmt = []
+            for item in items:
+                cid = re.sub(r'[^0-9]', '', item)
+                if cid and 17 <= len(cid) <= 20:
+                    tag = f"<@{cid}>"
+                    if tag not in fmt: fmt.append(tag)
+                elif item:
+                    tag = item if item.startswith("@") or item.startswith("<@") else f"@{item.lstrip('@')}"
+                    if tag not in fmt: fmt.append(tag)
+            return ", ".join(fmt) if fmt else val
+
+        lines = []
+        if gtd_part: lines.append(f"**GTD:** {format_win_sub(gtd_part)}")
+        if fcfs_part: lines.append(f"**FCFS:** {format_win_sub(fcfs_part)}")
+        if not lines: lines.append(raw_win)
+        g["winners_text"] = "\n".join(lines)
+
+    save_giveaways()
+    if FIREBASE_URL:
+        await firebase_put(f"giveaways/{giveaway_id}", g)
+
+    # Force delete old Discord embed & post fresh updated embed!
+    await update_giveaway_discord_message(giveaway_id)
+
+    await interaction.followup.send(
+        f"🤫 **Announcement Embed Silently Updated!**\n"
+        f"Giveaway **{g.get('title')}** has been refreshed in Discord.",
+        ephemeral=True
+    )
+
+
 @bot.tree.command(name="set-wallet", description="Quickly set your EVM or Solana wallet address.")
 @app_commands.describe(evm="EVM Wallet (0x...)", solana="Solana Wallet Address")
 async def set_wallet_cmd(interaction: discord.Interaction, evm: Optional[str] = None, solana: Optional[str] = None):
@@ -5007,6 +5093,7 @@ async def start_health_server():
 
         if "title" in body: g["title"] = body["title"]
         if "description" in body: g["description"] = body["description"]
+        if "winners_text" in body: g["winners_text"] = body["winners_text"]
         if "banner_url" in body: g["banner_url"] = body["banner_url"]
         if "network" in body: g["network"] = body["network"]
         if "min_per_user" in body: g["min_per_user"] = int(body["min_per_user"])
