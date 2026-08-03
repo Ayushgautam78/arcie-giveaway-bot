@@ -1,18 +1,13 @@
 {
   "version": 2,
-  "framework": null,
-  "rewrites": [
+  "routes": [
     {
-      "source": "/api/:path*",
-      "destination": "http://89.106.84.246:3000/api/:path*"
+      "src": "/static/(.*)",
+      "dest": "/static/$1"
     },
     {
-      "source": "/static/:path*",
-      "destination": "/static/:path*"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/static/index.html"
+      "src": "/(.*)",
+      "dest": "/static/index.html"
     }
   ]
 }

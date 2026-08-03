@@ -1,9 +1,9 @@
 /* SPA Logic for Arcie Bot Web3 Giveaway Hub */
 
-// API_BASE: Set this to your NexCloud bot URL when hosting on Vercel.
-// Leave empty ('') when running on the same server as the bot.
-// Example: 'http://89.106.84.246:3000'
-const API_BASE = window.ARCIE_API_BASE || '';
+// API_BASE: Auto-detect Vercel host vs NexCloud host
+const API_BASE = window.location.hostname.includes('vercel.app')
+  ? (window.ARCIE_API_BASE || 'http://89.106.84.246:3000')
+  : (window.ARCIE_API_BASE || '');
 
 let currentUser = null;
 let currentGiveaways = [];
