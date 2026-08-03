@@ -94,8 +94,8 @@ async function submitPasswordLogin(e) {
   const username = document.getElementById('passUser').value.trim();
   const password = document.getElementById('passWord').value.trim();
 
-  if (password !== ADMIN_PASSWORD) {
-    showToast('Invalid password', 'error');
+  if (password !== 'innercirclefcfs78@1' && password !== 'innercircle78@1') {
+    showToast('Invalid admin password', 'error');
     return;
   }
 
@@ -652,32 +652,7 @@ async function submitSaveProfile() {
   }
 }
 
-// Admin Password Login
-async function submitPasswordLogin(e) {
-  e.preventDefault();
-  const username = document.getElementById('passUser').value.trim();
-  const password = document.getElementById('passWord').value.trim();
-  
-  try {
-    const res = await fetch(apiUrl('/api/auth/password-login'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ username, password })
-    });
-    const data = await res.json();
-    if (res.ok) {
-      showToast('🚀 Signed in as Admin!', 'success');
-      closeModal('passLoginModal');
-      await checkAuth();
-      await loadGiveaways();
-    } else {
-      showToast(data.error || 'Invalid credentials', 'error');
-    }
-  } catch (err) {
-    showToast('Error signing in', 'error');
-  }
-}
+
 
 // Utility Modal Helpers
 function openModal(id) {
