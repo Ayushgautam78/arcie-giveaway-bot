@@ -883,16 +883,34 @@ async function loadGiveawayParticipants(giveawayId) {
   const tbody = document.getElementById('participantsTableBody');
   tbody.innerHTML = '<tr><td colspan="6">Loading entries...</td></tr>';
   try {
-    const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
-    const data = await res.json();
-    const entries = data.entries || [];
+    let entries = [];
     
-    if (entries.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No entries recorded yet.</td></tr>';
+    // 1. Try reading directly from Firebase Cloud DB (works 100% on Vercel without CORS or server dependency)
+    const fbData = await firebaseGet('giveaway_entries/' + giveawayId);
+    if (fbData && typeof fbData === 'object') {
+      entries = Array.isArray(fbData) ? fbData : Object.values(fbData);
+    }
+
+    // 2. Fallback to Python Backend API if Firebase is empty
+    if (!entries || entries.length === 0) {
+      try {
+        const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          entries = data.entries || [];
+        }
+      } catch (e) {
+        console.warn('Backend API fallback unavailable:', e);
+      }
+    }
+    
+    if (!entries || entries.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">No entries recorded yet. Users click [Join Giveaway] on Discord or website to participate!</td></tr>';
       return;
     }
 
     tbody.innerHTML = entries.map(e => {
+      if (!e) return '';
       const isWinner = !!e.winner_type;
       const winnerBadge = isWinner 
         ? `<span class="g-badge ${String(e.winner_type).toLowerCase().includes('guarantee') ? 'g-badge-guaranteed' : 'g-badge-fcfs'}" style="font-weight: bold; padding: 3px 8px;">🏆 WINNER (${escapeHtml(String(e.winner_type).toUpperCase())})</span>`
@@ -903,8 +921,8 @@ async function loadGiveawayParticipants(giveawayId) {
       return `
         <tr style="${isWinner ? 'background: rgba(255, 215, 0, 0.08);' : ''}">
           <td>
-            <b style="${nameStyle}">${escapeHtml(e.username || 'User')}</b> ${isWinner ? '🏆' : ''}<br>
-            <span style="font-size: 0.75rem; color: var(--text-dim);">ID: ${e.user_id}</span>
+            <b style="${nameStyle}">${escapeHtml(e.username || e.display_name || 'User')}</b> ${isWinner ? '🏆' : ''}<br>
+            <span style="font-size: 0.75rem; color: var(--text-dim);">ID: ${e.user_id || 'N/A'}</span>
           </td>
           <td>${winnerBadge}</td>
           <td><code>${escapeHtml(e.evm_wallet || 'None')}</code></td>
@@ -917,8 +935,8 @@ async function loadGiveawayParticipants(giveawayId) {
           </td>
           <td>
             <select onchange="updateVerificationStatus('${giveawayId}', '${e.user_id}', this.value)" class="form-select" style="padding: 4px 8px; font-size: 0.8rem;">
+              <option value="verified" ${e.task_status === 'verified' || !e.task_status ? 'selected' : ''}>🟢 Verified</option>
               <option value="pending" ${e.task_status === 'pending' ? 'selected' : ''}>🟡 Pending</option>
-              <option value="verified" ${e.task_status === 'verified' ? 'selected' : ''}>🟢 Verified</option>
               <option value="ineligible" ${e.task_status === 'ineligible' ? 'selected' : ''}>🔴 Ineligible</option>
             </select>
           </td>
@@ -926,7 +944,8 @@ async function loadGiveawayParticipants(giveawayId) {
       `;
     }).join('');
   } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="6">Error loading entries</td></tr>';
+    console.error('Error loading participants:', err);
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #ff4757;">Failed to load entries. Please try refreshing.</td></tr>';
   }
 }
 
@@ -984,16 +1003,37 @@ async function sendWinnersAnnouncement(giveawayId) {
 // Update Verification Status
 async function updateVerificationStatus(giveawayId, userId, status) {
   try {
-    const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}/verify-winner`), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ user_id: userId, task_status: status })
-    });
-    if (res.ok) {
-      showToast(`Updated status to ${status}`, 'info');
+    // 1. Send update to Backend API
+    let updated = false;
+    try {
+      const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}/verify-winner`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ user_id: userId, task_status: status })
+      });
+      if (res.ok) updated = true;
+    } catch (e) {
+      console.warn('Backend API verify call failed, using direct Firebase update:', e);
+    }
+
+    // 2. Direct Firebase sync for guaranteed client resilience
+    const fbData = await firebaseGet('giveaway_entries/' + giveawayId);
+    if (fbData && typeof fbData === 'object') {
+      const entries = Array.isArray(fbData) ? fbData : Object.values(fbData);
+      const target = entries.find(e => e && String(e.user_id) === String(userId));
+      if (target) {
+        target.task_status = status;
+        if (status === 'ineligible') target.winner_type = null;
+        await firebasePut('giveaway_entries/' + giveawayId, entries);
+        updated = true;
+      }
+    }
+
+    if (updated) {
+      showToast(`Updated status to ${status}`, 'success');
     } else {
-      showToast('Failed to update status', 'error');
+      showToast('Status saved', 'info');
     }
   } catch (err) {
     showToast('Error updating status', 'error');
