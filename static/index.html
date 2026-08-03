@@ -118,8 +118,13 @@
           <div class="form-row" style="margin-top: 10px;">
             <div class="form-group">
               <label class="form-label">Mention Role (Ping on Post)</label>
-              <input type="text" id="gMentionRole" class="form-input" placeholder="e.g. @everyone, @here, or Role ID">
+              <select id="gMentionRole" class="form-select">
+                <option value="">No ping (Silent post)</option>
+                <option value="@everyone">@everyone</option>
+                <option value="@here">@here</option>
+              </select>
             </div>
+
             <div class="form-group">
               <label class="form-label">Winner Announcement Channel (Optional)</label>
               <select id="gWinnerChannel" class="form-select">
@@ -246,8 +251,19 @@
           <div class="form-row" style="margin-top: 10px;">
             <div class="form-group">
               <label class="form-label">Mention Role (Ping on Post)</label>
-              <input type="text" id="editGMentionRole" class="form-input" placeholder="e.g. @everyone, @here, or Role ID">
+              <select id="editGMentionRole" class="form-select">
+                <option value="">No ping (Silent post)</option>
+                <option value="@everyone">@everyone</option>
+                <option value="@here">@here</option>
+              </select>
             </div>
+            <div class="form-group">
+              <label class="form-label">Target Discord Channel</label>
+              <select id="editGChannel" class="form-select">
+                <option value="">-- Same as current --</option>
+              </select>
+            </div>
+
             <div class="form-group">
               <label class="form-label">Winner Announcement Channel (Optional)</label>
               <select id="editGWinnerChannel" class="form-select">

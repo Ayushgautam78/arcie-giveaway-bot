@@ -33,6 +33,7 @@ async function initApp() {
   checkAuth();
   await loadGiveaways();
   await loadGuildChannels();
+  await loadGuildRoles();
 }
 
 function setupEventListeners() {
@@ -58,36 +59,68 @@ function setupEventListeners() {
 
 // Load Guild Channels for Channel Selector from Firebase
 async function loadGuildChannels() {
-  const selects = [document.getElementById('gChannel'), document.getElementById('gWinnerChannel'), document.getElementById('editGWinnerChannel')].filter(Boolean);
-  if (selects.length === 0) return;
-  
   try {
     const channels = await firebaseGet('channels');
+    let channelArray = [];
     if (channels && typeof channels === 'object') {
-      const channelArray = Array.isArray(channels) ? channels : Object.values(channels);
-      if (channelArray.length > 0) {
-        const options = channelArray.map(c => `<option value="${c.id}">#${escapeHtml(c.name)} (${escapeHtml(c.guild_name || 'Server')})</option>`).join('');
-        
-        if (document.getElementById('gChannel')) {
-          document.getElementById('gChannel').innerHTML = '<option value="auto">📢 Auto-Detect Main Channel (Default)</option>' + options;
-        }
-        if (document.getElementById('gWinnerChannel')) {
-          document.getElementById('gWinnerChannel').innerHTML = '<option value="">Same as Giveaway Channel (Default)</option>' + options;
-        }
-        if (document.getElementById('editGWinnerChannel')) {
-          document.getElementById('editGWinnerChannel').innerHTML = '<option value="">Same as Giveaway Channel (Default)</option>' + options;
-        }
-        return;
-      }
+      channelArray = Array.isArray(channels) ? channels : Object.values(channels);
+    }
+
+    if (channelArray.length > 0) {
+      const options = channelArray.map(c =>
+        `<option value="${c.id}">#${escapeHtml(c.name)} (${escapeHtml(c.guild_name || 'Server')})</option>`
+      ).join('');
+
+      const gCh = document.getElementById('gChannel');
+      if (gCh) gCh.innerHTML = '<option value="auto">📢 Auto-Detect Main Channel</option>' + options;
+
+      const gWin = document.getElementById('gWinnerChannel');
+      if (gWin) gWin.innerHTML = '<option value="">Same as Giveaway Channel (Default)</option>' + options;
+
+      const editGWin = document.getElementById('editGWinnerChannel');
+      if (editGWin) editGWin.innerHTML = '<option value="">Same as Giveaway Channel (Default)</option>' + options;
+
+      const editGCh = document.getElementById('editGChannel');
+      if (editGCh) editGCh.innerHTML = '<option value="">-- Same as current --</option>' + options;
+    } else {
+      const gCh = document.getElementById('gChannel');
+      if (gCh) gCh.innerHTML = '<option value="auto">📢 Auto-Detect Main Channel</option>';
     }
   } catch (err) {
     console.error('Failed to load channels:', err);
   }
+}
 
-  if (document.getElementById('gChannel')) {
-    document.getElementById('gChannel').innerHTML = '<option value="auto">📢 Auto-Detect Main Channel (Default)</option>';
+// Load Guild Roles for Mention Role dropdowns from Firebase
+async function loadGuildRoles() {
+  try {
+    // Try Firebase first (synced by bot)
+    const roles = await firebaseGet('roles');
+    let roleArray = [];
+    if (roles && typeof roles === 'object') {
+      roleArray = Array.isArray(roles) ? roles : Object.values(roles);
+    }
+
+    if (roleArray.length > 0) {
+      const roleOpts = roleArray.map(r =>
+        `<option value="${r.id === '@everyone' ? '@everyone' : r.id}">@${escapeHtml(r.name)} (${escapeHtml(r.guild_name || 'Server')})</option>`
+      ).join('');
+
+      const gRole = document.getElementById('gMentionRole');
+      if (gRole && gRole.tagName === 'SELECT') {
+        gRole.innerHTML = '<option value="">No ping (Silent post)</option><option value="@everyone">@everyone</option><option value="@here">@here</option>' + roleOpts;
+      }
+
+      const editRole = document.getElementById('editGMentionRole');
+      if (editRole && editRole.tagName === 'SELECT') {
+        editRole.innerHTML = '<option value="">No ping (Silent post)</option><option value="@everyone">@everyone</option><option value="@here">@here</option>' + roleOpts;
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load roles:', err);
   }
 }
+
 
 // Check Authentication (localStorage-based)
 function checkAuth() {
@@ -426,7 +459,7 @@ async function submitCreateGiveaway() {
   const channelManual = document.getElementById('gChannelManual') ? document.getElementById('gChannelManual').value.trim() : '';
   const channel_id = channelManual || channelSelect || 'auto';
 
-  const mention_role = document.getElementById('gMentionRole') ? document.getElementById('gMentionRole').value.trim() : '';
+  const mention_role = document.getElementById('gMentionRole') ? document.getElementById('gMentionRole').value : '';
   const winnerChannelSelect = document.getElementById('gWinnerChannel') ? document.getElementById('gWinnerChannel').value : '';
   const winnerChannelManual = document.getElementById('gWinnerChannelManual') ? document.getElementById('gWinnerChannelManual').value.trim() : '';
   const winner_channel_id = winnerChannelManual || winnerChannelSelect || '';
@@ -604,10 +637,20 @@ function openEditModal(giveawayId) {
   document.getElementById('editGDesc').value = g.description || '';
   document.getElementById('editGBanner').value = g.banner_url || '';
   document.getElementById('editGNetwork').value = g.network || 'Ethereum';
-  document.getElementById('editGMentionRole').value = g.mention_role || '';
+  // Set select values after channels/roles are loaded
+  const mentionRoleSel = document.getElementById('editGMentionRole');
+  if (mentionRoleSel) {
+    // Try setting value; if option not found yet, store for after load
+    mentionRoleSel.value = g.mention_role || '';
+  }
+  const editChSel = document.getElementById('editGChannel');
+  if (editChSel) {
+    editChSel.value = g.channel_id || '';
+  }
   if (document.getElementById('editGWinnerChannel')) {
     document.getElementById('editGWinnerChannel').value = g.winner_channel_id || '';
   }
+
   document.getElementById('editGMinPerUser').value = g.min_per_user || 1;
   document.getElementById('editGMaxPerUser').value = g.max_per_user || 1;
   document.getElementById('editGDurationVal').value = g.duration_val || 15;
@@ -664,7 +707,10 @@ async function submitEditGiveaway() {
   const description = document.getElementById('editGDesc').value.trim();
   const banner_url = document.getElementById('editGBanner').value.trim();
   const network = document.getElementById('editGNetwork').value.trim() || 'Ethereum';
-  const mention_role = document.getElementById('editGMentionRole').value.trim();
+  const mention_role = document.getElementById('editGMentionRole').value;
+  const channelSelect = document.getElementById('editGChannel') ? document.getElementById('editGChannel').value : '';
+  const channel_id = channelSelect || g.channel_id || '';
+
   const winnerChannelSelect = document.getElementById('editGWinnerChannel') ? document.getElementById('editGWinnerChannel').value : '';
   const winnerChannelManual = document.getElementById('editGWinnerChannelManual') ? document.getElementById('editGWinnerChannelManual').value.trim() : '';
   const winner_channel_id = winnerChannelManual || winnerChannelSelect || '';
@@ -689,6 +735,8 @@ async function submitEditGiveaway() {
   g.network = network;
   g.mention_role = mention_role;
   g.winner_channel_id = winner_channel_id;
+  g.channel_id = channel_id;
+
   g.min_per_user = min_per_user;
   g.max_per_user = max_per_user;
   g.duration_val = duration_val;

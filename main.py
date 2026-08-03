@@ -3784,12 +3784,40 @@ async def sync_and_post_giveaways():
                     channels_list.append({
                         "id": str(ch.id),
                         "name": ch.name,
-                        "guild_name": guild.name
+                        "guild_name": guild.name,
+                        "guild_id": str(guild.id)
                     })
         await firebase_put("channels", channels_list)
         print(f"[FIREBASE] Synced {len(channels_list)} Discord channels to Cloud DB.")
     except Exception as ce:
         print(f"[CHANNEL SYNC ERROR] {ce}")
+
+    # 1b. Sync Guild Roles to Firebase
+    try:
+        roles_list = []
+        for guild in bot.guilds:
+            for role in guild.roles:
+                if role.name == "@everyone":
+                    # include @everyone so admin can select it for pings
+                    roles_list.append({
+                        "id": "@everyone",
+                        "name": "@everyone",
+                        "guild_name": guild.name,
+                        "guild_id": str(guild.id),
+                        "mention": "@everyone"
+                    })
+                    continue
+                roles_list.append({
+                    "id": str(role.id),
+                    "name": role.name,
+                    "guild_name": guild.name,
+                    "guild_id": str(guild.id),
+                    "mention": f"<@&{role.id}>"
+                })
+        await firebase_put("roles", roles_list)
+        print(f"[FIREBASE] Synced {len(roles_list)} Discord roles to Cloud DB.")
+    except Exception as re:
+        print(f"[ROLE SYNC ERROR] {re}")
 
     # 2. Sync Giveaways from Firebase & Post Missing Embeds
     try:
@@ -4154,11 +4182,38 @@ async def start_health_server():
                     channels.append({
                         "id": str(ch.id),
                         "name": ch.name,
-                        "guild_name": guild.name
+                        "guild_name": guild.name,
+                        "guild_id": str(guild.id)
                     })
         return web.json_response(channels)
 
-    # Giveaway REST Endpoints
+    # Guild Roles Endpoint
+    async def guilds_roles_handler(request):
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin required"}, status=403)
+        roles = []
+        for guild in bot.guilds:
+            for role in guild.roles:
+                if role.name == "@everyone":
+                    roles.append({
+                        "id": "@everyone",
+                        "name": "@everyone",
+                        "guild_name": guild.name,
+                        "guild_id": str(guild.id),
+                        "mention": "@everyone"
+                    })
+                    continue
+                roles.append({
+                    "id": str(role.id),
+                    "name": role.name,
+                    "guild_name": guild.name,
+                    "guild_id": str(guild.id),
+                    "mention": f"<@&{role.id}>"
+                })
+        return web.json_response(roles)
+
+
     async def get_giveaways_handler(request):
         return web.json_response(list(giveaways.values()))
 
@@ -4325,7 +4380,29 @@ async def start_health_server():
         if "max_per_user" in body: g["max_per_user"] = int(body["max_per_user"])
         if "tasks" in body: g["tasks"] = body["tasks"]
         if "spot_tiers" in body: g["spot_tiers"] = body["spot_tiers"]
-        
+        if "mention_role" in body: g["mention_role"] = body["mention_role"]
+        if "winner_channel_id" in body: g["winner_channel_id"] = str(body["winner_channel_id"])
+
+        # Handle channel change: if new channel_id given and different, delete old msg + re-post
+        new_channel_id = str(body.get("channel_id", "")).strip()
+        old_channel_id = str(g.get("channel_id", "")).strip()
+        channel_changed = new_channel_id and new_channel_id != "auto" and new_channel_id != old_channel_id
+
+        if channel_changed:
+            # Delete old Discord message
+            try:
+                if old_channel_id.isdigit() and g.get("message_id"):
+                    old_ch = bot.get_channel(int(old_channel_id))
+                    if not old_ch:
+                        old_ch = await bot.fetch_channel(int(old_channel_id))
+                    if old_ch:
+                        old_msg = await old_ch.fetch_message(int(g["message_id"]))
+                        await old_msg.delete()
+            except Exception as de:
+                print(f"[EDIT: DELETE OLD MSG] {de}")
+            g["channel_id"] = new_channel_id
+            g["message_id"] = None  # Force re-post
+
         if "duration_val" in body:
             duration_val = float(body["duration_val"])
             duration_unit = body.get("duration_unit", g.get("duration_unit", "hours"))
@@ -4340,8 +4417,34 @@ async def start_health_server():
         save_giveaways()
         await firebase_put(f"giveaways/{g_id}", g)
 
-        # Live update Discord announcement message embed
-        await update_giveaway_discord_message(g_id)
+        if channel_changed and not g.get("message_id"):
+            # Re-post embed to new channel
+            try:
+                ch_id = str(g["channel_id"])
+                new_ch = bot.get_channel(int(ch_id))
+                if not new_ch:
+                    new_ch = await bot.fetch_channel(int(ch_id))
+                if new_ch:
+                    port = os.getenv("PORT", "3000")
+                    web_url = os.getenv("APP_URL", f"http://localhost:{port}")
+                    view = GiveawayView(g_id, web_url)
+                    embed, file_to_send = build_giveaway_embed(g)
+                    mention_text = format_role_mention(g.get("mention_role"))
+                    if file_to_send:
+                        msg = await new_ch.send(content=mention_text, embed=embed, view=view, file=file_to_send)
+                    else:
+                        msg = await new_ch.send(content=mention_text, embed=embed, view=view)
+                    g["message_id"] = str(msg.id)
+                    giveaways[g_id] = g
+                    save_giveaways()
+                    await firebase_put(f"giveaways/{g_id}", g)
+                    bot.add_view(view)
+                    print(f"[GIVEAWAY MOVED] Re-posted to #{new_ch.name}")
+            except Exception as e:
+                print(f"[EDIT: RE-POST ERROR] {e}")
+        else:
+            # Just update the existing embed in place
+            await update_giveaway_discord_message(g_id)
 
         return web.json_response(g)
 
@@ -4641,6 +4744,7 @@ async def start_health_server():
     app.router.add_get("/api/auth/me", auth_me_handler)
     app.router.add_post("/api/auth/password-login", auth_password_login_handler)
     app.router.add_get("/api/guilds", guilds_handler)
+    app.router.add_get("/api/guilds/roles", guilds_roles_handler)
     app.router.add_get("/api/giveaways", get_giveaways_handler)
     app.router.add_get("/api/giveaways/{id}", get_giveaway_detail_handler)
     app.router.add_post("/api/giveaways", create_giveaway_handler)
