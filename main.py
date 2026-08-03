@@ -3649,6 +3649,68 @@ async def recover_entries_cmd(interaction: discord.Interaction, giveaway_id: str
     )
 
 
+@bot.tree.command(name="set-custom-winners", description="Admin: Set custom GTD & FCFS winners for a fabricated giveaway and post to Discord.")
+@app_commands.describe(
+    giveaway_id="The Giveaway ID (e.g. g_1785773623079)",
+    guaranteed="GTD Winners (user mentions or IDs separated by comma)",
+    fcfs="FCFS Winners (user mentions or IDs separated by comma)"
+)
+async def set_custom_winners_cmd(interaction: discord.Interaction, giveaway_id: str, guaranteed: Optional[str] = None, fcfs: Optional[str] = None):
+    if not is_bot_admin_by_id(str(interaction.user.id)):
+        await interaction.response.send_message("❌ Admin permission required.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    g = giveaways.get(giveaway_id)
+    if not g and FIREBASE_URL:
+        g = await firebase_get(f"giveaways/{giveaway_id}")
+        if g: giveaways[giveaway_id] = g
+
+    if not g:
+        await interaction.followup.send("❌ Giveaway not found.", ephemeral=True)
+        return
+
+    def format_list(raw):
+        if not raw: return "None"
+        items = [x.strip() for x in re.split(r'[\n,]+', str(raw)) if x.strip()]
+        formatted = []
+        for item in items:
+            clean_id = re.sub(r'[^0-9]', '', item)
+            if clean_id and len(clean_id) >= 17:
+                formatted.append(f"<@{clean_id}>")
+            elif item.startswith("@"):
+                formatted.append(item)
+            else:
+                formatted.append(item)
+        return ", ".join(formatted) if formatted else "None"
+
+    gtd_str = format_list(guaranteed)
+    fcfs_str = format_list(fcfs)
+
+    winner_summary_lines = [
+        f"**Guaranteed:** {gtd_str}",
+        f"**FCFS:** {fcfs_str}"
+    ]
+
+    g["is_active"] = False
+    g["winners_text"] = "\n".join(winner_summary_lines)
+
+    save_giveaways()
+    if FIREBASE_URL:
+        await firebase_put(f"giveaways/{giveaway_id}", g)
+
+    await update_giveaway_discord_message(giveaway_id)
+    await announce_winners_in_discord(giveaway_id, winner_summary_lines)
+
+    await interaction.followup.send(
+        f"✅ **Fabricated / Custom Winners Set & Announced!**\n\n"
+        f"🏆 **Giveaway:** {g.get('title')}\n"
+        f"**Guaranteed:** {gtd_str}\n"
+        f"**FCFS:** {fcfs_str}",
+        ephemeral=True
+    )
+
+
 @bot.tree.command(name="set-wallet", description="Quickly set your EVM or Solana wallet address.")
 @app_commands.describe(evm="EVM Wallet (0x...)", solana="Solana Wallet Address")
 async def set_wallet_cmd(interaction: discord.Interaction, evm: Optional[str] = None, solana: Optional[str] = None):
@@ -5329,6 +5391,69 @@ async def start_health_server():
 
         return web.json_response({"success": True, "profile": user_profiles[uid]})
 
+    async def set_custom_winners_handler(request):
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin permission required"}, status=403)
+
+        g_id = request.match_info.get("id")
+        g = giveaways.get(g_id)
+        if not g and FIREBASE_URL:
+            g = await firebase_get(f"giveaways/{g_id}")
+            if g and isinstance(g, dict): giveaways[g_id] = g
+
+        if not g:
+            return web.json_response({"error": "Giveaway not found"}, status=404)
+
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        gtd_raw = body.get("guaranteed_winners", "")
+        fcfs_raw = body.get("fcfs_winners", "")
+        custom_text = body.get("custom_winners_text", "")
+
+        winner_summary_lines = []
+
+        if custom_text and str(custom_text).strip():
+            winner_summary_lines = [l for l in str(custom_text).strip().split("\n") if l.strip()]
+        else:
+            def format_winner_list(raw_val):
+                if isinstance(raw_val, list):
+                    items = [str(x).strip() for x in raw_val if str(x).strip()]
+                else:
+                    items = [x.strip() for x in re.split(r'[\n,]+', str(raw_val)) if x.strip()]
+                
+                formatted = []
+                for item in items:
+                    clean_id = re.sub(r'[^0-9]', '', item)
+                    if clean_id and len(clean_id) >= 17:
+                        formatted.append(f"<@{clean_id}>")
+                    elif item.startswith("@"):
+                        formatted.append(item)
+                    else:
+                        formatted.append(item)
+                return ", ".join(formatted) if formatted else "None"
+
+            gtd_str = format_winner_list(gtd_raw)
+            fcfs_str = format_winner_list(fcfs_raw)
+
+            winner_summary_lines.append(f"**Guaranteed:** {gtd_str}")
+            winner_summary_lines.append(f"**FCFS:** {fcfs_str}")
+
+        g["is_active"] = False
+        g["winners_text"] = "\n".join(winner_summary_lines)
+
+        save_giveaways()
+        if FIREBASE_URL:
+            await firebase_put(f"giveaways/{g_id}", g)
+
+        await update_giveaway_discord_message(g_id)
+        await announce_winners_in_discord(g_id, winner_summary_lines)
+
+        return web.json_response({"success": True, "giveaway": g, "winners_text": g["winners_text"]})
+
     # Add routes
     app.router.add_get("/", serve_index)
     app.router.add_get("/static/{filename}", serve_static)
@@ -5352,6 +5477,7 @@ async def start_health_server():
     app.router.add_post("/api/giveaways/{id}/entries/{uid}/delete", delete_entry_handler)
     app.router.add_post("/api/giveaways/{id}/draw", draw_winners_handler)
     app.router.add_post("/api/giveaways/{id}/redraw", redraw_winners_handler)
+    app.router.add_post("/api/giveaways/{id}/set-custom-winners", set_custom_winners_handler)
     app.router.add_post("/api/giveaways/{id}/announce", send_announcement_handler)
     app.router.add_post("/api/giveaways/{id}/verify-winner", verify_winner_handler)
     app.router.add_post("/api/user/profile", save_profile_handler)
