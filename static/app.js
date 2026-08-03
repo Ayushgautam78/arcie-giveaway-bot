@@ -37,7 +37,7 @@ function formatMarkdownDescription(text) {
   // 2. Raw URLs (not already inside href="...")
   str = str.replace(/(^|[^"])((https?:\/\/[^\s<]+))/g, (match, prefix, fullUrl) => {
     if (prefix.includes('href=') || prefix.includes('src=')) return match;
-    return `${prefix}<a href="${fullUrl}" target="_blank" rel="noopener noreferrer" style="color: #60a5fa; text-decoration: underline; font-weight: 600;">${fullUrl} 🔗</a>`;
+    return `${prefix}<a href="${fullUrl}" target="_blank" rel="noopener noreferrer" style="color: #60a5fa; text-decoration: underline; font-weight: 600;">Click Here 🔗</a>`;
   });
 
   // 3. Bold: **text**
@@ -53,6 +53,26 @@ function formatMarkdownDescription(text) {
   str = str.replace(/\n/g, '<br>');
 
   return str;
+}
+
+// Render Social Links HTML Buttons for Web Display
+function renderSocialButtonsHTML(social_links) {
+  if (!social_links || typeof social_links !== 'object') return '';
+  const btns = [];
+  if (social_links.twitter_link && social_links.twitter_link.startsWith('http')) {
+    btns.push(`<a href="${escapeHtml(social_links.twitter_link)}" target="_blank" rel="noopener noreferrer" class="btn btn-outline btn-sm" style="padding: 4px 10px; font-size: 0.8rem; border-color: rgba(29,161,242,0.4); color: #38bdf8;">🐦 Twitter / X</a>`);
+  }
+  if (social_links.discord_link && social_links.discord_link.startsWith('http')) {
+    btns.push(`<a href="${escapeHtml(social_links.discord_link)}" target="_blank" rel="noopener noreferrer" class="btn btn-outline btn-sm" style="padding: 4px 10px; font-size: 0.8rem; border-color: rgba(88,101,242,0.4); color: #818cf8;">💬 Discord</a>`);
+  }
+  if (social_links.telegram_link && social_links.telegram_link.startsWith('http')) {
+    btns.push(`<a href="${escapeHtml(social_links.telegram_link)}" target="_blank" rel="noopener noreferrer" class="btn btn-outline btn-sm" style="padding: 4px 10px; font-size: 0.8rem; border-color: rgba(0,136,204,0.4); color: #38bdf8;">✈️ Telegram</a>`);
+  }
+  if (social_links.website_link && social_links.website_link.startsWith('http')) {
+    btns.push(`<a href="${escapeHtml(social_links.website_link)}" target="_blank" rel="noopener noreferrer" class="btn btn-outline btn-sm" style="padding: 4px 10px; font-size: 0.8rem; border-color: rgba(168,85,247,0.4); color: #c084fc;">🌐 Website</a>`);
+  }
+  if (!btns.length) return '';
+  return `<div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;">${btns.join('')}</div>`;
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -526,6 +546,12 @@ async function submitCreateGiveaway() {
   const require_evm = document.getElementById('reqEvm').checked;
   const require_solana = document.getElementById('reqSolana').checked;
 
+  const twitter_link = document.getElementById('gTwitterLink')?.value.trim() || '';
+  const discord_link = document.getElementById('gDiscordLink')?.value.trim() || '';
+  const telegram_link = document.getElementById('gTelegramLink')?.value.trim() || '';
+  const website_link = document.getElementById('gWebsiteLink')?.value.trim() || '';
+  const social_links = { twitter_link, discord_link, telegram_link, website_link };
+
   const giveawayId = 'g_' + Date.now();
   let durationInSeconds = duration_val * 60;
   if (duration_unit === 'hours') durationInSeconds = duration_val * 3600;
@@ -546,6 +572,7 @@ async function submitCreateGiveaway() {
     duration_unit,
     duration_hours: duration_val,
     network,
+    social_links,
     is_active: true,
     created_at: Math.floor(Date.now() / 1000),
     ends_at: Math.floor(Date.now() / 1000) + durationInSeconds,
@@ -742,6 +769,12 @@ function openEditModal(giveawayId) {
   document.getElementById('editReqEvm').checked = !!g.tasks?.require_evm;
   document.getElementById('editReqSolana').checked = !!g.tasks?.require_solana;
 
+  // Social Links
+  if (document.getElementById('editGTwitterLink')) document.getElementById('editGTwitterLink').value = g.social_links?.twitter_link || '';
+  if (document.getElementById('editGDiscordLink')) document.getElementById('editGDiscordLink').value = g.social_links?.discord_link || '';
+  if (document.getElementById('editGTelegramLink')) document.getElementById('editGTelegramLink').value = g.social_links?.telegram_link || '';
+  if (document.getElementById('editGWebsiteLink')) document.getElementById('editGWebsiteLink').value = g.social_links?.website_link || '';
+
   openModal('editModal');
 }
 
@@ -772,6 +805,12 @@ async function submitEditGiveaway() {
   const require_evm = document.getElementById('editReqEvm').checked;
   const require_solana = document.getElementById('editReqSolana').checked;
 
+  const twitter_link = document.getElementById('editGTwitterLink')?.value.trim() || '';
+  const discord_link = document.getElementById('editGDiscordLink')?.value.trim() || '';
+  const telegram_link = document.getElementById('editGTelegramLink')?.value.trim() || '';
+  const website_link = document.getElementById('editGWebsiteLink')?.value.trim() || '';
+  const social_links = { twitter_link, discord_link, telegram_link, website_link };
+
   let durationInSeconds = duration_val * 60;
   if (duration_unit === 'hours') durationInSeconds = duration_val * 3600;
   if (duration_unit === 'days') durationInSeconds = duration_val * 86400;
@@ -783,6 +822,7 @@ async function submitEditGiveaway() {
   g.mention_role = mention_role;
   g.winner_channel_id = winner_channel_id;
   g.channel_id = channel_id;
+  g.social_links = social_links;
 
   g.min_per_user = min_per_user;
   g.max_per_user = max_per_user;
@@ -867,7 +907,7 @@ async function openDetailModal(giveawayId) {
   content.innerHTML = `
     <div style="display: flex; flex-direction: column; gap: 1rem;">
       ${g.banner_url ? `<img src="${escapeHtml(g.banner_url)}" style="width: 100%; height: 220px; object-fit: cover; border-radius: var(--radius-md);" alt="banner">` : ''}
-      <div style="font-size: 0.98rem; color: var(--text-main); line-height: 1.6; background: rgba(0,0,0,0.25); padding: 1rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">${formatMarkdownDescription(g.description)}</div>
+      <div style="font-size: 0.98rem; color: var(--text-main); line-height: 1.6; background: rgba(0,0,0,0.25); padding: 1rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">${formatMarkdownDescription(g.description)} ${renderSocialButtonsHTML(g.social_links)}</div>
       
       <div class="g-badge-container">
         ${g.guaranteed_spots ? `<span class="g-badge g-badge-guaranteed">💎 ${g.guaranteed_spots} Guaranteed</span>` : ''}

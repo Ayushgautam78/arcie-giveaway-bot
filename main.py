@@ -3063,6 +3063,19 @@ class GiveawayView(discord.ui.View):
         self.add_item(discord.ui.Button(label=f"🟡 {pending_count}", style=discord.ButtonStyle.secondary, disabled=True, custom_id=f"cnt_p_{giveaway_id}", row=1))
         self.add_item(discord.ui.Button(label=f"🔴 {ineligible_count}", style=discord.ButtonStyle.secondary, disabled=True, custom_id=f"cnt_i_{giveaway_id}", row=1))
 
+        # Official Social Link Buttons
+        g_obj = giveaways.get(giveaway_id)
+        if g_obj and g_obj.get("social_links") and isinstance(g_obj["social_links"], dict):
+            slinks = g_obj["social_links"]
+            if slinks.get("twitter_link") and slinks["twitter_link"].startswith(("http://", "https://")):
+                self.add_item(discord.ui.Button(label="Twitter / X", style=discord.ButtonStyle.link, url=slinks["twitter_link"].strip(), row=2))
+            if slinks.get("discord_link") and slinks["discord_link"].startswith(("http://", "https://")):
+                self.add_item(discord.ui.Button(label="Discord Server", style=discord.ButtonStyle.link, url=slinks["discord_link"].strip(), row=2))
+            if slinks.get("telegram_link") and slinks["telegram_link"].startswith(("http://", "https://")):
+                self.add_item(discord.ui.Button(label="Telegram", style=discord.ButtonStyle.link, url=slinks["telegram_link"].strip(), row=2))
+            if slinks.get("website_link") and slinks["website_link"].startswith(("http://", "https://")):
+                self.add_item(discord.ui.Button(label="Website", style=discord.ButtonStyle.link, url=slinks["website_link"].strip(), row=2))
+
     async def join_giveaway_callback(self, interaction: discord.Interaction):
         g_id = self.giveaway_id
         g = giveaways.get(g_id)
@@ -3619,24 +3632,36 @@ def format_task_link(ttype: str, val: str) -> str:
         return f"• {clean}"
 
 
-def format_embed_description(raw_desc: str) -> str:
+def format_embed_description(raw_desc: str, social_links: Optional[dict] = None) -> str:
     if not raw_desc:
-        return ""
-    # Convert plain raw URLs into markdown links if not already formatted as [label](url)
+        raw_desc = ""
+    # Convert plain raw URLs into [Click Here 🔗](url) if not already formatted as [label](url)
     def url_replacer(match):
         prefix = match.group(1) or ""
         url = match.group(2)
         clean_url = url.rstrip(")")
-        domain = urllib.parse.urlparse(clean_url).netloc or "link"
-        return f"{prefix}[{domain}]({clean_url})"
+        return f"{prefix}[Click Here 🔗]({clean_url})"
 
     formatted = re.sub(r'(?<!\]\()((https?://[^\s\)]+))', url_replacer, raw_desc)
+
+    # Append Official Links section at the bottom of description
+    if social_links and isinstance(social_links, dict):
+        link_bullets = []
+        if social_links.get("twitter_link"): link_bullets.append(f"[Twitter / X 🐦]({social_links['twitter_link'].strip()})")
+        if social_links.get("discord_link"): link_bullets.append(f"[Discord Server 💬]({social_links['discord_link'].strip()})")
+        if social_links.get("telegram_link"): link_bullets.append(f"[Telegram ✈️]({social_links['telegram_link'].strip()})")
+        if social_links.get("website_link"): link_bullets.append(f"[Website 🌐]({social_links['website_link'].strip()})")
+
+        if link_bullets:
+            formatted += f"\n\n🔗 **Official Links:**\n" + " • ".join(link_bullets)
+
     return formatted
 
 def build_giveaway_embed(g_data: dict):
     """Build a rich Discord Embed object with full markdown & clickable link support for giveaway descriptions."""
     raw_desc = g_data.get("description", "")
-    formatted_desc = format_embed_description(raw_desc)
+    social_links = g_data.get("social_links", {})
+    formatted_desc = format_embed_description(raw_desc, social_links)
 
     embed = discord.Embed(
         title=g_data.get('title', 'Giveaway'),
@@ -4346,6 +4371,15 @@ async def start_health_server():
                 {"name": "FCFS", "count": g_fcfs}
             ]
 
+        social_links = body.get("social_links", {})
+        if not social_links and isinstance(body, dict):
+            social_links = {
+                "twitter_link": str(body.get("twitter_link", "")).strip(),
+                "discord_link": str(body.get("discord_link", "")).strip(),
+                "telegram_link": str(body.get("telegram_link", "")).strip(),
+                "website_link": str(body.get("website_link", "")).strip()
+            }
+
         g_data = {
             "id": g_id,
             "title": body.get("title", "NFT Giveaway"),
@@ -4365,6 +4399,7 @@ async def start_health_server():
             "hosted_by": user.get("username", "Admin"),
             "network": body.get("network", "Ethereum"),
             "tasks": body.get("tasks", {}),
+            "social_links": social_links,
             "is_active": True,
             "entries_count": 0,
             "message_id": None
@@ -4438,6 +4473,13 @@ async def start_health_server():
         if "spot_tiers" in body: g["spot_tiers"] = body["spot_tiers"]
         if "mention_role" in body: g["mention_role"] = body["mention_role"]
         if "winner_channel_id" in body: g["winner_channel_id"] = str(body["winner_channel_id"])
+        if "social_links" in body or "twitter_link" in body:
+            g["social_links"] = body.get("social_links", {
+                "twitter_link": str(body.get("twitter_link", "")).strip(),
+                "discord_link": str(body.get("discord_link", "")).strip(),
+                "telegram_link": str(body.get("telegram_link", "")).strip(),
+                "website_link": str(body.get("website_link", "")).strip()
+            })
 
         # Handle channel change: if new channel_id given and different, delete old msg + re-post
         new_channel_id = str(body.get("channel_id", "")).strip()
