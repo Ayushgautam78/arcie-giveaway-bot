@@ -4194,31 +4194,9 @@ async def on_ready():
 
     print(f"[READY] Logged in as {bot.user.name} ({bot.user.id})")
 
-    # 1. Sync slash commands globally and per-guild
-    try:
-        synced = await bot.tree.sync()
-        print(f"[BOOT] Synced {len(synced)} global slash commands.")
-        for guild in bot.guilds:
-            try:
-                bot.tree.clear_commands(guild=guild)
-                bot.tree.copy_global_to(guild=guild)
-                await bot.tree.sync(guild=guild)
-                print(f"[BOOT] Synced active slash commands for '{guild.name}'")
-            except Exception as ge:
-                print(f"[BOOT ERROR] Guild command sync failed for '{guild.name}': {ge}")
-    except Exception as e:
-        print(f"[BOOT] Slash command sync failed: {e}")
-
-    # 2. Cache all guild members for role operations
-    for guild in bot.guilds:
-        try:
-            await guild.chunk()
-            print(f"[MEMBERS] Cached {len(guild.members)} members in '{guild.name}'")
-        except Exception as e:
-            print(f"[MEMBERS ERROR] {guild.name}: {e}")
-
-    # 3. Sync all data from Firebase Cloud DB
+    # 1. IMMEDIATE FIREBASE CLOUD DB SYNC (Restores Profiles, Giveaways, Entries & Reaction Roles instantly)
     if FIREBASE_URL:
+        print(f"[FIREBASE] Connecting to Cloud DB: {FIREBASE_URL} ...")
         try:
             fb_profiles = await firebase_get("user_profiles")
             if fb_profiles and isinstance(fb_profiles, dict):
@@ -4232,23 +4210,23 @@ async def on_ready():
 
             fb_entries = await firebase_get("giveaway_entries")
             if fb_entries and isinstance(fb_entries, dict):
-                giveaway_entries.update(fb_entries)
-                print(f"[FIREBASE] Synced {len(fb_entries)} giveaway entries from Cloud DB.")
+                for g_id, e_list in fb_entries.items():
+                    if isinstance(e_list, dict):
+                        giveaway_entries[g_id] = list(e_list.values())
+                    elif isinstance(e_list, list):
+                        giveaway_entries[g_id] = e_list
+                print(f"[FIREBASE] Synced entries for {len(giveaway_entries)} giveaways from Cloud DB.")
+
+            fb_rr = await firebase_get("reaction_roles")
+            if fb_rr and isinstance(fb_rr, dict):
+                for k, v in fb_rr.items():
+                    if k not in reaction_roles or not reaction_roles[k]:
+                        reaction_roles[k] = v
+                print(f"[FIREBASE] Synced {len(reaction_roles)} reaction role records from Cloud DB.")
         except Exception as fe:
             print(f"[FIREBASE SYNC ERROR] {fe}")
 
-    # 4. Load & Sync Reaction Roles from Firebase Cloud DB
-    try:
-        fb_rr = await firebase_get("reaction_roles")
-        if fb_rr and isinstance(fb_rr, dict):
-            for k, v in fb_rr.items():
-                if k not in reaction_roles or not reaction_roles[k]:
-                    reaction_roles[k] = v
-            print(f"[FIREBASE] Synced {len(reaction_roles)} reaction role records from Cloud DB.")
-    except Exception as fbe:
-        print(f"[FIREBASE RR SYNC ERROR] {fbe}")
-
-    # 5. Register persistent reaction role views across restarts (CRITICAL for existing embeds!)
+    # 2. Register persistent reaction role views across restarts (CRITICAL for existing embeds!)
     rr_restored = 0
     for msg_id, data in reaction_roles.items():
         try:
@@ -4274,7 +4252,7 @@ async def on_ready():
     if rr_restored:
         print(f"[RR RESTORE] Registered persistent views for {rr_restored} reaction role message(s).")
 
-    # 6. Register persistent giveaway views across restarts (with message_id binding!)
+    # 3. Register persistent giveaway views across restarts (with message_id binding!)
     port = os.getenv("PORT", "3000")
     web_url = os.getenv("APP_URL", f"http://localhost:{port}")
     ga_restored = 0
@@ -4293,13 +4271,38 @@ async def on_ready():
     if ga_restored:
         print(f"[GIVEAWAY RESTORE] Registered persistent views for {ga_restored} giveaway(s).")
 
-    # 7. Immediately sync channels & post any pending giveaways
-    await sync_and_post_giveaways()
+    # 4. Immediately sync channels & post any pending giveaways
+    try:
+        await sync_and_post_giveaways()
+    except Exception as spe:
+        print(f"[SYNC POST ERROR] {spe}")
 
-    # 8. Launch continuous background channel sync & giveaway poster loop
+    # 5. Launch continuous background channel sync & giveaway poster loop
     bot.loop.create_task(bg_firebase_poster_task())
 
-    print(f"[BOOT] {bot.user.name} ({bot.user.id}) IS ONLINE AND READY TO CHAT.")
+    # 6. Non-blocking Slash Command Sync & Member Caching
+    try:
+        synced = await bot.tree.sync()
+        print(f"[BOOT] Synced {len(synced)} global slash commands.")
+        for guild in bot.guilds:
+            try:
+                bot.tree.clear_commands(guild=guild)
+                bot.tree.copy_global_to(guild=guild)
+                await bot.tree.sync(guild=guild)
+                print(f"[BOOT] Synced active slash commands for '{guild.name}'")
+            except Exception as ge:
+                print(f"[BOOT ERROR] Guild command sync failed for '{guild.name}': {ge}")
+    except Exception as e:
+        print(f"[BOOT] Slash command sync failed: {e}")
+
+    for guild in bot.guilds:
+        try:
+            await asyncio.wait_for(guild.chunk(), timeout=3.0)
+            print(f"[MEMBERS] Cached {len(guild.members)} members in '{guild.name}'")
+        except Exception as e:
+            print(f"[MEMBERS] Skipping slow member chunking for '{guild.name}'")
+
+    print(f"[BOOT] {bot.user.name} ({bot.user.id}) IS FULLY ONLINE & CONNECTED TO FIREBASE CLOUD DB.")
 
 # -------- Web Dashboard & HTTP API Server -------- #
 async def start_health_server():
