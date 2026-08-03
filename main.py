@@ -3355,12 +3355,12 @@ async def update_giveaway_discord_message(giveaway_id: str):
 
     if msg:
         try:
-            kwargs = {"embed": embed, "view": view}
+            kwargs = {"content": mention_text, "embed": embed, "view": view}
             if file_to_send:
                 kwargs["attachments"] = [file_to_send]
             await msg.edit(**kwargs)
             bot.add_view(view, message_id=msg.id)
-            print(f"[UPDATE EMBED SUCCESS] Updated Discord embed for '{g.get('title')}' in #{channel.name}")
+            print(f"[UPDATE EMBED SUCCESS] In-place edited Discord embed for '{g.get('title')}' in #{channel.name} (preserved sent timestamp)")
             return
         except Exception as edit_err:
             print(f"[UPDATE EMBED EDIT FAIL] {edit_err}, re-posting fresh message...")
@@ -5144,64 +5144,11 @@ async def start_health_server():
         save_giveaways()
         await firebase_put(f"giveaways/{g_id}", g)
 
-        # ALWAYS delete old embed and send a brand new one to the target channel on every edit
+        # Edit Discord message in-place to preserve exact original sent timestamp!
         try:
-            # Step 1: Delete old message if it exists
-            old_ch_id = re.sub(r'[^0-9]', '', str(g.get("channel_id", "")))
-            old_msg_id = re.sub(r'[^0-9]', '', str(g.get("message_id", "")))
-            if old_ch_id and old_msg_id:
-                try:
-                    old_ch = bot.get_channel(int(old_ch_id))
-                    if not old_ch:
-                        old_ch = await bot.fetch_channel(int(old_ch_id))
-                    if old_ch:
-                        old_msg = await old_ch.fetch_message(int(old_msg_id))
-                        await old_msg.delete()
-                        print(f"[EDIT] Deleted old giveaway message {old_msg_id} from #{old_ch.name}")
-                except Exception as del_err:
-                    print(f"[EDIT] Could not delete old message: {del_err}")
-
-            # Step 2: Clear message_id so a fresh one is posted
-            g["message_id"] = None
-
-            # Step 3: Resolve channel to post in
-            target_ch_id = re.sub(r'[^0-9]', '', str(g.get("channel_id", "")))
-            channel = None
-            if target_ch_id:
-                try:
-                    channel = bot.get_channel(int(target_ch_id))
-                    if not channel:
-                        channel = await bot.fetch_channel(int(target_ch_id))
-                except Exception:
-                    channel = None
-            if not channel and bot.guilds:
-                for guild in bot.guilds:
-                    channel = guild.system_channel or (guild.text_channels[0] if guild.text_channels else None)
-                    if channel:
-                        break
-
-            # Step 4: Post fresh embed
-            if channel:
-                port_val = os.getenv("PORT", "3000")
-                web_url_val = os.getenv("APP_URL", f"http://localhost:{port_val}")
-                view = GiveawayView(g_id, web_url_val)
-                embed, file_to_send = build_giveaway_embed(g)
-                mention_text = format_role_mention(g.get("mention_role"))
-                if file_to_send:
-                    new_msg = await channel.send(content=mention_text, embed=embed, view=view, file=file_to_send)
-                else:
-                    new_msg = await channel.send(content=mention_text, embed=embed, view=view)
-                g["message_id"] = str(new_msg.id)
-                g["channel_id"] = str(channel.id)
-                giveaways[g_id] = g
-                save_giveaways()
-                await firebase_put(f"giveaways/{g_id}", g)
-                bot.add_view(view, message_id=new_msg.id)
-                print(f"[EDIT] Posted fresh giveaway embed for '{g.get('title')}' in #{channel.name} (msg {new_msg.id})")
-            else:
-                print(f"[EDIT] Could not find any channel to post giveaway '{g_id}'")
+            await update_giveaway_discord_message(g_id)
         except Exception as ue:
-            print(f"[EDIT: EMBED POST ERROR] {ue}")
+            print(f"[EDIT: EMBED UPDATE ERROR] {ue}")
 
         # If this giveaway already has winners drawn, re-announce winners to winner_channel_id
         if g.get("winners_text"):
