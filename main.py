@@ -3592,6 +3592,63 @@ async def user_details_cmd(interaction: discord.Interaction, target: Optional[di
             await interaction.followup.send("❌ Failed to fetch user profile.", ephemeral=True)
 
 
+@bot.tree.command(name="recover-entries", description="Admin: Automatically reconstruct entries into a giveaway from user profiles.")
+@app_commands.describe(giveaway_id="The Giveaway ID (e.g. g_1785773623079)")
+async def recover_entries_cmd(interaction: discord.Interaction, giveaway_id: str):
+    if not is_bot_admin_by_id(str(interaction.user.id)):
+        await interaction.response.send_message("❌ Admin permission required.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    g = giveaways.get(giveaway_id)
+    if not g and FIREBASE_URL:
+        g = await firebase_get(f"giveaways/{giveaway_id}")
+        if g: giveaways[giveaway_id] = g
+
+    if not g:
+        await interaction.followup.send("❌ Giveaway not found.", ephemeral=True)
+        return
+
+    entries = giveaway_entries.setdefault(giveaway_id, [])
+    existing_uids = {e["user_id"] for e in entries if isinstance(e, dict) and "user_id" in e}
+
+    recovered_count = 0
+    # Search all known user profiles for wallet/social data
+    for uid, prof in list(user_profiles.items()):
+        if uid not in existing_uids:
+            if prof.get("evm_wallet") or prof.get("solana_wallet") or prof.get("twitter"):
+                new_entry = {
+                    "user_id": uid,
+                    "username": prof.get("username", uid),
+                    "display_name": prof.get("display_name", uid),
+                    "joined_at": int(time.time()),
+                    "evm_wallet": prof.get("evm_wallet", ""),
+                    "solana_wallet": prof.get("solana_wallet", ""),
+                    "twitter": prof.get("twitter", ""),
+                    "telegram": prof.get("telegram", ""),
+                    "task_status": "verified",
+                    "winner_type": None
+                }
+                entries.append(new_entry)
+                existing_uids.add(uid)
+                recovered_count += 1
+
+    g["entries_count"] = len(entries)
+    save_giveaways()
+    save_giveaway_entries()
+    if FIREBASE_URL:
+        await firebase_put(f"giveaways/{giveaway_id}", g)
+        await firebase_put(f"giveaway_entries/{giveaway_id}", entries)
+
+    await update_giveaway_discord_message(giveaway_id)
+    await interaction.followup.send(
+        f"✅ **Recovery Complete!**\n"
+        f"Reconstructed **{recovered_count}** participant entries for **{g.get('title')}**!\n"
+        f"Total Entries Now: **{len(entries)}**",
+        ephemeral=True
+    )
+
+
 @bot.tree.command(name="set-wallet", description="Quickly set your EVM or Solana wallet address.")
 @app_commands.describe(evm="EVM Wallet (0x...)", solana="Solana Wallet Address")
 async def set_wallet_cmd(interaction: discord.Interaction, evm: Optional[str] = None, solana: Optional[str] = None):
