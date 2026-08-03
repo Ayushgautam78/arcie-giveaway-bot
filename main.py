@@ -1401,26 +1401,38 @@ class ReactionRoleButton(discord.ui.Button):
         self.role_id = int(role_id)
 
     async def callback(self, interaction: discord.Interaction):
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+        except Exception:
+            pass
+
         guild = interaction.guild
         if not guild:
-            await interaction.response.send_message("This action can only be used in a server!", ephemeral=True)
+            await interaction.followup.send("This action can only be used in a server!", ephemeral=True)
             return
+
         role = guild.get_role(self.role_id)
         if not role:
-            await interaction.response.send_message("❌ That role no longer exists in this server! 🥺", ephemeral=True)
+            await interaction.followup.send("❌ That role no longer exists in this server! 🥺", ephemeral=True)
             return
 
         member = interaction.user
-        if not isinstance(member, discord.Member):
+        if not isinstance(member, discord.Member) and guild:
             member = guild.get_member(interaction.user.id)
+            if not member:
+                try:
+                    member = await guild.fetch_member(interaction.user.id)
+                except Exception:
+                    pass
 
         if not member:
-            await interaction.response.send_message("❌ Could not fetch member details! 🥺", ephemeral=True)
+            await interaction.followup.send("❌ Could not fetch member details! 🥺", ephemeral=True)
             return
 
         # Check Discord Role Hierarchy
         if role >= guild.me.top_role:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"❌ **Role Hierarchy Error!** The role **{role.name}** is positioned HIGHER than (or equal to) my bot role in Server Settings.\n\n"
                 f"👉 **Fix:** Open **Server Settings ➔ Roles**, and drag the bot role (**Arcie**) ABOVE **{role.name}**!",
                 ephemeral=True
@@ -1430,19 +1442,19 @@ class ReactionRoleButton(discord.ui.Button):
         if role in member.roles:
             try:
                 await member.remove_roles(role, reason="Reaction Role button toggle")
-                await interaction.response.send_message(f"❌ Removed the **{role.name}** role from you!", ephemeral=True)
+                await interaction.followup.send(f"❌ Removed the **{role.name}** role from you!", ephemeral=True)
             except discord.Forbidden:
-                await interaction.response.send_message(f"❌ **Permission Denied!** Make sure my **Arcie** role has **Manage Roles** permission and is placed higher than **{role.name}** in Server Settings!", ephemeral=True)
+                await interaction.followup.send(f"❌ **Permission Denied!** Make sure my **Arcie** role has **Manage Roles** permission and is placed higher than **{role.name}** in Server Settings!", ephemeral=True)
             except Exception as e:
-                await interaction.response.send_message(f"Could not remove role: {e}", ephemeral=True)
+                await interaction.followup.send(f"Could not remove role: {e}", ephemeral=True)
         else:
             try:
                 await member.add_roles(role, reason="Reaction Role button toggle")
-                await interaction.response.send_message(f"✅ Granted you the **{role.name}** role!", ephemeral=True)
+                await interaction.followup.send(f"✅ Granted you the **{role.name}** role!", ephemeral=True)
             except discord.Forbidden:
-                await interaction.response.send_message(f"❌ **Permission Denied!** Make sure my **Arcie** role has **Manage Roles** permission and is placed higher than **{role.name}** in Server Settings!", ephemeral=True)
+                await interaction.followup.send(f"❌ **Permission Denied!** Make sure my **Arcie** role has **Manage Roles** permission and is placed higher than **{role.name}** in Server Settings!", ephemeral=True)
             except Exception as e:
-                await interaction.response.send_message(f"Could not give role: {e}", ephemeral=True)
+                await interaction.followup.send(f"Could not give role: {e}", ephemeral=True)
 
 # -------- Event Handlers -------- #
 @bot.event
@@ -1514,19 +1526,23 @@ async def on_interaction(interaction: discord.Interaction):
         custom_id = interaction.data.get("custom_id", "")
         if custom_id and custom_id.startswith("rr_"):
             try:
+                if not interaction.response.is_done():
+                    await interaction.response.defer(ephemeral=True)
+            except Exception:
+                pass
+
+            try:
                 role_id_str = custom_id.replace("rr_", "").strip()
                 if role_id_str.isdigit():
                     role_id = int(role_id_str)
                     guild = interaction.guild
                     if not guild:
-                        if not interaction.response.is_done():
-                            await interaction.response.send_message("This action can only be used in a server!", ephemeral=True)
+                        await interaction.followup.send("This action can only be used in a server!", ephemeral=True)
                         return
 
                     role = guild.get_role(role_id)
                     if not role:
-                        if not interaction.response.is_done():
-                            await interaction.response.send_message("❌ That role no longer exists in this server! 🥺", ephemeral=True)
+                        await interaction.followup.send("❌ That role no longer exists in this server! 🥺", ephemeral=True)
                         return
 
                     member = interaction.user
@@ -1539,42 +1555,34 @@ async def on_interaction(interaction: discord.Interaction):
                                 pass
 
                     if not member:
-                        if not interaction.response.is_done():
-                            await interaction.response.send_message("❌ Could not fetch your server member profile! 🥺", ephemeral=True)
+                        await interaction.followup.send("❌ Could not fetch your server member profile! 🥺", ephemeral=True)
                         return
 
                     # Check Role Hierarchy
                     if role >= guild.me.top_role:
-                        if not interaction.response.is_done():
-                            await interaction.response.send_message(
-                                f"❌ **Role Hierarchy Error!** The role **{role.name}** is positioned HIGHER than (or equal to) my bot role (**Arcie**) in Discord!\n\n"
-                                f"👉 **Fix:** Open **Server Settings ➔ Roles**, and drag the bot role (**Arcie**) ABOVE **{role.name}**!",
-                                ephemeral=True
-                            )
+                        await interaction.followup.send(
+                            f"❌ **Role Hierarchy Error!** The role **{role.name}** is positioned HIGHER than (or equal to) my bot role (**Arcie**) in Discord!\n\n"
+                            f"👉 **Fix:** Open **Server Settings ➔ Roles**, and drag the bot role (**Arcie**) ABOVE **{role.name}**!",
+                            ephemeral=True
+                        )
                         return
 
                     if role in member.roles:
                         try:
                             await member.remove_roles(role, reason="Reaction Role button toggle")
-                            if not interaction.response.is_done():
-                                await interaction.response.send_message(f"❌ Removed the **{role.name}** role from you!", ephemeral=True)
+                            await interaction.followup.send(f"❌ Removed the **{role.name}** role from you!", ephemeral=True)
                         except discord.Forbidden:
-                            if not interaction.response.is_done():
-                                await interaction.response.send_message(f"❌ **Permission Denied!** Make sure my **Arcie** role has **Manage Roles** permission and is placed higher than **{role.name}** in Server Settings!", ephemeral=True)
+                            await interaction.followup.send(f"❌ **Permission Denied!** Make sure my **Arcie** role has **Manage Roles** permission and is placed higher than **{role.name}** in Server Settings!", ephemeral=True)
                         except Exception as e:
-                            if not interaction.response.is_done():
-                                await interaction.response.send_message(f"Could not remove role: {e}", ephemeral=True)
+                            await interaction.followup.send(f"Could not remove role: {e}", ephemeral=True)
                     else:
                         try:
                             await member.add_roles(role, reason="Reaction Role button toggle")
-                            if not interaction.response.is_done():
-                                await interaction.response.send_message(f"✅ Granted you the **{role.name}** role!", ephemeral=True)
+                            await interaction.followup.send(f"✅ Granted you the **{role.name}** role!", ephemeral=True)
                         except discord.Forbidden:
-                            if not interaction.response.is_done():
-                                await interaction.response.send_message(f"❌ **Permission Denied!** Make sure my **Arcie** role has **Manage Roles** permission and is placed higher than **{role.name}** in Server Settings!", ephemeral=True)
+                            await interaction.followup.send(f"❌ **Permission Denied!** Make sure my **Arcie** role has **Manage Roles** permission and is placed higher than **{role.name}** in Server Settings!", ephemeral=True)
                         except Exception as e:
-                            if not interaction.response.is_done():
-                                await interaction.response.send_message(f"Could not give role: {e}", ephemeral=True)
+                            await interaction.followup.send(f"Could not give role: {e}", ephemeral=True)
                     return
             except Exception as e:
                 print(f"[REACTION ROLE INTERACTION ERROR] {e}")
