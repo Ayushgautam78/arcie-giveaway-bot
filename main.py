@@ -4521,11 +4521,31 @@ async def start_health_server():
 
 
     async def get_giveaways_handler(request):
+        if FIREBASE_URL:
+            try:
+                fb_g = await firebase_get("giveaways")
+                if fb_g and isinstance(fb_g, dict):
+                    giveaways.update(fb_g)
+
+                fb_e = await firebase_get("giveaway_entries")
+                if fb_e and isinstance(fb_e, dict):
+                    for gid, elist in fb_e.items():
+                        if isinstance(elist, dict):
+                            giveaway_entries[gid] = list(elist.values())
+                        elif isinstance(elist, list):
+                            giveaway_entries[gid] = elist
+            except Exception as e:
+                print(f"[GET GIVEAWAYS SYNC ERROR] {e}")
+
+        for gid, g_obj in giveaways.items():
+            if isinstance(g_obj, dict):
+                e_list = giveaway_entries.get(gid, [])
+                g_obj["entries_count"] = len(e_list)
+
         return web.json_response(list(giveaways.values()))
 
     async def get_giveaway_detail_handler(request):
         g_id = request.match_info.get("id")
-        # Try local first, then Firebase
         g = giveaways.get(g_id)
         if not g:
             g = await firebase_get(f"giveaways/{g_id}")
@@ -4534,17 +4554,17 @@ async def start_health_server():
         if not g:
             return web.json_response({"error": "Not found"}, status=404)
 
-        # Always get fresh entries from Firebase
-        entries = giveaway_entries.get(g_id, [])
-        if not entries:
-            fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
-            if fb_entries and isinstance(fb_entries, (dict, list)):
-                entries = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
-                if entries:
-                    giveaway_entries[g_id] = entries
+        # Always fetch fresh entries directly from Firebase Cloud DB
+        fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
+        if fb_entries and isinstance(fb_entries, (dict, list)):
+            entries = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+            giveaway_entries[g_id] = entries
+        else:
+            entries = giveaway_entries.get(g_id, [])
 
-        # Keep entries_count in sync
         g["entries_count"] = len(entries)
+        save_giveaways()
+        save_giveaway_entries()
         return web.json_response({"giveaway": g, "entries": entries})
 
     async def send_announcement_handler(request):
