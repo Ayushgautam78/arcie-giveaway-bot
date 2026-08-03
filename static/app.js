@@ -24,6 +24,37 @@ async function firebasePut(path, data) {
   });
 }
 
+// Helper: Format Markdown (Bold, Italics, Code, Links) for Web Display
+function formatMarkdownDescription(text) {
+  if (!text) return '';
+  let str = escapeHtml(text);
+
+  // 1. Markdown Links: [label](url)
+  str = str.replace(/\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)/g, (match, label, url) => {
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color: #60a5fa; text-decoration: underline; font-weight: 600;">${label} 🔗</a>`;
+  });
+
+  // 2. Raw URLs (not already inside href="...")
+  str = str.replace(/(^|[^"])((https?:\/\/[^\s<]+))/g, (match, prefix, fullUrl) => {
+    if (prefix.includes('href=') || prefix.includes('src=')) return match;
+    return `${prefix}<a href="${fullUrl}" target="_blank" rel="noopener noreferrer" style="color: #60a5fa; text-decoration: underline; font-weight: 600;">${fullUrl} 🔗</a>`;
+  });
+
+  // 3. Bold: **text**
+  str = str.replace(/\*\*([^*]+)\*\*/g, '<b style="color: #fff; font-weight: 700;">$1</b>');
+
+  // 4. Italics: *text*
+  str = str.replace(/\*([^*]+)\*/g, '<i>$1</i>');
+
+  // 5. Code: `code`
+  str = str.replace(/`([^`]+)`/g, '<code style="background: rgba(0,0,0,0.4); padding: 2px 6px; border-radius: 4px; color: #a78bfa;">$1</code>');
+
+  // 6. Newlines to <br>
+  str = str.replace(/\n/g, '<br>');
+
+  return str;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   initApp();
   setupEventListeners();
@@ -279,7 +310,7 @@ function renderGiveaways() {
           </div>
 
           <h3 class="g-title">${escapeHtml(g.title)}</h3>
-          <p class="g-desc">${escapeHtml(g.description)}</p>
+          <div class="g-desc">${formatMarkdownDescription(g.description)}</div>
 
           <div class="g-badge-container">
             ${g.guaranteed_spots ? `<span class="g-badge g-badge-guaranteed">💎 ${g.guaranteed_spots} Guaranteed</span>` : ''}
@@ -836,7 +867,7 @@ async function openDetailModal(giveawayId) {
   content.innerHTML = `
     <div style="display: flex; flex-direction: column; gap: 1rem;">
       ${g.banner_url ? `<img src="${escapeHtml(g.banner_url)}" style="width: 100%; height: 220px; object-fit: cover; border-radius: var(--radius-md);" alt="banner">` : ''}
-      <p style="font-size: 1rem; color: var(--text-muted);">${escapeHtml(g.description)}</p>
+      <div style="font-size: 0.98rem; color: var(--text-main); line-height: 1.6; background: rgba(0,0,0,0.25); padding: 1rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">${formatMarkdownDescription(g.description)}</div>
       
       <div class="g-badge-container">
         ${g.guaranteed_spots ? `<span class="g-badge g-badge-guaranteed">💎 ${g.guaranteed_spots} Guaranteed</span>` : ''}

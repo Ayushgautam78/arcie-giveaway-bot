@@ -3619,11 +3619,28 @@ def format_task_link(ttype: str, val: str) -> str:
         return f"• {clean}"
 
 
+def format_embed_description(raw_desc: str) -> str:
+    if not raw_desc:
+        return ""
+    # Convert plain raw URLs into markdown links if not already formatted as [label](url)
+    def url_replacer(match):
+        prefix = match.group(1) or ""
+        url = match.group(2)
+        clean_url = url.rstrip(")")
+        domain = urllib.parse.urlparse(clean_url).netloc or "link"
+        return f"{prefix}[{domain}]({clean_url})"
+
+    formatted = re.sub(r'(?<!\]\()((https?://[^\s\)]+))', url_replacer, raw_desc)
+    return formatted
+
 def build_giveaway_embed(g_data: dict):
-    """Build a rich Discord Embed object without emojis and optional discord.File attachment for a giveaway."""
+    """Build a rich Discord Embed object with full markdown & clickable link support for giveaway descriptions."""
+    raw_desc = g_data.get("description", "")
+    formatted_desc = format_embed_description(raw_desc)
+
     embed = discord.Embed(
         title=g_data.get('title', 'Giveaway'),
-        description=g_data.get("description", ""),
+        description=formatted_desc,
         color=discord.Color.gold()
     )
     
