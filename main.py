@@ -382,25 +382,74 @@ class TicketControlView(discord.ui.View):
             return None
 
 
+class TicketCategorySelect(discord.ui.Select):
+    def __init__(self, server_name: str = "Support"):
+        options = [
+            discord.SelectOption(
+                label="General Ticket",
+                description="General enquiries or misc enquiries can be raised here.",
+                emoji="📩",
+                value="general"
+            ),
+            discord.SelectOption(
+                label="Technical Ticket",
+                description="Technical enquiries or issues can be raised here.",
+                emoji="🤖",
+                value="technical"
+            ),
+            discord.SelectOption(
+                label="Partnerships & Collaboration Requests",
+                description="Partnerships & Collaboration enquiries can be raised here.",
+                emoji="🤝",
+                value="collab"
+            ),
+            discord.SelectOption(
+                label="Claim Giveaway Prize",
+                description="Submit wallets & claim giveaway prizes here.",
+                emoji="🏆",
+                value="giveaway"
+            ),
+            discord.SelectOption(
+                label="Report Issue / Bug",
+                description="Report server bugs, user issues or feedback here.",
+                emoji="🐛",
+                value="report"
+            )
+        ]
+        placeholder_text = f"Welcome to {server_name} Support Desk, how can we help today?"
+        if len(placeholder_text) > 100:
+            placeholder_text = placeholder_text[:97] + "..."
+
+        super().__init__(
+            placeholder=placeholder_text,
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id="ticket_category_select"
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_val = self.values[0]
+        title_map = {
+            "general": "General Ticket",
+            "technical": "Technical Ticket",
+            "collab": "Partnerships & Collaboration",
+            "giveaway": "Claim Giveaway Prize",
+            "report": "Report Issue"
+        }
+        category_title = title_map.get(selected_val, "General Support")
+        view = self.view
+        if isinstance(view, TicketLaunchView):
+            await view._create_ticket(interaction, category_title, selected_val)
+        else:
+            dummy_view = TicketLaunchView()
+            await dummy_view._create_ticket(interaction, category_title, selected_val)
+
+
 class TicketLaunchView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, server_name: str = "Support"):
         super().__init__(timeout=None)
-
-    @discord.ui.button(label="📩 General Support", style=discord.ButtonStyle.primary, custom_id="ticket_launch_general", emoji="📩")
-    async def open_general_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._create_ticket(interaction, "General Support", "general")
-
-    @discord.ui.button(label="🏆 Claim Giveaway Prize", style=discord.ButtonStyle.success, custom_id="ticket_launch_giveaway", emoji="🏆")
-    async def open_giveaway_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._create_ticket(interaction, "Claim Giveaway Prize", "giveaway")
-
-    @discord.ui.button(label="🤝 Collab & Partnership", style=discord.ButtonStyle.secondary, custom_id="ticket_launch_collab", emoji="🤝")
-    async def open_collab_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._create_ticket(interaction, "Partnership & Collab", "collab")
-
-    @discord.ui.button(label="🐛 Report Issue / Bug", style=discord.ButtonStyle.danger, custom_id="ticket_launch_report", emoji="🐛")
-    async def open_report_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._create_ticket(interaction, "Report Issue", "report")
+        self.add_item(TicketCategorySelect(server_name=server_name))
 
     async def _create_ticket(self, interaction: discord.Interaction, category_title: str, category_key: str):
         guild = interaction.guild
@@ -3879,10 +3928,10 @@ async def set_telegram_cmd(interaction: discord.Interaction, username: str):
     await interaction.response.send_message(f"✅ **Telegram Handle Updated!**\nUsername: **{clean_username}**", ephemeral=True)
 
 
-@bot.tree.command(name="setup-ticket-panel", description="Admin: Send an interactive Support Ticket Panel to a channel.")
+@bot.tree.command(name="setup-ticket-panel", description="Admin: Send PrismaX-style Ticket Help Desk panel.")
 @app_commands.describe(
     channel="Target channel to post the ticket panel",
-    title="Panel Title (default: 🎫 Support & Ticket Center)",
+    title="Panel Header (default: [ServerName] Support Help Desk)",
     description="Panel Description text"
 )
 async def setup_ticket_panel_cmd(
@@ -3897,28 +3946,21 @@ async def setup_ticket_panel_cmd(
 
     await interaction.response.defer(ephemeral=True)
     target_ch = channel or interaction.channel
+    s_name = interaction.guild.name if interaction.guild else "Support"
 
-    embed = discord.Embed(
-        title=title or "🎫 Support & Ticket Center",
-        description=description or (
-            "Welcome to the official support center!\n\n"
-            "Click any of the buttons below to open a private support ticket:\n\n"
-            "• 📩 **General Support**: Ask questions or get help\n"
-            "• 🏆 **Claim Giveaway Prize**: Submit wallet & details for giveaway wins\n"
-            "• 🤝 **Collab & Partnership**: Contact staff for collaborations\n"
-            "• 🐛 **Report Issue**: Report bugs or server issues"
-        ),
-        color=discord.Color.gold()
+    header_text = title or f"**{s_name} Support Help Desk**"
+    body_text = description or (
+        "Please select the nature of your enquiry from the dropdown list. "
+        "We look forward to serving and assisting you to our best capabilities."
     )
-    embed.set_footer(text="Click a category button below to create your ticket | Powered by Arcie Bot")
-    if interaction.guild.icon:
-        embed.set_thumbnail(url=interaction.guild.icon.url)
 
-    launch_view = TicketLaunchView()
+    full_content = f"{header_text}\n\n{body_text}"
+
+    launch_view = TicketLaunchView(server_name=s_name)
     try:
-        msg = await target_ch.send(embed=embed, view=launch_view)
+        msg = await target_ch.send(content=full_content, view=launch_view)
         bot.add_view(launch_view)
-        await interaction.followup.send(f"✅ Ticket Panel posted successfully in {target_ch.mention}!", ephemeral=True)
+        await interaction.followup.send(f"✅ Ticket Help Desk Panel posted successfully in {target_ch.mention}!", ephemeral=True)
     except Exception as e:
         print(f"[SETUP TICKET PANEL FAIL] {e}")
         await interaction.followup.send("❌ Failed to post ticket panel. Check bot permissions.", ephemeral=True)
