@@ -3719,8 +3719,18 @@ async def set_custom_winners_cmd(interaction: discord.Interaction, giveaway_id: 
             if i not in all_ids:
                 all_ids.append(i)
 
+        def resolve_tag(uid):
+            prof = user_profiles.get(str(uid), {})
+            if prof and (prof.get("display_name") or prof.get("username")):
+                return f"@{prof.get('display_name') or prof.get('username')}"
+            for guild in bot.guilds:
+                member = guild.get_member(int(uid))
+                if member:
+                    return f"@{member.display_name}"
+            return f"<@{uid}>"
+
         if all_ids:
-            return ", ".join([f"<@{i}>" for i in all_ids])
+            return ", ".join([resolve_tag(i) for i in all_ids])
 
         # 2. Fallback: split by whitespace, comma, or newline for usernames/handles
         items = [x.strip() for x in re.split(r'[\s,\n]+', text) if x.strip()]
@@ -3728,7 +3738,7 @@ async def set_custom_winners_cmd(interaction: discord.Interaction, giveaway_id: 
         for item in items:
             clean_id = re.sub(r'[^0-9]', '', item)
             if clean_id and 17 <= len(clean_id) <= 20:
-                tag = f"<@{clean_id}>"
+                tag = resolve_tag(clean_id)
                 if tag not in formatted: formatted.append(tag)
             elif item:
                 tag = item if item.startswith("@") or item.startswith("<@") else f"@{item.lstrip('@')}"
@@ -5606,8 +5616,18 @@ async def start_health_server():
                     if i not in all_ids:
                         all_ids.append(i)
 
+                def resolve_tag(uid):
+                    prof = user_profiles.get(str(uid), {})
+                    if prof and (prof.get("display_name") or prof.get("username")):
+                        return f"@{prof.get('display_name') or prof.get('username')}"
+                    for guild in bot.guilds:
+                        member = guild.get_member(int(uid))
+                        if member:
+                            return f"@{member.display_name}"
+                    return f"<@{uid}>"
+
                 if all_ids:
-                    return ", ".join([f"<@{i}>" for i in all_ids])
+                    return ", ".join([resolve_tag(i) for i in all_ids])
 
                 # 2. Fallback: split by whitespace, comma, or newline for usernames/handles
                 items = [x.strip() for x in re.split(r'[\s,\n]+', text) if x.strip()]
@@ -5615,7 +5635,7 @@ async def start_health_server():
                 for item in items:
                     clean_id = re.sub(r'[^0-9]', '', item)
                     if clean_id and 17 <= len(clean_id) <= 20:
-                        tag = f"<@{clean_id}>"
+                        tag = resolve_tag(clean_id)
                         if tag not in formatted: formatted.append(tag)
                     elif item:
                         tag = item if item.startswith("@") or item.startswith("<@") else f"@{item.lstrip('@')}"
