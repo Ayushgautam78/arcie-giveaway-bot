@@ -56,33 +56,48 @@ FIREBASE_URL = (
     "https://arcie-bot-default-rtdb.asia-southeast1.firebasedatabase.app"
 ).rstrip("/")
 
+def firebase_put_sync(path: str, data):
+    if not FIREBASE_URL: return
+    url = f"{FIREBASE_URL}/{path.lstrip('/')}.json"
+    try:
+        if data is None:
+            req = urllib.request.Request(url, method='DELETE')
+        else:
+            req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), method='PUT')
+            req.add_header('Content-Type', 'application/json')
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            print(f"[FIREBASE PUT SUCCESS] {path}: status {resp.status}")
+    except Exception as e:
+        print(f"[FIREBASE PUT ERROR] {path}: {e}")
+
 async def firebase_get(path: str) -> Optional[dict]:
     if not FIREBASE_URL:
         return None
     url = f"{FIREBASE_URL}/{path.lstrip('/')}.json"
-    global session
-    if session is None or session.closed:
-        session = aiohttp.ClientSession()
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-            if resp.status == 200:
-                return await resp.json()
-    except Exception as e:
-        print(f"[FIREBASE GET ERROR] {e}")
-    return None
+        loop = asyncio.get_running_loop()
+        def _do_get():
+            try:
+                req = urllib.request.Request(url, method='GET')
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    if resp.status == 200:
+                        content = resp.read().decode('utf-8')
+                        return json.loads(content)
+            except Exception as ge:
+                print(f"[FIREBASE GET ERROR] {path}: {ge}")
+            return None
+        return await loop.run_in_executor(None, _do_get)
+    except Exception:
+        return None
 
-async def firebase_put(path: str, data: dict):
+async def firebase_put(path: str, data):
     if not FIREBASE_URL:
         return
-    url = f"{FIREBASE_URL}/{path.lstrip('/')}.json"
-    global session
-    if session is None or session.closed:
-        session = aiohttp.ClientSession()
     try:
-        async with session.put(url, json=data, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-            pass
-    except Exception as e:
-        print(f"[FIREBASE PUT ERROR] {e}")
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, firebase_put_sync, path, data)
+    except Exception:
+        firebase_put_sync(path, data)
 
 # Load persistent user profiles (long-term memory across days/weeks)
 if os.path.exists(USER_PROFILES_FILE):
@@ -104,8 +119,10 @@ def save_user_profiles():
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 loop.create_task(firebase_put("user_profiles", user_profiles))
+            else:
+                firebase_put_sync("user_profiles", user_profiles)
         except Exception:
-            pass
+            firebase_put_sync("user_profiles", user_profiles)
 
 # Load persistent giveaways
 if os.path.exists(GIVEAWAYS_FILE):
@@ -127,8 +144,10 @@ def save_giveaways():
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 loop.create_task(firebase_put("giveaways", giveaways))
+            else:
+                firebase_put_sync("giveaways", giveaways)
         except Exception:
-            pass
+            firebase_put_sync("giveaways", giveaways)
 
 # Load persistent giveaway entries
 if os.path.exists(GIVEAWAY_ENTRIES_FILE):
@@ -150,8 +169,10 @@ def save_giveaway_entries():
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 loop.create_task(firebase_put("giveaway_entries", giveaway_entries))
+            else:
+                firebase_put_sync("giveaway_entries", giveaway_entries)
         except Exception:
-            pass
+            firebase_put_sync("giveaway_entries", giveaway_entries)
 
 def update_user_memory(user: Union[discord.Member, discord.User], message_text: str = ""):
     if not user or getattr(user, 'bot', False):
