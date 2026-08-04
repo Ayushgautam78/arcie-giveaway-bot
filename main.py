@@ -37,6 +37,7 @@ GIVEAWAY_ENTRIES_FILE = os.path.join(DATA_DIR, "giveaway_entries.json")
 
 USER_STATS_FILE = os.path.join(DATA_DIR, "user_stats.json")
 REACTION_ROLES_FILE = os.path.join(DATA_DIR, "reaction_roles.json")
+TICKETS_FILE = os.path.join(DATA_DIR, "tickets.json")
 
 channel_memories: Dict[str, list] = {}
 bot_admins: Set[str] = set()
@@ -47,6 +48,7 @@ user_profiles: Dict[str, dict] = {}
 giveaways: Dict[str, dict] = {}
 giveaway_entries: Dict[str, list] = {}
 active_sessions: Dict[str, dict] = {}
+tickets_data: Dict[str, dict] = {"config": {"log_channel_id": None, "support_role_id": None, "category_id": None, "counter": 1}, "active_tickets": {}}
 
 # -------- Firebase Database Configuration -------- #
 FIREBASE_URL = (
@@ -261,12 +263,260 @@ def save_reaction_roles():
         except Exception:
             pass
 
+# Load persistent tickets
+if os.path.exists(TICKETS_FILE):
     try:
-        loop = asyncio.get_event_loop()
-        if loop and loop.is_running():
-            loop.create_task(firebase_put("reaction_roles", reaction_roles))
-    except Exception:
-        pass
+        with open(TICKETS_FILE, "r", encoding="utf-8") as f:
+            disk_tickets = json.load(f)
+            if isinstance(disk_tickets, dict):
+                tickets_data.update(disk_tickets)
+        print(f"[TICKETS] Loaded tickets config & {len(tickets_data.get('active_tickets', {}))} active tickets.")
+    except Exception as e:
+        print(f"[TICKETS ERROR] Failed to load tickets: {e}")
+
+def save_tickets():
+    try:
+        with open(TICKETS_FILE, "w", encoding="utf-8") as f:
+            json.dump(tickets_data, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[TICKETS ERROR] Failed to save tickets: {e}")
+    if FIREBASE_URL and tickets_data:
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(firebase_put("tickets", tickets_data))
+            else:
+                firebase_put_sync("tickets", tickets_data)
+        except Exception:
+            firebase_put_sync("tickets", tickets_data)
+
+
+# -------- Discord Ticket System Persistent Views -------- #
+class TicketControlView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🔒 Close Ticket", style=discord.ButtonStyle.danger, custom_id="ticket_ctrl_close", emoji="🔒")
+    async def close_ticket_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._close_ticket(interaction)
+
+    @discord.ui.button(label="📌 Claim Ticket", style=discord.ButtonStyle.secondary, custom_id="ticket_ctrl_claim", emoji="📌")
+    async def claim_ticket_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(f"📌 Ticket claimed by {interaction.user.mention}!", ephemeral=False)
+
+    @discord.ui.button(label="📥 Save Transcript", style=discord.ButtonStyle.primary, custom_id="ticket_ctrl_transcript", emoji="📥")
+    async def transcript_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        transcript_file = await self._generate_transcript(interaction.channel)
+        if transcript_file:
+            await interaction.followup.send("📥 Here is the ticket transcript:", file=transcript_file, ephemeral=True)
+        else:
+            await interaction.followup.send("❌ Failed to generate transcript.", ephemeral=True)
+
+    async def _close_ticket(self, interaction: discord.Interaction):
+        ch_id = str(interaction.channel.id)
+        t_info = tickets_data.get("active_tickets", {}).get(ch_id, {})
+        
+        await interaction.response.send_message("🔒 Closing ticket in 5 seconds... Generating transcript...", ephemeral=False)
+
+        # Generate Transcript
+        transcript_file = await self._generate_transcript(interaction.channel)
+
+        # Log Transcript to Log Channel if configured
+        cfg = tickets_data.get("config", {})
+        log_ch_id = cfg.get("log_channel_id")
+        if log_ch_id:
+            log_ch = interaction.guild.get_channel(int(log_ch_id))
+            if not log_ch:
+                try: log_ch = await interaction.guild.fetch_channel(int(log_ch_id))
+                except Exception: log_ch = None
+
+            if log_ch:
+                opener_uid = t_info.get("user_id", "Unknown")
+                log_embed = discord.Embed(
+                    title=f"📜 Ticket Closed — {t_info.get('ticket_code', 'ticket')}",
+                    description=(
+                        f"• **Channel:** #{interaction.channel.name}\n"
+                        f"• **Opened By:** <@{opener_uid}>\n"
+                        f"• **Closed By:** {interaction.user.mention}\n"
+                        f"• **Category:** {t_info.get('category', 'General Support')}"
+                    ),
+                    color=discord.Color.red()
+                )
+                try:
+                    if transcript_file:
+                        await log_ch.send(embed=log_embed, file=transcript_file)
+                    else:
+                        await log_ch.send(embed=log_embed)
+                except Exception as le:
+                    print(f"[TICKET LOG FAIL] {le}")
+
+        # Update ticket status
+        if ch_id in tickets_data.get("active_tickets", {}):
+            tickets_data["active_tickets"][ch_id]["status"] = "closed"
+            tickets_data["active_tickets"][ch_id]["closed_at"] = int(time.time())
+            save_tickets()
+
+        await asyncio.sleep(5)
+        try:
+            await interaction.channel.delete(reason=f"Ticket closed by {interaction.user}")
+        except Exception as de:
+            print(f"[TICKET DELETE FAIL] {de}")
+
+    async def _generate_transcript(self, channel) -> Optional[discord.File]:
+        try:
+            messages = []
+            async for msg in channel.history(limit=500, oldest_first=True):
+                time_str = msg.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                content = msg.clean_content or "[No Text]"
+                if msg.attachments:
+                    att_urls = ", ".join([att.url for att in msg.attachments])
+                    content += f" (Attachments: {att_urls})"
+                messages.append(f"[{time_str}] {msg.author.name} ({msg.author.id}): {content}")
+
+            transcript_text = f"=== TICKET TRANSCRIPT — #{channel.name} ===\n" + "\n".join(messages)
+            fp = io.BytesIO(transcript_text.encode('utf-8'))
+            return discord.File(fp, filename=f"transcript-{channel.name}.txt")
+        except Exception as e:
+            print(f"[TRANSCRIPT GENERATION ERROR] {e}")
+            return None
+
+
+class TicketLaunchView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="📩 General Support", style=discord.ButtonStyle.primary, custom_id="ticket_launch_general", emoji="📩")
+    async def open_general_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._create_ticket(interaction, "General Support", "general")
+
+    @discord.ui.button(label="🏆 Claim Giveaway Prize", style=discord.ButtonStyle.success, custom_id="ticket_launch_giveaway", emoji="🏆")
+    async def open_giveaway_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._create_ticket(interaction, "Claim Giveaway Prize", "giveaway")
+
+    @discord.ui.button(label="🤝 Collab & Partnership", style=discord.ButtonStyle.secondary, custom_id="ticket_launch_collab", emoji="🤝")
+    async def open_collab_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._create_ticket(interaction, "Partnership & Collab", "collab")
+
+    @discord.ui.button(label="🐛 Report Issue / Bug", style=discord.ButtonStyle.danger, custom_id="ticket_launch_report", emoji="🐛")
+    async def open_report_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._create_ticket(interaction, "Report Issue", "report")
+
+    async def _create_ticket(self, interaction: discord.Interaction, category_title: str, category_key: str):
+        guild = interaction.guild
+        if not guild:
+            await interaction.response.send_message("❌ Tickets can only be created in a server.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        user_id = str(interaction.user.id)
+        active_tickets = tickets_data.setdefault("active_tickets", {})
+
+        # Check if user already has an open ticket in this server
+        for ch_id, t_info in active_tickets.items():
+            if isinstance(t_info, dict) and t_info.get("user_id") == user_id and t_info.get("status") == "open":
+                existing_ch = guild.get_channel(int(ch_id))
+                if existing_ch:
+                    await interaction.followup.send(f"⚠️ You already have an open ticket in {existing_ch.mention}!", ephemeral=True)
+                    return
+
+        # Increment ticket counter
+        cfg = tickets_data.setdefault("config", {"counter": 1})
+        counter = cfg.get("counter", 1)
+        cfg["counter"] = counter + 1
+        ticket_code = f"ticket-{counter:04d}"
+
+        # Resolve or create ticket category
+        category = None
+        cat_id = cfg.get("category_id")
+        if cat_id:
+            try: category = guild.get_channel(int(cat_id))
+            except Exception: category = None
+        if not category:
+            category = discord.utils.get(guild.categories, name="🎫 TICKETS") or discord.utils.get(guild.categories, name="TICKETS")
+            if not category:
+                try:
+                    category = await guild.create_category(name="🎫 TICKETS")
+                except Exception:
+                    category = None
+
+        # Build Channel Overwrites
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=False, view_channel=False),
+            interaction.user: discord.PermissionOverwrite(
+                read_messages=True,
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                attach_files=True,
+                embed_links=True
+            ),
+            guild.me: discord.PermissionOverwrite(
+                read_messages=True,
+                view_channel=True,
+                send_messages=True,
+                manage_channels=True,
+                manage_messages=True,
+                embed_links=True,
+                attach_files=True
+            )
+        }
+
+        # Add support role if configured
+        supp_role_id = cfg.get("support_role_id")
+        if supp_role_id:
+            role = guild.get_role(int(supp_role_id))
+            if role:
+                overwrites[role] = discord.PermissionOverwrite(read_messages=True, view_channel=True, send_messages=True)
+
+        clean_uname = re.sub(r'[^a-zA-Z0-9]', '', interaction.user.name).lower() or "user"
+        channel_name = f"{category_key}-{clean_uname}-{counter:03d}"
+
+        try:
+            ticket_channel = await guild.create_text_channel(
+                name=channel_name,
+                category=category,
+                overwrites=overwrites,
+                topic=f"Ticket {ticket_code} | Opener: {interaction.user} ({user_id}) | Category: {category_title}"
+            )
+        except Exception as e:
+            print(f"[TICKET CREATION FAIL] {e}")
+            await interaction.followup.send("❌ Failed to create ticket channel. Please check bot permissions.", ephemeral=True)
+            return
+
+        # Store ticket record
+        active_tickets[str(ticket_channel.id)] = {
+            "ticket_code": ticket_code,
+            "user_id": user_id,
+            "username": interaction.user.name,
+            "display_name": interaction.user.display_name,
+            "category": category_title,
+            "created_at": int(time.time()),
+            "status": "open"
+        }
+        save_tickets()
+
+        # Build Ticket Channel Welcome Embed
+        embed = discord.Embed(
+            title=f"🎫 Support Ticket — {category_title}",
+            description=(
+                f"Welcome {interaction.user.mention}!\n\n"
+                f"Our support team has been notified. Please describe your request or issue below in detail.\n\n"
+                f"• **Ticket Code:** `{ticket_code}`\n"
+                f"• **Category:** {category_title}\n"
+                f"• **Opened By:** {interaction.user.mention}"
+            ),
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text="Click the control buttons below to manage this ticket | Powered by Arcie Bot")
+        if interaction.guild.icon:
+            embed.set_thumbnail(url=interaction.guild.icon.url)
+
+        control_view = TicketControlView()
+        await ticket_channel.send(content=f"Welcome {interaction.user.mention}!", embed=embed, view=control_view)
+
+        await interaction.followup.send(f"✅ Ticket created successfully! Head over to {ticket_channel.mention}", ephemeral=True)
 
 # Load persistent memory
 if os.path.exists(MEMORY_FILE):
@@ -3629,6 +3879,91 @@ async def set_telegram_cmd(interaction: discord.Interaction, username: str):
     await interaction.response.send_message(f"✅ **Telegram Handle Updated!**\nUsername: **{clean_username}**", ephemeral=True)
 
 
+@bot.tree.command(name="setup-ticket-panel", description="Admin: Send an interactive Support Ticket Panel to a channel.")
+@app_commands.describe(
+    channel="Target channel to post the ticket panel",
+    title="Panel Title (default: 🎫 Support & Ticket Center)",
+    description="Panel Description text"
+)
+async def setup_ticket_panel_cmd(
+    interaction: discord.Interaction,
+    channel: Optional[discord.TextChannel] = None,
+    title: Optional[str] = None,
+    description: Optional[str] = None
+):
+    if not is_bot_admin_by_id(str(interaction.user.id)):
+        await interaction.response.send_message("❌ Admin permission required.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    target_ch = channel or interaction.channel
+
+    embed = discord.Embed(
+        title=title or "🎫 Support & Ticket Center",
+        description=description or (
+            "Welcome to the official support center!\n\n"
+            "Click any of the buttons below to open a private support ticket:\n\n"
+            "• 📩 **General Support**: Ask questions or get help\n"
+            "• 🏆 **Claim Giveaway Prize**: Submit wallet & details for giveaway wins\n"
+            "• 🤝 **Collab & Partnership**: Contact staff for collaborations\n"
+            "• 🐛 **Report Issue**: Report bugs or server issues"
+        ),
+        color=discord.Color.gold()
+    )
+    embed.set_footer(text="Click a category button below to create your ticket | Powered by Arcie Bot")
+    if interaction.guild.icon:
+        embed.set_thumbnail(url=interaction.guild.icon.url)
+
+    launch_view = TicketLaunchView()
+    try:
+        msg = await target_ch.send(embed=embed, view=launch_view)
+        bot.add_view(launch_view)
+        await interaction.followup.send(f"✅ Ticket Panel posted successfully in {target_ch.mention}!", ephemeral=True)
+    except Exception as e:
+        print(f"[SETUP TICKET PANEL FAIL] {e}")
+        await interaction.followup.send("❌ Failed to post ticket panel. Check bot permissions.", ephemeral=True)
+
+
+@bot.tree.command(name="close-ticket", description="Close the current ticket channel.")
+async def close_ticket_cmd(interaction: discord.Interaction):
+    ch_id = str(interaction.channel.id)
+    active_tickets = tickets_data.get("active_tickets", {})
+    if ch_id not in active_tickets and not any(k in interaction.channel.name for k in ["ticket-", "general-", "giveaway-", "collab-", "report-"]):
+        await interaction.response.send_message("❌ This command can only be used inside a ticket channel.", ephemeral=True)
+        return
+
+    ctrl_view = TicketControlView()
+    await ctrl_view._close_ticket(interaction)
+
+
+@bot.tree.command(name="set-ticket-log-channel", description="Admin: Set the channel where ticket closure transcripts are logged.")
+@app_commands.describe(channel="Channel to send ticket transcripts to")
+async def set_ticket_log_channel_cmd(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not is_bot_admin_by_id(str(interaction.user.id)):
+        await interaction.response.send_message("❌ Admin permission required.", ephemeral=True)
+        return
+
+    cfg = tickets_data.setdefault("config", {})
+    cfg["log_channel_id"] = str(channel.id)
+    save_tickets()
+
+    await interaction.response.send_message(f"✅ Ticket transcript logs will now be sent to {channel.mention}!", ephemeral=True)
+
+
+@bot.tree.command(name="add-user-to-ticket", description="Add a member to the current ticket channel.")
+@app_commands.describe(user="The member to add to this ticket channel")
+async def add_user_to_ticket_cmd(interaction: discord.Interaction, user: discord.Member):
+    if not any(k in interaction.channel.name for k in ["ticket-", "general-", "giveaway-", "collab-", "report-"]):
+        await interaction.response.send_message("❌ This command can only be used inside a ticket channel.", ephemeral=True)
+        return
+
+    try:
+        await interaction.channel.set_permissions(user, read_messages=True, view_channel=True, send_messages=True, read_message_history=True)
+        await interaction.response.send_message(f"✅ Added {user.mention} to this ticket channel!", ephemeral=False)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Failed to add user: {e}", ephemeral=True)
+
+
 @bot.tree.command(name="user", description="Displays complete Web3 profile & wallet details for a user.")
 @app_commands.describe(target="The user to view details for")
 async def user_details_cmd(interaction: discord.Interaction, target: Optional[discord.User] = None):
@@ -4728,6 +5063,14 @@ async def on_ready():
     if ga_restored:
         print(f"[GIVEAWAY RESTORE] Registered persistent views for {ga_restored} giveaway(s).")
 
+    # 3b. Register persistent ticket views across restarts
+    try:
+        bot.add_view(TicketLaunchView())
+        bot.add_view(TicketControlView())
+        print("[TICKETS RESTORE] Registered persistent TicketLaunchView and TicketControlView.")
+    except Exception as t_err:
+        print(f"[TICKETS RESTORE ERROR] {t_err}")
+
     # 4. Immediately sync channels & post any pending giveaways
     try:
         await sync_and_post_giveaways()
@@ -5745,6 +6088,59 @@ async def start_health_server():
 
         return web.json_response({"success": True, "giveaway": g, "winners_text": g["winners_text"]})
 
+    async def get_tickets_handler(request):
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin required"}, status=403)
+        return web.json_response(tickets_data)
+
+    async def post_ticket_panel_handler(request):
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin required"}, status=403)
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        ch_id = str(body.get("channel_id", "")).strip()
+        title = str(body.get("title", "")).strip()
+        description = str(body.get("description", "")).strip()
+
+        channel = None
+        if ch_id.isdigit():
+            channel = bot.get_channel(int(ch_id))
+            if not channel:
+                try: channel = await bot.fetch_channel(int(ch_id))
+                except Exception: channel = None
+
+        if not channel:
+            return web.json_response({"error": "Valid channel required"}, status=400)
+
+        embed = discord.Embed(
+            title=title or "🎫 Support & Ticket Center",
+            description=description or (
+                "Welcome to the official support center!\n\n"
+                "Click any of the buttons below to open a private support ticket:\n\n"
+                "• 📩 **General Support**: Ask questions or get help\n"
+                "• 🏆 **Claim Giveaway Prize**: Submit wallet & details for giveaway wins\n"
+                "• 🤝 **Collab & Partnership**: Contact staff for collaborations\n"
+                "• 🐛 **Report Issue**: Report bugs or server issues"
+            ),
+            color=discord.Color.gold()
+        )
+        embed.set_footer(text="Click a category button below to create your ticket | Powered by Arcie Bot")
+        if channel.guild.icon:
+            embed.set_thumbnail(url=channel.guild.icon.url)
+
+        launch_view = TicketLaunchView()
+        try:
+            msg = await channel.send(embed=embed, view=launch_view)
+            bot.add_view(launch_view)
+            return web.json_response({"success": True, "message_id": str(msg.id), "channel_id": str(channel.id)})
+        except Exception as e:
+            return web.json_response({"error": f"Failed to post panel: {e}"}, status=500)
+
     # Add routes
     app.router.add_get("/", serve_index)
     app.router.add_get("/static/{filename}", serve_static)
@@ -5757,6 +6153,8 @@ async def start_health_server():
     app.router.add_get("/api/guilds", guilds_handler)
     app.router.add_get("/api/guilds/roles", guilds_roles_handler)
     app.router.add_get("/api/members/search", search_members_handler)
+    app.router.add_get("/api/tickets", get_tickets_handler)
+    app.router.add_post("/api/tickets/setup-panel", post_ticket_panel_handler)
     app.router.add_get("/api/giveaways", get_giveaways_handler)
     app.router.add_get("/api/giveaways/{id}", get_giveaway_detail_handler)
     app.router.add_post("/api/giveaways", create_giveaway_handler)
