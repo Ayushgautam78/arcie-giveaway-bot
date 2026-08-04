@@ -291,6 +291,36 @@ def save_tickets():
             firebase_put_sync("tickets", tickets_data)
 
 
+def is_ticket_staff(member: discord.Member) -> bool:
+    """Check if a Discord member is a Moderator, Admin, or Ticket Staff."""
+    if not isinstance(member, discord.Member):
+        return False
+    uid = str(member.id)
+    # Check 1: Bot Admin ID
+    if is_bot_admin_by_id(uid):
+        return True
+    # Check 2: Guild Administrator / Manage Channels / Manage Messages / Kick / Ban
+    perms = member.guild_permissions
+    if perms.administrator or perms.manage_channels or perms.manage_messages or perms.kick_members or perms.ban_members:
+        return True
+    # Check 3: Configured Support Role ID
+    cfg = tickets_data.get("config", {})
+    supp_role_id = cfg.get("support_role_id")
+    if supp_role_id:
+        try:
+            role = member.guild.get_role(int(supp_role_id))
+            if role and role in member.roles:
+                return True
+        except Exception:
+            pass
+    # Check 4: Any role containing 'mod', 'admin', 'staff', 'support', 'team', or 'helper'
+    for r in member.roles:
+        r_name = r.name.lower()
+        if any(keyword in r_name for keyword in ["mod", "admin", "staff", "support", "team", "helper"]):
+            return True
+    return False
+
+
 # -------- Discord Ticket System Persistent Views -------- #
 class TicketControlView(discord.ui.View):
     def __init__(self):
@@ -302,6 +332,9 @@ class TicketControlView(discord.ui.View):
 
     @discord.ui.button(label="📌 Claim Ticket", style=discord.ButtonStyle.secondary, custom_id="ticket_ctrl_claim", emoji="📌")
     async def claim_ticket_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_ticket_staff(interaction.user):
+            await interaction.response.send_message("❌ Only Moderators and Staff can claim support tickets!", ephemeral=True)
+            return
         await interaction.response.send_message(f"📌 Ticket claimed by {interaction.user.mention}!", ephemeral=False)
 
     @discord.ui.button(label="📥 Save Transcript", style=discord.ButtonStyle.primary, custom_id="ticket_ctrl_transcript", emoji="📥")
@@ -314,10 +347,23 @@ class TicketControlView(discord.ui.View):
             await interaction.followup.send("❌ Failed to generate transcript.", ephemeral=True)
 
     async def _close_ticket(self, interaction: discord.Interaction):
+        # SECURITY CHECK: Only Moderators & Staff can close tickets!
+        if not is_ticket_staff(interaction.user):
+            deny_msg = "❌ Only Moderators and Staff can close support tickets! The ticket creator cannot close the ticket unless they are a moderator."
+            if interaction.response.is_done():
+                await interaction.followup.send(deny_msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(deny_msg, ephemeral=True)
+            return
+
         ch_id = str(interaction.channel.id)
         t_info = tickets_data.get("active_tickets", {}).get(ch_id, {})
         
-        await interaction.response.send_message("🔒 Closing ticket in 5 seconds... Generating transcript...", ephemeral=False)
+        close_msg = "🔒 Closing ticket in 5 seconds... Generating transcript..."
+        if interaction.response.is_done():
+            await interaction.followup.send(close_msg, ephemeral=False)
+        else:
+            await interaction.response.send_message(close_msg, ephemeral=False)
 
         # Generate Transcript
         transcript_file = await self._generate_transcript(interaction.channel)
