@@ -99,11 +99,26 @@ async def firebase_put(path: str, data):
     except Exception:
         firebase_put_sync(path, data)
 
+def merge_user_profiles(target: dict, source: dict):
+    """Deep non-destructive merge: never overwrite non-empty data with empty values."""
+    if not isinstance(source, dict): return
+    for uid, src_prof in source.items():
+        if not isinstance(src_prof, dict): continue
+        uid = str(uid)
+        if uid not in target or not isinstance(target[uid], dict):
+            target[uid] = src_prof.copy()
+        else:
+            tgt = target[uid]
+            for k, v in src_prof.items():
+                if v and (not isinstance(v, str) or v.strip()):
+                    tgt[k] = v
+
 # Load persistent user profiles (long-term memory across days/weeks)
 if os.path.exists(USER_PROFILES_FILE):
     try:
         with open(USER_PROFILES_FILE, "r", encoding="utf-8") as f:
-            user_profiles = json.load(f)
+            disk_profiles = json.load(f)
+            merge_user_profiles(user_profiles, disk_profiles)
         print(f"[PROFILES] Loaded persistent profiles for {len(user_profiles)} users.")
     except Exception as e:
         print(f"[PROFILES ERROR] Failed to load user profiles: {e}")
@@ -3823,6 +3838,51 @@ async def clear_winners_cmd(interaction: discord.Interaction, giveaway_id: str):
     )
 
 
+@bot.tree.command(name="recover-all-profiles", description="Admin: Scrape & restore all user EVM/Solana wallets & Twitter handles from past entries.")
+async def recover_all_profiles_cmd(interaction: discord.Interaction):
+    if not is_bot_admin_by_id(str(interaction.user.id)):
+        await interaction.response.send_message("❌ Admin permission required.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    recovered_count = 0
+    # Search all giveaway entries in memory
+    for g_id, entry_list in giveaway_entries.items():
+        if isinstance(entry_list, list):
+            for e in entry_list:
+                if isinstance(e, dict):
+                    uid = str(e.get("user_id", "")).strip()
+                    if uid:
+                        prof = user_profiles.setdefault(uid, {
+                            "display_name": e.get("display_name", uid),
+                            "username": e.get("username", uid),
+                            "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                        })
+                        if e.get("evm_wallet") and not prof.get("evm_wallet"):
+                            prof["evm_wallet"] = e["evm_wallet"]
+                            recovered_count += 1
+                        if e.get("solana_wallet") and not prof.get("solana_wallet"):
+                            prof["solana_wallet"] = e["solana_wallet"]
+                            recovered_count += 1
+                        if e.get("twitter") and not prof.get("twitter"):
+                            prof["twitter"] = e["twitter"]
+                            recovered_count += 1
+                        if e.get("telegram") and not prof.get("telegram"):
+                            prof["telegram"] = e["telegram"]
+                            recovered_count += 1
+
+    save_user_profiles()
+    if FIREBASE_URL:
+        await firebase_put("user_profiles", user_profiles)
+
+    await interaction.followup.send(
+        f"✅ **Global Profile Recovery Complete!**\n"
+        f"Restored **{recovered_count}** profile fields across **{len(user_profiles)}** registered users!",
+        ephemeral=True
+    )
+
+
 @bot.tree.command(name="edit-announcement", description="Admin: Silently edit a giveaway embed or announcement on Discord.")
 @app_commands.describe(
     giveaway_id="Giveaway ID, Discord Message ID, or Discord Message Link",
@@ -4594,12 +4654,14 @@ async def on_ready():
         try:
             fb_profiles = await firebase_get("user_profiles")
             if fb_profiles and isinstance(fb_profiles, dict):
-                user_profiles.update(fb_profiles)
-                print(f"[FIREBASE] Synced {len(fb_profiles)} user profiles from Cloud DB.")
+                merge_user_profiles(user_profiles, fb_profiles)
+                save_user_profiles()
+                print(f"[FIREBASE] Synced & merged {len(fb_profiles)} user profiles from Cloud DB.")
 
             fb_giveaways = await firebase_get("giveaways")
             if fb_giveaways and isinstance(fb_giveaways, dict):
                 giveaways.update(fb_giveaways)
+                save_giveaways()
                 print(f"[FIREBASE] Synced {len(fb_giveaways)} giveaways from Cloud DB.")
 
             fb_entries = await firebase_get("giveaway_entries")
@@ -4609,6 +4671,7 @@ async def on_ready():
                         giveaway_entries[g_id] = list(e_list.values())
                     elif isinstance(e_list, list):
                         giveaway_entries[g_id] = e_list
+                save_giveaway_entries()
                 print(f"[FIREBASE] Synced entries for {len(giveaway_entries)} giveaways from Cloud DB.")
 
             fb_rr = await firebase_get("reaction_roles")
