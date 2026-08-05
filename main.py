@@ -1931,98 +1931,6 @@ async def on_interaction(interaction: discord.Interaction):
                     pass
                 return
 
-        # ---- Join Giveaway buttons (join_giveaway_<id>) ----
-        elif custom_id and custom_id.startswith("join_giveaway_"):
-            try:
-                g_id = custom_id.replace("join_giveaway_", "").strip()
-                g = giveaways.get(g_id)
-                if not g:
-                    g = await firebase_get(f"giveaways/{g_id}")
-                    if g: giveaways[g_id] = g
-
-                if not g:
-                    if not interaction.response.is_done():
-                        await interaction.response.send_message("❌ Giveaway not found.", ephemeral=True)
-                    return
-
-                now = int(time.time())
-                if not g.get("is_active", True) or (g.get("ends_at", 0) and g.get("ends_at", 0) <= now):
-                    if not interaction.response.is_done():
-                        await interaction.response.send_message("🔒 This giveaway has already ended!", ephemeral=True)
-                    return
-
-                uid = str(interaction.user.id)
-                prof = user_profiles.get(uid, {})
-                tasks = g.get("tasks", {})
-                req_evm = tasks.get("require_evm", False)
-                req_solana = tasks.get("require_solana", False)
-
-                missing_evm = req_evm and not prof.get("evm_wallet")
-                missing_solana = req_solana and not prof.get("solana_wallet")
-
-                if missing_evm or missing_solana:
-                    modal = JoinGiveawayModal(g_id)
-                    if prof.get("twitter"): modal.twitter.default = prof.get("twitter")
-                    if prof.get("telegram"): modal.telegram.default = prof.get("telegram")
-                    if prof.get("evm_wallet"): modal.evm_wallet.default = prof.get("evm_wallet")
-                    if prof.get("solana_wallet"): modal.solana_wallet.default = prof.get("solana_wallet")
-                    if not interaction.response.is_done():
-                        await interaction.response.send_modal(modal)
-                    return
-
-                await register_giveaway_entry(interaction, g_id)
-                return
-            except Exception as e:
-                print(f"[JOIN GIVEAWAY INTERACTION ERROR] {e}")
-                try:
-                    if not interaction.response.is_done():
-                        await interaction.response.send_message(f"❌ Error joining giveaway: {e}", ephemeral=True)
-                    else:
-                        await interaction.followup.send(f"❌ Error joining giveaway: {e}", ephemeral=True)
-                except Exception:
-                    pass
-                return
-
-        # ---- View Entry buttons (view_entry_<id>) ----
-        elif custom_id and custom_id.startswith("view_entry_"):
-            try:
-                g_id = custom_id.replace("view_entry_", "").strip()
-                g = giveaways.get(g_id)
-                entries = giveaway_entries.get(g_id, [])
-                uid = str(interaction.user.id)
-
-                my_entry = next((e for e in entries if e.get("user_id") == uid), None)
-                if not my_entry:
-                    if not interaction.response.is_done():
-                        await interaction.response.send_message("❌ You have not entered this giveaway yet. Click **[Join Giveaway]** to enter!", ephemeral=True)
-                    return
-
-                title_name = g.get('title', 'Giveaway') if g else 'Giveaway'
-                embed = discord.Embed(title=f"📋 Your Entry Details for {title_name}", color=discord.Color.from_rgb(43, 92, 255))
-                embed.add_field(name="Joined At", value=f"<t:{my_entry['joined_at']}:f>", inline=True)
-                embed.add_field(name="Task Status", value=f"**{my_entry.get('task_status', 'pending').upper()}**", inline=True)
-                if my_entry.get("winner_type"):
-                    embed.add_field(name="🏆 Result", value=f"**{my_entry['winner_type'].upper()} WINNER!**", inline=False)
-                embed.add_field(name="EVM Wallet", value=f"`{my_entry.get('evm_wallet') or 'Not provided'}`", inline=False)
-                embed.add_field(name="Solana Wallet", value=f"`{my_entry.get('solana_wallet') or 'Not provided'}`", inline=False)
-                embed.add_field(name="Twitter", value=my_entry.get("twitter") or "Not provided", inline=True)
-                embed.add_field(name="Telegram", value=my_entry.get("telegram") or "Not provided", inline=True)
-                embed.set_footer(text="Powered by Arcie Bot")
-
-                if not interaction.response.is_done():
-                    await interaction.response.send_message(embed=embed, ephemeral=True)
-                return
-            except Exception as e:
-                print(f"[VIEW ENTRY INTERACTION ERROR] {e}")
-                try:
-                    if not interaction.response.is_done():
-                        await interaction.response.send_message(f"❌ Error viewing entry: {e}", ephemeral=True)
-                    else:
-                        await interaction.followup.send(f"❌ Error viewing entry: {e}", ephemeral=True)
-                except Exception:
-                    pass
-                return
-
     await bot.process_application_commands(interaction)
 
 @bot.event
@@ -3565,45 +3473,32 @@ class GiveawayView(discord.ui.View):
         view_btn.callback = self.view_entry_callback
         self.add_item(view_btn)
 
-        # Action & Social Task Link Buttons (Like & Retweet, Comment, Follow Twitter, Discord Server, Website, Telegram)
+        # Action & Social Task Link Buttons — ONLY show buttons for tasks that are actually configured
         g_obj = giveaways.get(giveaway_id)
         if g_obj:
             slinks = g_obj.get("social_links") or {}
             tasks = g_obj.get("tasks") or {}
 
-            # Primary Twitter Link fallback
-            tw_fallback = (
-                slinks.get("twitter_link") or 
-                tasks.get("twitter_follow") or 
-                tasks.get("twitter_retweet") or 
-                tasks.get("twitter_like") or 
-                tasks.get("twitter_comment") or 
-                "https://x.com"
-            ).strip()
-
-            # 1. Like & Retweet Button
+            # Like & Retweet Button — only if twitter_like or twitter_retweet task exists
             retweet_url = (
                 tasks.get("twitter_retweet") or 
                 tasks.get("twitter_like") or 
                 slinks.get("retweet_link") or 
-                slinks.get("tweet_link") or 
-                tw_fallback
+                slinks.get("tweet_link") or ""
             ).strip()
             if retweet_url and retweet_url.startswith(("http://", "https://")):
                 self.add_item(discord.ui.Button(label="Like & Retweet", style=discord.ButtonStyle.link, url=retweet_url, emoji="🔄", row=1))
 
-            # 2. Comment on Tweet Button
+            # Comment Button — only if twitter_comment task exists
             comment_url = (
                 tasks.get("twitter_comment") or 
-                slinks.get("comment_link") or 
-                slinks.get("tweet_comment_link") or 
-                tw_fallback
+                slinks.get("comment_link") or ""
             ).strip()
             if comment_url and comment_url.startswith(("http://", "https://")):
                 self.add_item(discord.ui.Button(label="Comment", style=discord.ButtonStyle.link, url=comment_url, emoji="💬", row=1))
 
-            # 3. Follow Twitter Button
-            follow_url = (tasks.get("twitter_follow") or slinks.get("twitter_link") or tw_fallback).strip()
+            # Follow Twitter Button — only if twitter_follow task exists
+            follow_url = (tasks.get("twitter_follow") or slinks.get("twitter_link") or "").strip()
             if follow_url and follow_url.startswith(("http://", "https://")):
                 self.add_item(discord.ui.Button(label="Follow Twitter", style=discord.ButtonStyle.link, url=follow_url, emoji="🐦", row=1))
 
