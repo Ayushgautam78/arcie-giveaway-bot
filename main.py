@@ -3565,33 +3565,45 @@ class GiveawayView(discord.ui.View):
         view_btn.callback = self.view_entry_callback
         self.add_item(view_btn)
 
-        # Action & Social Task Link Buttons (Like & Retweet, Follow, Discord Server, Website, Telegram)
+        # Action & Social Task Link Buttons (Like & Retweet, Comment, Follow Twitter, Discord Server, Website, Telegram)
         g_obj = giveaways.get(giveaway_id)
         if g_obj:
             slinks = g_obj.get("social_links") or {}
             tasks = g_obj.get("tasks") or {}
 
-            # Retweet / Like Link
+            # Primary Twitter Link fallback
+            tw_fallback = (
+                slinks.get("twitter_link") or 
+                tasks.get("twitter_follow") or 
+                tasks.get("twitter_retweet") or 
+                tasks.get("twitter_like") or 
+                tasks.get("twitter_comment") or 
+                "https://x.com"
+            ).strip()
+
+            # 1. Like & Retweet Button
             retweet_url = (
                 tasks.get("twitter_retweet") or 
                 tasks.get("twitter_like") or 
                 slinks.get("retweet_link") or 
-                slinks.get("tweet_link") or ""
+                slinks.get("tweet_link") or 
+                tw_fallback
             ).strip()
             if retweet_url and retweet_url.startswith(("http://", "https://")):
                 self.add_item(discord.ui.Button(label="Like & Retweet", style=discord.ButtonStyle.link, url=retweet_url, emoji="🔄", row=1))
 
-            # Comment on Tweet Link
+            # 2. Comment on Tweet Button
             comment_url = (
                 tasks.get("twitter_comment") or 
                 slinks.get("comment_link") or 
-                slinks.get("tweet_comment_link") or ""
+                slinks.get("tweet_comment_link") or 
+                tw_fallback
             ).strip()
             if comment_url and comment_url.startswith(("http://", "https://")):
-                self.add_item(discord.ui.Button(label="Comment on Tweet", style=discord.ButtonStyle.link, url=comment_url, emoji="💬", row=1))
+                self.add_item(discord.ui.Button(label="Comment", style=discord.ButtonStyle.link, url=comment_url, emoji="💬", row=1))
 
-            # Follow Twitter Link
-            follow_url = (tasks.get("twitter_follow") or slinks.get("twitter_link") or "").strip()
+            # 3. Follow Twitter Button
+            follow_url = (tasks.get("twitter_follow") or slinks.get("twitter_link") or tw_fallback).strip()
             if follow_url and follow_url.startswith(("http://", "https://")):
                 self.add_item(discord.ui.Button(label="Follow Twitter", style=discord.ButtonStyle.link, url=follow_url, emoji="🐦", row=1))
 
@@ -3796,7 +3808,6 @@ async def update_giveaway_discord_message(giveaway_id: str):
             if file_to_send:
                 kwargs["attachments"] = [file_to_send]
             await msg.edit(**kwargs)
-            bot.add_view(view, message_id=msg.id)
             print(f"[UPDATE EMBED SUCCESS] In-place edited Discord embed for '{g.get('title')}' in #{channel.name} (preserved sent timestamp)")
             return
         except Exception as edit_err:
@@ -5181,11 +5192,7 @@ async def on_ready():
         try:
             g_view = GiveawayView(g_id, web_url)
             msg_id_raw = str(g.get("message_id", ""))
-            msg_id_clean = re.sub(r'[^0-9]', '', msg_id_raw)
-            if msg_id_clean:
-                bot.add_view(g_view, message_id=int(msg_id_clean))
-            else:
-                bot.add_view(g_view)
+            bot.add_view(g_view)
             ga_restored += 1
         except Exception as g_err:
             print(f"[GIVEAWAY RESTORE ERROR] {g_id}: {g_err}")
