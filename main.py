@@ -3651,7 +3651,7 @@ class GiveawayView(discord.ui.View):
 
         my_entry = next((e for e in entries if e.get("user_id") == uid), None)
         if not my_entry:
-            await interaction.response.send_message("❌ You have not entered this giveaway yet. Click **[Join Giveaway]** to enter!", ephemeral=True)
+            await safe_respond(interaction, "❌ You have not entered this giveaway yet. Click **[Join Giveaway]** to enter!", ephemeral=True)
             return
 
         title_name = g.get('title', 'Giveaway') if g else 'Giveaway'
@@ -3666,15 +3666,28 @@ class GiveawayView(discord.ui.View):
         embed.add_field(name="Telegram", value=my_entry.get("telegram") or "Not provided", inline=True)
 
         embed.set_footer(text="Powered by Arcie Bot")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await safe_respond(interaction, embed=embed, ephemeral=True)
+
+
+async def safe_respond(interaction: discord.Interaction, content: str = None, embed: discord.Embed = None, ephemeral: bool = True):
+    """Safely respond to a Discord interaction preventing 40060 'Interaction already acknowledged' errors."""
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.send_message(content=content, embed=embed, ephemeral=ephemeral)
+        else:
+            await interaction.followup.send(content=content, embed=embed, ephemeral=ephemeral)
+    except Exception as e:
+        print(f"[SAFE RESPOND WARN] {e}")
+        try:
+            await interaction.followup.send(content=content, embed=embed, ephemeral=ephemeral)
+        except Exception:
+            pass
 
 
 async def register_giveaway_entry(interaction: discord.Interaction, giveaway_id: str):
     g = giveaways.get(giveaway_id)
     if not g:
-        msg = "❌ Giveaway not found."
-        if not interaction.response.is_done(): await interaction.response.send_message(msg, ephemeral=True)
-        else: await interaction.followup.send(msg, ephemeral=True)
+        await safe_respond(interaction, "❌ Giveaway not found.", ephemeral=True)
         return
 
     entries = giveaway_entries.setdefault(giveaway_id, [])
@@ -3682,9 +3695,7 @@ async def register_giveaway_entry(interaction: discord.Interaction, giveaway_id:
     
     existing = next((e for e in entries if e["user_id"] == uid), None)
     if existing:
-        msg = f"✅ You are already registered for **{g['title']}**!"
-        if not interaction.response.is_done(): await interaction.response.send_message(msg, ephemeral=True)
-        else: await interaction.followup.send(msg, ephemeral=True)
+        await safe_respond(interaction, f"✅ You are already registered for **{g['title']}**!", ephemeral=True)
         return
 
     prof = user_profiles.get(uid, {})
@@ -3705,11 +3716,11 @@ async def register_giveaway_entry(interaction: discord.Interaction, giveaway_id:
     save_giveaways()
     save_giveaway_entries()
 
-    await update_giveaway_discord_message(giveaway_id)
+    # Respond to interaction FIRST so user gets instant confirmation and 0 errors!
+    await safe_respond(interaction, f"🎉 **Success!** You have joined **{g['title']}**!", ephemeral=True)
 
-    msg = f"Success! You have joined **{g['title']}**!"
-    if not interaction.response.is_done(): await interaction.response.send_message(msg, ephemeral=True)
-    else: await interaction.followup.send(msg, ephemeral=True)
+    # Background task to refresh live Discord channel embed
+    asyncio.create_task(update_giveaway_discord_message(giveaway_id))
 
 
 async def resolve_giveaway_by_identifier(identifier: str) -> Optional[dict]:
