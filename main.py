@@ -3479,26 +3479,48 @@ class GiveawayView(discord.ui.View):
             slinks = g_obj.get("social_links") or {}
             tasks = g_obj.get("tasks") or {}
 
-            # Like & Retweet Button — only if twitter_like or twitter_retweet task exists
+            # Build a lookup from dynamic_tasks array: {type: value}
+            dyn_lookup = {}
+            dyn_tasks = tasks.get("dynamic_tasks")
+            if dyn_tasks and isinstance(dyn_tasks, list):
+                for t in dyn_tasks:
+                    ttype = t.get("type", "")
+                    tval = t.get("value", "").strip()
+                    if ttype and tval:
+                        dyn_lookup[ttype] = tval
+
+            # Helper: get task value from flat key OR dynamic_tasks lookup
+            def get_task(key):
+                return (tasks.get(key) or dyn_lookup.get(key) or "").strip()
+
+            # Like & Retweet Button
             retweet_url = (
-                tasks.get("twitter_retweet") or 
-                tasks.get("twitter_like") or 
-                slinks.get("retweet_link") or 
+                get_task("twitter_retweet") or
+                get_task("twitter_like") or
+                slinks.get("retweet_link") or
                 slinks.get("tweet_link") or ""
             ).strip()
             if retweet_url and retweet_url.startswith(("http://", "https://")):
                 self.add_item(discord.ui.Button(label="Like & Retweet", style=discord.ButtonStyle.link, url=retweet_url, emoji="🔄", row=1))
 
-            # Comment Button — only if twitter_comment task exists
+            # Comment Button
             comment_url = (
-                tasks.get("twitter_comment") or 
+                get_task("twitter_comment") or
                 slinks.get("comment_link") or ""
             ).strip()
             if comment_url and comment_url.startswith(("http://", "https://")):
                 self.add_item(discord.ui.Button(label="Comment", style=discord.ButtonStyle.link, url=comment_url, emoji="💬", row=1))
 
-            # Follow Twitter Button — only if twitter_follow task exists
-            follow_url = (tasks.get("twitter_follow") or slinks.get("twitter_link") or "").strip()
+            # Follow Twitter Button
+            follow_val = get_task("twitter_follow")
+            if follow_val:
+                if follow_val.startswith(("http://", "https://")):
+                    follow_url = follow_val
+                else:
+                    handle = follow_val.lstrip("@")
+                    follow_url = f"https://x.com/{handle}"
+            else:
+                follow_url = (slinks.get("twitter_link") or "").strip()
             if follow_url and follow_url.startswith(("http://", "https://")):
                 self.add_item(discord.ui.Button(label="Follow Twitter", style=discord.ButtonStyle.link, url=follow_url, emoji="🐦", row=1))
 
