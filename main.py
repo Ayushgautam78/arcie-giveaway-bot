@@ -3434,6 +3434,7 @@ class JoinGiveawayModal(discord.ui.Modal, title="Giveaway Profile & Wallet Setup
 
     async def on_submit(self, interaction: discord.Interaction):
         uid = str(interaction.user.id)
+        g = giveaways.get(self.giveaway_id)
         if uid not in user_profiles:
             user_profiles[uid] = {
                 "display_name": interaction.user.display_name,
@@ -3446,6 +3447,16 @@ class JoinGiveawayModal(discord.ui.Modal, title="Giveaway Profile & Wallet Setup
         if self.evm_wallet.value: user_profiles[uid]["evm_wallet"] = self.evm_wallet.value.strip()
         if self.solana_wallet.value: user_profiles[uid]["solana_wallet"] = self.solana_wallet.value.strip()
         save_user_profiles()
+
+        # Validate required wallets if configured on giveaway
+        if g:
+            tasks = g.get("tasks", {})
+            if tasks.get("require_evm") and not user_profiles[uid].get("evm_wallet"):
+                await safe_respond(interaction, "❌ **EVM Wallet Address is required** to join this giveaway! Please fill in your EVM wallet (0x...).", ephemeral=True)
+                return
+            if tasks.get("require_solana") and not user_profiles[uid].get("solana_wallet"):
+                await safe_respond(interaction, "❌ **Solana Wallet Address is required** to join this giveaway! Please fill in your Solana wallet.", ephemeral=True)
+                return
 
         await register_giveaway_entry(interaction, self.giveaway_id)
 
@@ -3623,6 +3634,25 @@ class GiveawayView(discord.ui.View):
                     ephemeral=True
                 )
                 return
+
+        # Profile & Wallet setup modal (if missing profile info or required wallets)
+        prof = user_profiles.get(uid, {})
+        tasks = g.get("tasks", {})
+        req_evm = tasks.get("require_evm", False)
+        req_solana = tasks.get("require_solana", False)
+
+        missing_evm = req_evm and not prof.get("evm_wallet")
+        missing_solana = req_solana and not prof.get("solana_wallet")
+        has_profile = bool(prof.get("evm_wallet") or prof.get("solana_wallet") or prof.get("twitter") or prof.get("telegram"))
+
+        if missing_evm or missing_solana or not has_profile:
+            modal = JoinGiveawayModal(g_id)
+            if prof.get("twitter"): modal.twitter.default = prof.get("twitter")
+            if prof.get("telegram"): modal.telegram.default = prof.get("telegram")
+            if prof.get("evm_wallet"): modal.evm_wallet.default = prof.get("evm_wallet")
+            if prof.get("solana_wallet"): modal.solana_wallet.default = prof.get("solana_wallet")
+            await interaction.response.send_modal(modal)
+            return
 
         await register_giveaway_entry(interaction, g_id)
 
