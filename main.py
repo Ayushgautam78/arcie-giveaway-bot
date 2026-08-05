@@ -4924,9 +4924,22 @@ async def announce_winners_in_discord(g_id: str, winner_summary_lines: list):
         return
 
     try:
+        title_text = g.get('title', 'Giveaway')
+        winner_block = "\n".join(winner_summary_lines)
+        mention_role = format_role_mention(g.get("mention_role"))
+
+        # Format winner user mentions OUTSIDE & ABOVE the embed as plain message content
+        content_parts = []
+        if mention_role:
+            content_parts.append(mention_role)
+        content_parts.append(f"🎉 **Raffle Winners Announced for {title_text}!**")
+        content_parts.append(winner_block)
+
+        content_text = "\n\n".join(content_parts)
+
         embed = discord.Embed(
-            title=f"🏆 Raffle Winners Announced — {g.get('title', 'Giveaway')}",
-            description="🎉 **Congratulations to all selected winners!**\n\n" + "\n".join(winner_summary_lines),
+            title=f"🏆 Winners Announced — {title_text}",
+            description=f"🎉 **Congratulations to all selected winners!**",
             color=discord.Color.gold()
         )
         banner_url = str(g.get("banner_url", "")).strip()
@@ -4945,90 +4958,87 @@ async def announce_winners_in_discord(g_id: str, winner_summary_lines: list):
                 embed.set_image(url=banner_url)
 
         embed.set_footer(text="Powered by Arcie Bot")
-        mention_text = format_role_mention(g.get("mention_role"))
 
         if file_to_send:
-            await channel.send(content=mention_text, embed=embed, file=file_to_send)
+            await channel.send(content=content_text, embed=embed, file=file_to_send)
         else:
-            await channel.send(content=mention_text, embed=embed)
-        print(f"[WINNERS ANNOUNCED] Posted winners announcement for '{g.get('title')}' in #{channel.name}")
+            await channel.send(content=content_text, embed=embed)
+        print(f"[WINNERS ANNOUNCED] Posted winners announcement for '{title_text}' in #{channel.name}")
     except Exception as e:
         print(f"[ANNOUNCE WINNERS ERROR] {e}")
 
 
 async def sync_and_post_giveaways():
     """Sync Discord channels to Firebase AND post embeds for active giveaways missing message_id."""
-    if not FIREBASE_URL:
-        return
-
     port = os.getenv("PORT", "3000")
     web_url = os.getenv("APP_URL", f"http://localhost:{port}")
 
-    # 1. Sync Guild Channels to Firebase
-    try:
-        channels_list = []
-        for guild in bot.guilds:
-            for ch in guild.text_channels:
-                if ch.permissions_for(guild.me).send_messages:
-                    channels_list.append({
-                        "id": str(ch.id),
-                        "name": ch.name,
-                        "guild_name": guild.name,
-                        "guild_id": str(guild.id)
-                    })
-        await firebase_put("channels", channels_list)
-        print(f"[FIREBASE] Synced {len(channels_list)} Discord channels to Cloud DB.")
-    except Exception as ce:
-        print(f"[CHANNEL SYNC ERROR] {ce}")
+    if FIREBASE_URL:
+        # 1. Sync Guild Channels to Firebase
+        try:
+            channels_list = []
+            for guild in bot.guilds:
+                for ch in guild.text_channels:
+                    if ch.permissions_for(guild.me).send_messages:
+                        channels_list.append({
+                            "id": str(ch.id),
+                            "name": ch.name,
+                            "guild_name": guild.name,
+                            "guild_id": str(guild.id)
+                        })
+            await firebase_put("channels", channels_list)
+            print(f"[FIREBASE] Synced {len(channels_list)} Discord channels to Cloud DB.")
+        except Exception as ce:
+            print(f"[CHANNEL SYNC ERROR] {ce}")
 
-    # 1b. Sync Guild Roles to Firebase
-    try:
-        roles_list = []
-        for guild in bot.guilds:
-            for role in guild.roles:
-                if role.name == "@everyone":
-                    # include @everyone so admin can select it for pings
+        # 1b. Sync Guild Roles to Firebase
+        try:
+            roles_list = []
+            for guild in bot.guilds:
+                for role in guild.roles:
+                    if role.name == "@everyone":
+                        # include @everyone so admin can select it for pings
+                        roles_list.append({
+                            "id": "@everyone",
+                            "name": "@everyone",
+                            "guild_name": guild.name,
+                            "guild_id": str(guild.id),
+                            "mention": "@everyone"
+                        })
+                        continue
                     roles_list.append({
-                        "id": "@everyone",
-                        "name": "@everyone",
+                        "id": str(role.id),
+                        "name": role.name,
                         "guild_name": guild.name,
                         "guild_id": str(guild.id),
-                        "mention": "@everyone"
+                        "mention": f"<@&{role.id}>"
                     })
-                    continue
-                roles_list.append({
-                    "id": str(role.id),
-                    "name": role.name,
-                    "guild_name": guild.name,
-                    "guild_id": str(guild.id),
-                    "mention": f"<@&{role.id}>"
-                })
-        await firebase_put("roles", roles_list)
-        print(f"[FIREBASE] Synced {len(roles_list)} Discord roles to Cloud DB.")
-    except Exception as re:
-        print(f"[ROLE SYNC ERROR] {re}")
+            await firebase_put("roles", roles_list)
+            print(f"[FIREBASE] Synced {len(roles_list)} Discord roles to Cloud DB.")
+        except Exception as re:
+            print(f"[ROLE SYNC ERROR] {re}")
 
-    # 2. Sync Giveaways from Firebase & Post Missing Embeds
-    try:
-        fb_giveaways = await firebase_get("giveaways")
-        if fb_giveaways and isinstance(fb_giveaways, dict):
-            for g_id, g_data in fb_giveaways.items():
-                if not isinstance(g_data, dict):
-                    continue
-                giveaways[g_id] = g_data
-                
-                # Check if active giveaway needs Discord announcement embed posted or restored
-                if g_data.get("is_active") and not g_data.get("message_id"):
-                    await update_giveaway_discord_message(g_id)
+        # 2. Sync Giveaways from Firebase & Post Missing Embeds
+        try:
+            fb_giveaways = await firebase_get("giveaways")
+            if fb_giveaways and isinstance(fb_giveaways, dict):
+                for g_id, g_data in fb_giveaways.items():
+                    if not isinstance(g_data, dict):
+                        continue
+                    giveaways[g_id] = g_data
+                    
+                    # Check if active giveaway needs Discord announcement embed posted or restored
+                    if g_data.get("is_active") and not g_data.get("message_id"):
+                        await update_giveaway_discord_message(g_id)
 
-                # 3. Check for expired giveaways and AUTOMATICALLY draw winners & post Winners Announcement Embed
-                now = int(time.time())
-                ends_at = int(g_data.get("ends_at", 0))
-                if g_data.get("is_active") and ends_at > 0 and now >= ends_at:
-                    print(f"[AUTO-DRAW] Giveaway '{g_data.get('title')}' ({g_id}) expired. Drawing winners automatically...")
-                    await auto_draw_giveaway_winners(g_id)
-    except Exception as ge:
-        print(f"[GIVEAWAY SYNC ERROR] {ge}")
+                    # 3. Check for expired giveaways and AUTOMATICALLY draw winners & post Winners Announcement Embed
+                    now = int(time.time())
+                    ends_at = int(g_data.get("ends_at", 0))
+                    if g_data.get("is_active") and ends_at > 0 and now >= ends_at:
+                        print(f"[AUTO-DRAW] Giveaway '{g_data.get('title')}' ({g_id}) expired. Drawing winners automatically...")
+                        await auto_draw_giveaway_winners(g_id)
+        except Exception as ge:
+            print(f"[GIVEAWAY SYNC ERROR] {ge}")
 
     # 4. LOCAL expiry check — catch ALL expired giveaways in memory (even if Firebase fetch failed)
     now = int(time.time())
