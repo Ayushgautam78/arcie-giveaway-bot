@@ -3581,6 +3581,15 @@ class GiveawayView(discord.ui.View):
             if retweet_url and retweet_url.startswith(("http://", "https://")):
                 self.add_item(discord.ui.Button(label="Like & Retweet", style=discord.ButtonStyle.link, url=retweet_url, emoji="🔄", row=1))
 
+            # Comment on Tweet Link
+            comment_url = (
+                tasks.get("twitter_comment") or 
+                slinks.get("comment_link") or 
+                slinks.get("tweet_comment_link") or ""
+            ).strip()
+            if comment_url and comment_url.startswith(("http://", "https://")):
+                self.add_item(discord.ui.Button(label="Comment on Tweet", style=discord.ButtonStyle.link, url=comment_url, emoji="💬", row=1))
+
             # Follow Twitter Link
             follow_url = (tasks.get("twitter_follow") or slinks.get("twitter_link") or "").strip()
             if follow_url and follow_url.startswith(("http://", "https://")):
@@ -4662,6 +4671,12 @@ def format_task_link(ttype: str, val: str) -> str:
         else:
             return f"• Retweet Tweet: {clean}"
 
+    elif ttype == "twitter_comment":
+        if is_url:
+            return f"• Comment on [this tweet]({clean})"
+        else:
+            return f"• Comment on Tweet: {clean}"
+
     elif ttype == "tiktok_follow":
         if is_url:
             return f"• Follow [TikTok]({clean})"
@@ -4771,6 +4786,9 @@ def build_giveaway_embed(g_data: dict):
             if tasks.get("twitter_retweet"):
                 link_str = format_task_link("twitter_retweet", tasks['twitter_retweet']).replace("• ", "").strip()
                 task_lines.append(f"🔹 **Retweet:** {link_str}")
+            if tasks.get("twitter_comment"):
+                link_str = format_task_link("twitter_comment", tasks['twitter_comment']).replace("• ", "").strip()
+                task_lines.append(f"💬 **Comment on Tweet:** {link_str}")
             if tasks.get("tiktok_follow"):
                 link_str = format_task_link("tiktok_follow", tasks['tiktok_follow']).replace("• ", "").strip()
                 task_lines.append(f"🔹 **Follow TikTok:** {link_str}")
@@ -5634,6 +5652,14 @@ async def start_health_server():
                 "website_link": str(body.get("website_link", "")).strip()
             }
 
+        tasks = body.get("tasks", {})
+        if not isinstance(tasks, dict):
+            tasks = {}
+        if body.get("twitter_comment") and not tasks.get("twitter_comment"):
+            tasks["twitter_comment"] = str(body.get("twitter_comment")).strip()
+        if body.get("comment_link") and not tasks.get("twitter_comment"):
+            tasks["twitter_comment"] = str(body.get("comment_link")).strip()
+
         g_data = {
             "id": g_id,
             "title": body.get("title", "NFT Giveaway"),
@@ -5652,7 +5678,7 @@ async def start_health_server():
             "ends_at": ends_at,
             "hosted_by": user.get("username", "Admin"),
             "network": body.get("network", "Ethereum"),
-            "tasks": body.get("tasks", {}),
+            "tasks": tasks,
             "social_links": social_links,
             "is_active": True,
             "entries_count": 0,

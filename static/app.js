@@ -437,6 +437,9 @@ function addDynamicTask(type, defaultVal = '') {
   } else if (type === 'twitter_retweet') {
     typeBadge = '🔄 Retweet';
     placeholder = 'Tweet Link / URL';
+  } else if (type === 'twitter_comment') {
+    typeBadge = '💬 Comment';
+    placeholder = 'Tweet Link / URL to Comment';
   } else if (type === 'tiktok_follow') {
     typeBadge = '🎵 TikTok';
     placeholder = 'TikTok Handle / Link';
@@ -676,6 +679,7 @@ function addEditDynamicTask(type, defaultVal = '') {
   if (type === 'twitter_follow') typeBadge = '🐦 Follow';
   else if (type === 'twitter_like') typeBadge = '❤️ Like';
   else if (type === 'twitter_retweet') typeBadge = '🔄 Retweet';
+  else if (type === 'twitter_comment') typeBadge = '💬 Comment';
   else if (type === 'tiktok_follow') typeBadge = '🎵 TikTok';
   else if (type === 'youtube_follow') typeBadge = '▶️ YouTube';
   else if (type === 'role_require') typeBadge = '🏅 Role';
@@ -761,6 +765,7 @@ function openEditModal(giveawayId) {
     if (g.tasks.twitter_follow) addEditDynamicTask('twitter_follow', g.tasks.twitter_follow);
     if (g.tasks.twitter_like) addEditDynamicTask('twitter_like', g.tasks.twitter_like);
     if (g.tasks.twitter_retweet) addEditDynamicTask('twitter_retweet', g.tasks.twitter_retweet);
+    if (g.tasks.twitter_comment) addEditDynamicTask('twitter_comment', g.tasks.twitter_comment);
     if (g.tasks.tiktok_follow) addEditDynamicTask('tiktok_follow', g.tasks.tiktok_follow);
     if (g.tasks.youtube_follow) addEditDynamicTask('youtube_follow', g.tasks.youtube_follow);
     if (g.tasks.manual_task) addEditDynamicTask('manual_task', g.tasks.manual_task);
