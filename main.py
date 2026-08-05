@@ -191,6 +191,9 @@ def save_giveaway_entries():
         except Exception:
             firebase_put_sync("giveaway_entries", giveaway_entries)
 
+# Track task button clicks per user per giveaway: {g_id: {user_id: set(task_types_completed)}}
+giveaway_task_progress = {}
+
 def update_user_memory(user: Union[discord.Member, discord.User], message_text: str = ""):
     if not user or getattr(user, 'bot', False):
         return
@@ -3447,12 +3450,79 @@ class JoinGiveawayModal(discord.ui.Modal, title="Giveaway Profile & Wallet Setup
         await register_giveaway_entry(interaction, self.giveaway_id)
 
 
+def get_giveaway_task_lookup(g_data: dict) -> dict:
+    """Build a flat {task_type: url/value} lookup from both flat keys and dynamic_tasks array."""
+    tasks = g_data.get("tasks") or {}
+    slinks = g_data.get("social_links") or {}
+    lookup = {}
+    # From dynamic_tasks array
+    dyn = tasks.get("dynamic_tasks")
+    if dyn and isinstance(dyn, list):
+        for t in dyn:
+            tt = t.get("type", "")
+            tv = t.get("value", "").strip()
+            if tt and tv:
+                lookup[tt] = tv
+    # Flat keys override
+    for k in ["twitter_follow", "twitter_like", "twitter_retweet", "twitter_comment", "tiktok_follow", "youtube_follow"]:
+        if tasks.get(k):
+            lookup[k] = str(tasks[k]).strip()
+    return lookup
+
+def get_required_task_list(g_data: dict) -> list:
+    """Return list of (task_type, label, url) for all required tasks in a giveaway."""
+    lookup = get_giveaway_task_lookup(g_data)
+    slinks = g_data.get("social_links") or {}
+    required = []
+
+    # Like & Retweet (combines twitter_like + twitter_retweet into one button)
+    rt_url = (lookup.get("twitter_retweet") or lookup.get("twitter_like") or
+              slinks.get("retweet_link") or slinks.get("tweet_link") or "").strip()
+    if rt_url:
+        if not rt_url.startswith(("http://", "https://")):
+            rt_url = ""
+    if "twitter_retweet" in lookup or "twitter_like" in lookup:
+        required.append(("like_retweet", "🔄 Like & Retweet", rt_url))
+
+    # Comment
+    cm_url = (lookup.get("twitter_comment") or slinks.get("comment_link") or "").strip()
+    if cm_url and not cm_url.startswith(("http://", "https://")):
+        cm_url = ""
+    if "twitter_comment" in lookup:
+        required.append(("comment", "💬 Comment on Tweet", cm_url))
+
+    # Follow Twitter
+    fw_val = lookup.get("twitter_follow", "")
+    if fw_val:
+        if fw_val.startswith(("http://", "https://")):
+            fw_url = fw_val
+        else:
+            fw_url = f"https://x.com/{fw_val.lstrip('@')}"
+        required.append(("follow_twitter", "🐦 Follow Twitter", fw_url))
+    elif slinks.get("twitter_link"):
+        required.append(("follow_twitter", "🐦 Follow Twitter", slinks["twitter_link"].strip()))
+
+    # TikTok
+    if "tiktok_follow" in lookup:
+        tk_val = lookup["tiktok_follow"]
+        tk_url = tk_val if tk_val.startswith(("http://","https://")) else f"https://www.tiktok.com/@{tk_val.lstrip('@')}"
+        required.append(("follow_tiktok", "🎵 Follow TikTok", tk_url))
+
+    # YouTube
+    if "youtube_follow" in lookup:
+        yt_val = lookup["youtube_follow"]
+        yt_url = yt_val if yt_val.startswith(("http://","https://")) else ""
+        required.append(("follow_youtube", "▶️ Subscribe YouTube", yt_url))
+
+    return required
+
+
 class GiveawayView(discord.ui.View):
     def __init__(self, giveaway_id: str, web_url: str = ""):
         super().__init__(timeout=None)
         self.giveaway_id = giveaway_id
 
-        # Unique Custom IDs per giveaway for persistent interaction routing across restarts
+        # Row 0: Join + View Entry
         join_btn = discord.ui.Button(
             label="Join Giveaway",
             style=discord.ButtonStyle.primary,
@@ -3473,71 +3543,50 @@ class GiveawayView(discord.ui.View):
         view_btn.callback = self.view_entry_callback
         self.add_item(view_btn)
 
-        # Action & Social Task Link Buttons — ONLY show buttons for tasks that are actually configured
+        # Row 1: Task buttons — interactive (track clicks) + show link
         g_obj = giveaways.get(giveaway_id)
         if g_obj:
+            required_tasks = get_required_task_list(g_obj)
+            for task_type, label, url in required_tasks:
+                btn = discord.ui.Button(
+                    label=label.split(" ", 1)[1] if " " in label else label,
+                    style=discord.ButtonStyle.secondary,
+                    custom_id=f"gtask_{task_type}_{giveaway_id}",
+                    emoji=label.split(" ")[0] if label else "📌",
+                    row=1
+                )
+                btn.callback = self._make_task_callback(task_type, url, label)
+                self.add_item(btn)
+
+            # Row 2: Social links (non-task, just helpful links)
             slinks = g_obj.get("social_links") or {}
-            tasks = g_obj.get("tasks") or {}
-
-            # Build a lookup from dynamic_tasks array: {type: value}
-            dyn_lookup = {}
-            dyn_tasks = tasks.get("dynamic_tasks")
-            if dyn_tasks and isinstance(dyn_tasks, list):
-                for t in dyn_tasks:
-                    ttype = t.get("type", "")
-                    tval = t.get("value", "").strip()
-                    if ttype and tval:
-                        dyn_lookup[ttype] = tval
-
-            # Helper: get task value from flat key OR dynamic_tasks lookup
-            def get_task(key):
-                return (tasks.get(key) or dyn_lookup.get(key) or "").strip()
-
-            # Like & Retweet Button
-            retweet_url = (
-                get_task("twitter_retweet") or
-                get_task("twitter_like") or
-                slinks.get("retweet_link") or
-                slinks.get("tweet_link") or ""
-            ).strip()
-            if retweet_url and retweet_url.startswith(("http://", "https://")):
-                self.add_item(discord.ui.Button(label="Like & Retweet", style=discord.ButtonStyle.link, url=retweet_url, emoji="🔄", row=1))
-
-            # Comment Button
-            comment_url = (
-                get_task("twitter_comment") or
-                slinks.get("comment_link") or ""
-            ).strip()
-            if comment_url and comment_url.startswith(("http://", "https://")):
-                self.add_item(discord.ui.Button(label="Comment", style=discord.ButtonStyle.link, url=comment_url, emoji="💬", row=1))
-
-            # Follow Twitter Button
-            follow_val = get_task("twitter_follow")
-            if follow_val:
-                if follow_val.startswith(("http://", "https://")):
-                    follow_url = follow_val
-                else:
-                    handle = follow_val.lstrip("@")
-                    follow_url = f"https://x.com/{handle}"
-            else:
-                follow_url = (slinks.get("twitter_link") or "").strip()
-            if follow_url and follow_url.startswith(("http://", "https://")):
-                self.add_item(discord.ui.Button(label="Follow Twitter", style=discord.ButtonStyle.link, url=follow_url, emoji="🐦", row=1))
-
-            # Discord Link
             discord_url = (slinks.get("discord_link") or "").strip()
             if discord_url and discord_url.startswith(("http://", "https://")):
-                self.add_item(discord.ui.Button(label="Join Discord", style=discord.ButtonStyle.link, url=discord_url, emoji="💬", row=1))
-
-            # Telegram Link
+                self.add_item(discord.ui.Button(label="Join Discord", style=discord.ButtonStyle.link, url=discord_url, emoji="💬", row=2))
             telegram_url = (slinks.get("telegram_link") or "").strip()
             if telegram_url and telegram_url.startswith(("http://", "https://")):
-                self.add_item(discord.ui.Button(label="Telegram", style=discord.ButtonStyle.link, url=telegram_url, emoji="✈️", row=1))
-
-            # Website Link
+                self.add_item(discord.ui.Button(label="Telegram", style=discord.ButtonStyle.link, url=telegram_url, emoji="✈️", row=2))
             website_url = (slinks.get("website_link") or "").strip()
             if website_url and website_url.startswith(("http://", "https://")):
-                self.add_item(discord.ui.Button(label="Website", style=discord.ButtonStyle.link, url=website_url, emoji="🌐", row=1))
+                self.add_item(discord.ui.Button(label="Website", style=discord.ButtonStyle.link, url=website_url, emoji="🌐", row=2))
+
+    def _make_task_callback(self, task_type: str, url: str, label: str):
+        giveaway_id = self.giveaway_id
+        async def task_callback(interaction: discord.Interaction):
+            uid = str(interaction.user.id)
+            # Record this task as done
+            if giveaway_id not in giveaway_task_progress:
+                giveaway_task_progress[giveaway_id] = {}
+            if uid not in giveaway_task_progress[giveaway_id]:
+                giveaway_task_progress[giveaway_id][uid] = set()
+            giveaway_task_progress[giveaway_id][uid].add(task_type)
+
+            # Show the link to the user
+            if url:
+                await safe_respond(interaction, f"✅ **{label}** — marked as done!\n\n👉 **Complete the task here:** {url}", ephemeral=True)
+            else:
+                await safe_respond(interaction, f"✅ **{label}** — marked as done!", ephemeral=True)
+        return task_callback
 
     async def join_giveaway_callback(self, interaction: discord.Interaction):
         g_id = self.giveaway_id
@@ -3550,6 +3599,30 @@ class GiveawayView(discord.ui.View):
         if not g.get("is_active", True) or g.get("ends_at", 0) <= now:
             await safe_respond(interaction, "🔒 This giveaway has already ended!", ephemeral=True)
             return
+
+        # Check task completion
+        uid = str(interaction.user.id)
+        required_tasks = get_required_task_list(g)
+        if required_tasks:
+            completed = giveaway_task_progress.get(g_id, {}).get(uid, set())
+            remaining = [(label, url) for task_type, label, url in required_tasks if task_type not in completed]
+
+            if remaining:
+                lines = []
+                for label, url in remaining:
+                    if url:
+                        lines.append(f"  ❌ **{label}** — [Click here]({url})")
+                    else:
+                        lines.append(f"  ❌ **{label}**")
+                remaining_text = "\n".join(lines)
+                await safe_respond(
+                    interaction,
+                    f"⚠️ **Please complete all tasks before joining!**\n\n"
+                    f"**Remaining tasks ({len(remaining)}):**\n{remaining_text}\n\n"
+                    f"👉 Click the task buttons below to complete them first, then click **Join Giveaway** again.",
+                    ephemeral=True
+                )
+                return
 
         await register_giveaway_entry(interaction, g_id)
 
