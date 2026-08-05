@@ -3614,31 +3614,12 @@ class GiveawayView(discord.ui.View):
         g_id = self.giveaway_id
         g = giveaways.get(g_id)
         if not g:
-            await interaction.response.send_message("❌ Giveaway not found or has been removed.", ephemeral=True)
+            await safe_respond(interaction, "❌ Giveaway not found or has been removed.", ephemeral=True)
             return
 
         now = int(time.time())
         if not g.get("is_active", True) or g.get("ends_at", 0) <= now:
-            await interaction.response.send_message("🔒 This giveaway has already ended!", ephemeral=True)
-            return
-
-        uid = str(interaction.user.id)
-        prof = user_profiles.get(uid, {})
-        tasks = g.get("tasks", {})
-
-        req_evm = tasks.get("require_evm", False)
-        req_solana = tasks.get("require_solana", False)
-
-        missing_evm = req_evm and not prof.get("evm_wallet")
-        missing_solana = req_solana and not prof.get("solana_wallet")
-
-        if missing_evm or missing_solana:
-            modal = JoinGiveawayModal(g_id)
-            if prof.get("twitter"): modal.twitter.default = prof.get("twitter")
-            if prof.get("telegram"): modal.telegram.default = prof.get("telegram")
-            if prof.get("evm_wallet"): modal.evm_wallet.default = prof.get("evm_wallet")
-            if prof.get("solana_wallet"): modal.solana_wallet.default = prof.get("solana_wallet")
-            await interaction.response.send_modal(modal)
+            await safe_respond(interaction, "🔒 This giveaway has already ended!", ephemeral=True)
             return
 
         await register_giveaway_entry(interaction, g_id)
@@ -4833,8 +4814,9 @@ def build_giveaway_embed(g_data: dict):
     else:
         guaranteed = g_data.get("guaranteed_spots", 0)
         fcfs = g_data.get("fcfs_spots", 0)
-        if guaranteed or fcfs:
-            embed.add_field(name="Spot Tiers", value=f"Guaranteed: {guaranteed} | FCFS: {fcfs}", inline=False)
+    g_id = g_data.get("id", "")
+    entries_count = int(g_data.get("entries_count", 0)) or len(giveaway_entries.get(g_id, [])) if g_id else 0
+    embed.add_field(name="Total Entries", value=f"**{entries_count}** Users Joined", inline=True)
 
     embed.set_footer(text="Click [Join Giveaway] below to participate | Powered by Arcie Bot")
 
