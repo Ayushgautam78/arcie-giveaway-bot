@@ -3549,6 +3549,7 @@ class GiveawayView(discord.ui.View):
             label="Join Giveaway",
             style=discord.ButtonStyle.primary,
             custom_id=f"join_giveaway_{giveaway_id}",
+            emoji="🎉",
             row=0
         )
         join_btn.callback = self.join_giveaway_callback
@@ -3558,33 +3559,47 @@ class GiveawayView(discord.ui.View):
             label="View Your Entry",
             style=discord.ButtonStyle.secondary,
             custom_id=f"view_entry_{giveaway_id}",
+            emoji="👁️",
             row=0
         )
         view_btn.callback = self.view_entry_callback
         self.add_item(view_btn)
 
-        # Counter buttons matching screenshot design: 🟢 valid, 🟡 pending, 🔴 ineligible
-        g_entries = giveaway_entries.get(giveaway_id, [])
-        valid_count = len([e for e in g_entries if e.get("task_status") == "verified"])
-        pending_count = len([e for e in g_entries if e.get("task_status") == "pending"])
-        ineligible_count = len([e for e in g_entries if e.get("task_status") == "ineligible"])
-
-        self.add_item(discord.ui.Button(label=f"🟢 {valid_count}", style=discord.ButtonStyle.secondary, disabled=True, custom_id=f"cnt_v_{giveaway_id}", row=1))
-        self.add_item(discord.ui.Button(label=f"🟡 {pending_count}", style=discord.ButtonStyle.secondary, disabled=True, custom_id=f"cnt_p_{giveaway_id}", row=1))
-        self.add_item(discord.ui.Button(label=f"🔴 {ineligible_count}", style=discord.ButtonStyle.secondary, disabled=True, custom_id=f"cnt_i_{giveaway_id}", row=1))
-
-        # Official Social Link Buttons
+        # Action & Social Task Link Buttons (Like & Retweet, Follow, Discord Server, Website, Telegram)
         g_obj = giveaways.get(giveaway_id)
-        if g_obj and g_obj.get("social_links") and isinstance(g_obj["social_links"], dict):
-            slinks = g_obj["social_links"]
-            if slinks.get("twitter_link") and slinks["twitter_link"].startswith(("http://", "https://")):
-                self.add_item(discord.ui.Button(label="Twitter / X", style=discord.ButtonStyle.link, url=slinks["twitter_link"].strip(), row=2))
-            if slinks.get("discord_link") and slinks["discord_link"].startswith(("http://", "https://")):
-                self.add_item(discord.ui.Button(label="Discord Server", style=discord.ButtonStyle.link, url=slinks["discord_link"].strip(), row=2))
-            if slinks.get("telegram_link") and slinks["telegram_link"].startswith(("http://", "https://")):
-                self.add_item(discord.ui.Button(label="Telegram", style=discord.ButtonStyle.link, url=slinks["telegram_link"].strip(), row=2))
-            if slinks.get("website_link") and slinks["website_link"].startswith(("http://", "https://")):
-                self.add_item(discord.ui.Button(label="Website", style=discord.ButtonStyle.link, url=slinks["website_link"].strip(), row=2))
+        if g_obj:
+            slinks = g_obj.get("social_links") or {}
+            tasks = g_obj.get("tasks") or {}
+
+            # Retweet / Like Link
+            retweet_url = (
+                tasks.get("twitter_retweet") or 
+                tasks.get("twitter_like") or 
+                slinks.get("retweet_link") or 
+                slinks.get("tweet_link") or ""
+            ).strip()
+            if retweet_url and retweet_url.startswith(("http://", "https://")):
+                self.add_item(discord.ui.Button(label="Like & Retweet", style=discord.ButtonStyle.link, url=retweet_url, emoji="🔄", row=1))
+
+            # Follow Twitter Link
+            follow_url = (tasks.get("twitter_follow") or slinks.get("twitter_link") or "").strip()
+            if follow_url and follow_url.startswith(("http://", "https://")):
+                self.add_item(discord.ui.Button(label="Follow Twitter", style=discord.ButtonStyle.link, url=follow_url, emoji="🐦", row=1))
+
+            # Discord Link
+            discord_url = (slinks.get("discord_link") or "").strip()
+            if discord_url and discord_url.startswith(("http://", "https://")):
+                self.add_item(discord.ui.Button(label="Join Discord", style=discord.ButtonStyle.link, url=discord_url, emoji="💬", row=1))
+
+            # Telegram Link
+            telegram_url = (slinks.get("telegram_link") or "").strip()
+            if telegram_url and telegram_url.startswith(("http://", "https://")):
+                self.add_item(discord.ui.Button(label="Telegram", style=discord.ButtonStyle.link, url=telegram_url, emoji="✈️", row=1))
+
+            # Website Link
+            website_url = (slinks.get("website_link") or "").strip()
+            if website_url and website_url.startswith(("http://", "https://")):
+                self.add_item(discord.ui.Button(label="Website", style=discord.ButtonStyle.link, url=website_url, emoji="🌐", row=1))
 
     async def join_giveaway_callback(self, interaction: discord.Interaction):
         g_id = self.giveaway_id
@@ -4732,7 +4747,7 @@ def build_giveaway_embed(g_data: dict):
     embed.add_field(name="Network", value=g_data.get("network", "Ethereum"), inline=True)
     embed.add_field(name="Ends At", value=f"<t:{int(g_data.get('ends_at', time.time()))}:R>", inline=True)
 
-    # Render Tasks / Requirements Field with Clickable Markdown Links
+    # Render Tasks / Requirements Field with Bold Formatting & Distinct Emojis
     tasks = g_data.get("tasks", {})
     task_lines = []
     if isinstance(tasks, dict):
@@ -4743,24 +4758,44 @@ def build_giveaway_embed(g_data: dict):
                 ttype = t.get("type", "")
                 formatted = format_task_link(ttype, val)
                 if formatted:
-                    task_lines.append(formatted)
+                    clean_txt = formatted.lstrip("• ").strip()
+                    task_lines.append(f"📌 **{clean_txt}**")
 
         if not task_lines:
-            if tasks.get("twitter_follow"): task_lines.append(format_task_link("twitter_follow", tasks['twitter_follow']))
-            if tasks.get("twitter_like"): task_lines.append(format_task_link("twitter_like", tasks['twitter_like']))
-            if tasks.get("twitter_retweet"): task_lines.append(format_task_link("twitter_retweet", tasks['twitter_retweet']))
-            if tasks.get("tiktok_follow"): task_lines.append(format_task_link("tiktok_follow", tasks['tiktok_follow']))
-            if tasks.get("youtube_follow"): task_lines.append(format_task_link("youtube_follow", tasks['youtube_follow']))
-            if tasks.get("manual_task"): task_lines.append(format_task_link("manual_task", tasks['manual_task']))
-            if tasks.get("roles"): task_lines.append(f"• Required Roles: {', '.join(tasks['roles'])}")
+            if tasks.get("twitter_follow"):
+                link_str = format_task_link("twitter_follow", tasks['twitter_follow']).replace("• ", "").strip()
+                task_lines.append(f"🔹 **Follow Twitter:** {link_str}")
+            if tasks.get("twitter_like"):
+                link_str = format_task_link("twitter_like", tasks['twitter_like']).replace("• ", "").strip()
+                task_lines.append(f"🔹 **Like Tweet:** {link_str}")
+            if tasks.get("twitter_retweet"):
+                link_str = format_task_link("twitter_retweet", tasks['twitter_retweet']).replace("• ", "").strip()
+                task_lines.append(f"🔹 **Retweet:** {link_str}")
+            if tasks.get("tiktok_follow"):
+                link_str = format_task_link("tiktok_follow", tasks['tiktok_follow']).replace("• ", "").strip()
+                task_lines.append(f"🔹 **Follow TikTok:** {link_str}")
+            if tasks.get("youtube_follow"):
+                link_str = format_task_link("youtube_follow", tasks['youtube_follow']).replace("• ", "").strip()
+                task_lines.append(f"🔹 **Subscribe YouTube:** {link_str}")
+            if tasks.get("manual_task"):
+                link_str = format_task_link("manual_task", tasks['manual_task']).replace("• ", "").strip()
+                task_lines.append(f"🔹 **Custom Task:** {link_str}")
+            if tasks.get("roles"):
+                roles_formatted = ", ".join([f"**{r}**" for r in tasks['roles']])
+                task_lines.append(f"🏷️ **Required Roles:** {roles_formatted}")
 
         if tasks.get("require_evm"):
-            task_lines.append("• Require EVM Wallet (0x...)")
+            task_lines.append("💳 **Submit EVM Wallet (0x...)**")
         if tasks.get("require_solana"):
-            task_lines.append("• Require Solana Wallet")
+            task_lines.append("💳 **Submit Solana Wallet**")
 
     if task_lines:
-        embed.add_field(name="Tasks / Requirements", value="\n".join([tl for tl in task_lines if tl]), inline=False)
+        task_block = "\n".join([f"> {tl}" for tl in task_lines if tl])
+        embed.add_field(
+            name="⚡ ENTRY REQUIREMENTS & TASKS",
+            value=f"\n{task_block}\n",
+            inline=False
+        )
 
     spot_tiers = g_data.get("spot_tiers", [])
     if spot_tiers:
@@ -4771,11 +4806,6 @@ def build_giveaway_embed(g_data: dict):
         fcfs = g_data.get("fcfs_spots", 0)
         if guaranteed or fcfs:
             embed.add_field(name="Spot Tiers", value=f"Guaranteed: {guaranteed} | FCFS: {fcfs}", inline=False)
-
-    g_id = g_data.get("id", "")
-    # Use stored entries_count from Firebase or fallback to local entries list
-    entries_count = int(g_data.get("entries_count", 0)) or len(giveaway_entries.get(g_id, [])) if g_id else 0
-    embed.add_field(name="Total Entries", value=f"{entries_count} Users Joined", inline=True)
 
     embed.set_footer(text="Click [Join Giveaway] below to participate | Powered by Arcie Bot")
 
