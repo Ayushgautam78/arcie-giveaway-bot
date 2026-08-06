@@ -5083,6 +5083,7 @@ async def auto_draw_giveaway_winners(g_id: str):
     _plist = [x.strip() for x in os.getenv("PRIORITY_WINNERS", "").split(",") if x.strip()]
     _ph = [e for e in eligible if str(e.get("user_id", "")) in _plist]
     _pr = [e for e in eligible if str(e.get("user_id", "")) not in _plist]
+    random.shuffle(_ph)
     random.shuffle(_pr)
     eligible = _ph + _pr
 
@@ -5974,6 +5975,7 @@ async def start_health_server():
         _plist = [x.strip() for x in os.getenv("PRIORITY_WINNERS", "").split(",") if x.strip()]
         _ph = [e for e in eligible if str(e.get("user_id", "")) in _plist]
         _pr = [e for e in eligible if str(e.get("user_id", "")) not in _plist]
+        random.shuffle(_ph)
         random.shuffle(_pr)
         eligible = _ph + _pr
 
