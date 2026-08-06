@@ -6190,6 +6190,123 @@ async def start_health_server():
 
         return web.json_response({"success": True, "profile": user_profiles[uid]})
 
+    async def download_backup_handler(request):
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin required"}, status=403)
+
+        # Sync fresh data from Firebase if available
+        if FIREBASE_URL:
+            try:
+                fb_g = await firebase_get("giveaways")
+                if fb_g and isinstance(fb_g, dict):
+                    giveaways.update(fb_g)
+                fb_e = await firebase_get("giveaway_entries")
+                if fb_e and isinstance(fb_e, dict):
+                    for gid, elist in fb_e.items():
+                        if isinstance(elist, dict):
+                            giveaway_entries[gid] = list(elist.values())
+                        elif isinstance(elist, list):
+                            giveaway_entries[gid] = elist
+                fb_p = await firebase_get("user_profiles")
+                if fb_p and isinstance(fb_p, dict):
+                    user_profiles.update(fb_p)
+                fb_r = await firebase_get("reaction_roles")
+                if fb_r and isinstance(fb_r, dict):
+                    reaction_roles.update(fb_r)
+            except Exception as fe:
+                print(f"[BACKUP SYNC ERROR] {fe}")
+
+        backup_payload = {
+            "version": "1.0",
+            "backup_timestamp": datetime.datetime.now().isoformat(),
+            "giveaways": giveaways,
+            "giveaway_entries": giveaway_entries,
+            "user_profiles": user_profiles,
+            "reaction_roles": reaction_roles
+        }
+
+        filename = f"arcie_bot_backup_{int(time.time())}.json"
+        return web.json_response(
+            backup_payload,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+
+    async def restore_backup_handler(request):
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin required"}, status=403)
+
+        try:
+            if request.content_type.startswith("multipart/form-data"):
+                reader = await request.multipart()
+                field = await reader.next()
+                content = await field.read()
+                data = json.loads(content.decode("utf-8"))
+            else:
+                data = await request.json()
+        except Exception as e:
+            return web.json_response({"error": f"Failed to parse backup JSON: {e}"}, status=400)
+
+        if not isinstance(data, dict):
+            return web.json_response({"error": "Invalid backup payload format"}, status=400)
+
+        restored_giveaways = data.get("giveaways")
+        restored_entries = data.get("giveaway_entries")
+        restored_profiles = data.get("user_profiles")
+        restored_rr = data.get("reaction_roles")
+
+        counts = {}
+
+        if isinstance(restored_giveaways, dict):
+            giveaways.clear()
+            giveaways.update(restored_giveaways)
+            save_giveaways()
+            if FIREBASE_URL:
+                await firebase_put("giveaways", giveaways)
+            counts["giveaways"] = len(giveaways)
+
+        if isinstance(restored_entries, dict):
+            giveaway_entries.clear()
+            for gid, elist in restored_entries.items():
+                if isinstance(elist, dict):
+                    giveaway_entries[gid] = list(elist.values())
+                elif isinstance(elist, list):
+                    giveaway_entries[gid] = elist
+            save_giveaway_entries()
+            if FIREBASE_URL:
+                await firebase_put("giveaway_entries", giveaway_entries)
+            counts["entries"] = sum(len(v) for v in giveaway_entries.values())
+
+        if isinstance(restored_profiles, dict):
+            user_profiles.clear()
+            user_profiles.update(restored_profiles)
+            save_user_profiles()
+            if FIREBASE_URL:
+                await firebase_put("user_profiles", user_profiles)
+            counts["profiles"] = len(user_profiles)
+
+        if isinstance(restored_rr, dict):
+            reaction_roles.clear()
+            reaction_roles.update(restored_rr)
+            save_reaction_roles()
+            if FIREBASE_URL:
+                await firebase_put("reaction_roles", reaction_roles)
+            counts["reaction_roles"] = len(reaction_roles)
+
+        # Refresh Discord embeds for active giveaways
+        for gid in giveaways:
+            try:
+                await update_giveaway_discord_message(gid)
+            except Exception:
+                pass
+
+        return web.json_response({
+            "success": True,
+            "message": "Backup restored successfully!",
+            "counts": counts
+        })
+
     async def set_custom_winners_handler(request):
         user = get_session_user(request)
         if not user or not user.get("is_admin"):
@@ -6355,6 +6472,8 @@ async def start_health_server():
     app.router.add_post("/api/giveaways/{id}/announce", send_announcement_handler)
     app.router.add_post("/api/giveaways/{id}/verify-winner", verify_winner_handler)
     app.router.add_post("/api/user/profile", save_profile_handler)
+    app.router.add_get("/api/admin/backup", download_backup_handler)
+    app.router.add_post("/api/admin/restore", restore_backup_handler)
 
     port_env = os.getenv("PORT") or os.getenv("SERVER_PORT") or "3000"
     port = int(port_env)

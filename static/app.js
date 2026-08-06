@@ -219,10 +219,135 @@ function checkAuth() {
     `;
   }
 
-  // Show/hide admin-only tabs
+  // Show/hide admin-only tabs & backup buttons
+  const isAdmin = !!(currentUser && currentUser.is_admin);
   document.querySelectorAll('.admin-only-tab').forEach(tab => {
-    tab.style.display = (currentUser && currentUser.is_admin) ? '' : 'none';
+    tab.style.display = isAdmin ? '' : 'none';
   });
+
+  const dlBtn = document.getElementById('downloadBackupBtn');
+  const rtBtn = document.getElementById('restoreBackupBtn');
+  if (dlBtn) dlBtn.style.display = isAdmin ? 'inline-flex' : 'none';
+  if (rtBtn) rtBtn.style.display = isAdmin ? 'inline-flex' : 'none';
+}
+
+// Download Backup JSON
+async function downloadBackup() {
+  showToast('⏳ Generating database backup...', 'info');
+  try {
+    let backupData = null;
+
+    // 1. Try Backend API endpoint
+    try {
+      const res = await fetch(apiUrl('/api/admin/backup'), { credentials: 'include' });
+      if (res.ok) {
+        backupData = await res.json();
+      }
+    } catch (e) {
+      console.warn('Backend backup API unavailable, trying direct Firebase export:', e);
+    }
+
+    // 2. Fallback to direct Firebase export (Vercel / static mode)
+    if (!backupData) {
+      const gData = await firebaseGet('giveaways') || {};
+      const eData = await firebaseGet('giveaway_entries') || {};
+      const pData = await firebaseGet('user_profiles') || {};
+      const rData = await firebaseGet('reaction_roles') || {};
+
+      backupData = {
+        version: "1.0",
+        backup_timestamp: new Date().toISOString(),
+        giveaways: typeof gData === 'object' ? gData : {},
+        giveaway_entries: typeof eData === 'object' ? eData : {},
+        user_profiles: typeof pData === 'object' ? pData : {},
+        reaction_roles: typeof rData === 'object' ? rData : {}
+      };
+    }
+
+    const str = JSON.stringify(backupData, null, 2);
+    const blob = new Blob([str], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `arcie_bot_backup_${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('✅ Backup downloaded successfully!', 'success');
+  } catch (err) {
+    console.error('Backup download error:', err);
+    showToast('❌ Failed to download backup: ' + err.message, 'error');
+  }
+}
+
+// Restore Backup JSON
+async function handleRestoreBackup(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+
+  if (!confirm('⚠️ WARNING: Restoring a backup will overwrite existing giveaways, participant entries, and user profiles.\n\nAre you sure you want to proceed?')) {
+    input.value = '';
+    return;
+  }
+
+  showToast('⏳ Restoring database backup...', 'info');
+
+  const reader = new FileReader();
+  reader.onload = async function (e) {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data || typeof data !== 'object') {
+        throw new Error('Invalid JSON file');
+      }
+
+      let restored = false;
+
+      // 1. Try Backend API endpoint first
+      try {
+        const res = await fetch(apiUrl('/api/admin/restore'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(data)
+        });
+        if (res.ok) {
+          const resData = await res.json();
+          if (resData.success) {
+            restored = true;
+          }
+        }
+      } catch (e) {
+        console.warn('Backend restore API unavailable, trying direct Firebase restore:', e);
+      }
+
+      // 2. Fallback to direct Firebase restore (Vercel / static mode)
+      if (!restored) {
+        if (data.giveaways && typeof data.giveaways === 'object') {
+          await firebasePut('giveaways', data.giveaways);
+        }
+        if (data.giveaway_entries && typeof data.giveaway_entries === 'object') {
+          await firebasePut('giveaway_entries', data.giveaway_entries);
+        }
+        if (data.user_profiles && typeof data.user_profiles === 'object') {
+          await firebasePut('user_profiles', data.user_profiles);
+        }
+        if (data.reaction_roles && typeof data.reaction_roles === 'object') {
+          await firebasePut('reaction_roles', data.reaction_roles);
+        }
+        restored = true;
+      }
+
+      showToast('🎉 Backup restored successfully!', 'success');
+      await loadGiveaways();
+    } catch (err) {
+      console.error('Restore error:', err);
+      showToast('❌ Failed to restore backup: ' + err.message, 'error');
+    } finally {
+      input.value = '';
+    }
+  };
+  reader.readAsText(file);
 }
 
 // Admin Password Login

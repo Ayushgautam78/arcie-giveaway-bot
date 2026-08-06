@@ -19,10 +19,17 @@
     </a>
     
     <div class="nav-actions">
-      <!-- Admin Create Button (Hidden if non-admin) -->
+      <!-- Admin Create & Backup Buttons (Hidden if non-admin) -->
       <button id="createGiveawayBtn" class="btn btn-primary" style="display: none;">
         <span>⚡ Create Giveaway</span>
       </button>
+      <button id="downloadBackupBtn" class="btn btn-outline" style="display: none;" onclick="downloadBackup()">
+        <span>📥 Backup</span>
+      </button>
+      <button id="restoreBackupBtn" class="btn btn-purple" style="display: none;" onclick="document.getElementById('backupFileInput').click()">
+        <span>📤 Restore</span>
+      </button>
+      <input type="file" id="backupFileInput" accept=".json" style="display: none;" onchange="handleRestoreBackup(this)">
 
       <!-- User Profile / Auth Container -->
       <div id="authContainer">
