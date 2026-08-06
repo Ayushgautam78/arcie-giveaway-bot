@@ -218,6 +218,11 @@ function checkAuth() {
       </button>
     `;
   }
+
+  // Show/hide admin-only tabs
+  document.querySelectorAll('.admin-only-tab').forEach(tab => {
+    tab.style.display = (currentUser && currentUser.is_admin) ? '' : 'none';
+  });
 }
 
 // Admin Password Login
@@ -288,12 +293,19 @@ function updateHeroStats() {
 function renderGiveaways() {
   const grid = document.getElementById('giveawayGrid');
   const now = Math.floor(Date.now() / 1000);
+  const isAdmin = currentUser && currentUser.is_admin;
 
   let filtered = currentGiveaways;
-  if (currentFilter === 'active') {
+
+  // Non-admin users: ONLY show active giveaways (no ended, no all tab)
+  if (!isAdmin) {
     filtered = currentGiveaways.filter(g => g.is_active && g.ends_at > now);
-  } else if (currentFilter === 'ended') {
-    filtered = currentGiveaways.filter(g => !g.is_active || g.ends_at <= now);
+  } else {
+    if (currentFilter === 'active') {
+      filtered = currentGiveaways.filter(g => g.is_active && g.ends_at > now);
+    } else if (currentFilter === 'ended') {
+      filtered = currentGiveaways.filter(g => !g.is_active || g.ends_at <= now);
+    }
   }
 
   if (filtered.length === 0) {
@@ -333,8 +345,8 @@ function renderGiveaways() {
           <div class="g-desc">${formatMarkdownDescription(g.description)}</div>
 
           <div class="g-badge-container">
-            ${g.guaranteed_spots ? `<span class="g-badge g-badge-guaranteed">💎 ${g.guaranteed_spots} Guaranteed</span>` : ''}
-            ${g.fcfs_spots ? `<span class="g-badge g-badge-fcfs">⚡ ${g.fcfs_spots} FCFS</span>` : ''}
+            ${isAdmin && g.guaranteed_spots ? `<span class="g-badge g-badge-guaranteed">💎 ${g.guaranteed_spots} Guaranteed</span>` : ''}
+            ${isAdmin && g.fcfs_spots ? `<span class="g-badge g-badge-fcfs">⚡ ${g.fcfs_spots} FCFS</span>` : ''}
             ${isEnded ? '<span class="g-badge g-badge-ended">🔒 Ended</span>' : `<span class="g-badge g-badge-timer">⏳ ${timeLeft}</span>`}
           </div>
 
@@ -350,7 +362,7 @@ function renderGiveaways() {
         <div class="g-card-footer">
           <span style="font-size: 0.85rem; color: var(--text-muted);">👥 ${g.entries_count || 0} Entered</span>
           <div style="display: flex; gap: 6px; align-items: center;">
-            ${currentUser && currentUser.is_admin ? `<button type="button" class="btn btn-danger btn-sm" style="padding: 4px 8px;" onclick="deleteGiveaway('${g.id}')" title="Delete Giveaway">🗑️</button>` : ''}
+            ${isAdmin ? `<button type="button" class="btn btn-danger btn-sm" style="padding: 4px 8px;" onclick="deleteGiveaway('${g.id}')" title="Delete Giveaway">🗑️</button>` : ''}
             <button class="btn btn-primary btn-sm" onclick="openDetailModal('${g.id}')">
               ${isEnded ? 'View Results' : 'View Giveaway'}
             </button>
@@ -887,6 +899,7 @@ async function openDetailModal(giveawayId) {
   const g = currentGiveaways.find(x => x.id === giveawayId);
   if (!g) return;
 
+  const isAdmin = currentUser && currentUser.is_admin;
   activeDetailGiveaway = g;
   document.getElementById('detailTitle').innerText = g.title;
   
@@ -915,8 +928,8 @@ async function openDetailModal(giveawayId) {
       <div style="font-size: 0.98rem; color: var(--text-main); line-height: 1.6; background: rgba(0,0,0,0.25); padding: 1rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">${formatMarkdownDescription(g.description)} ${renderSocialButtonsHTML(g.social_links)}</div>
       
       <div class="g-badge-container">
-        ${g.guaranteed_spots ? `<span class="g-badge g-badge-guaranteed">💎 ${g.guaranteed_spots} Guaranteed</span>` : ''}
-        ${g.fcfs_spots ? `<span class="g-badge g-badge-fcfs">⚡ ${g.fcfs_spots} FCFS</span>` : ''}
+        ${isAdmin && g.guaranteed_spots ? `<span class="g-badge g-badge-guaranteed">💎 ${g.guaranteed_spots} Guaranteed</span>` : ''}
+        ${isAdmin && g.fcfs_spots ? `<span class="g-badge g-badge-fcfs">⚡ ${g.fcfs_spots} FCFS</span>` : ''}
         <span class="g-badge g-badge-timer">🌐 Network: ${escapeHtml(g.network || 'Ethereum')}</span>
         ${isEnded ? '<span class="g-badge g-badge-ended">Ended</span>' : `<span class="g-badge g-badge-timer">Ends ${getTimeLeftString(g.ends_at)}</span>`}
       </div>
@@ -935,9 +948,12 @@ async function openDetailModal(giveawayId) {
     </div>
   `;
 
+  // Public participants list (visible to everyone)
+  await loadPublicParticipants(giveawayId, g.network || 'Ethereum');
+
   // Admin Box setup
   const adminBox = document.getElementById('adminControlBox');
-  if (currentUser && currentUser.is_admin) {
+  if (isAdmin) {
     adminBox.style.display = 'block';
     await loadGiveawayParticipants(giveawayId);
     
@@ -967,6 +983,69 @@ function copyShareLink(giveawayId) {
     });
   } else {
     prompt('Copy share link:', shareUrl);
+  }
+}
+
+// Determine which wallet field to show based on network name
+function getWalletFieldForNetwork(network) {
+  const n = (network || '').toLowerCase().trim();
+  if (n === 'solana' || n === 'sol') return { field: 'solana_wallet', label: 'Solana Wallet' };
+  // All EVM-compatible chains
+  return { field: 'evm_wallet', label: 'Wallet Address' };
+}
+
+// Load Public Participants (visible to everyone)
+async function loadPublicParticipants(giveawayId, network) {
+  const tbody = document.getElementById('publicParticipantsBody');
+  const walletHeader = document.getElementById('publicWalletHeader');
+  if (!tbody) return;
+
+  const walletInfo = getWalletFieldForNetwork(network);
+  if (walletHeader) walletHeader.innerText = walletInfo.label;
+
+  tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color: var(--text-muted); padding: 1rem;">Loading participants...</td></tr>';
+
+  try {
+    let entries = [];
+
+    // 1. Try Firebase directly
+    const fbData = await firebaseGet('giveaway_entries/' + giveawayId);
+    if (fbData && typeof fbData === 'object') {
+      entries = Array.isArray(fbData) ? fbData : Object.values(fbData);
+    }
+
+    // 2. Fallback to backend API
+    if (!entries || entries.length === 0) {
+      try {
+        const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          entries = data.entries || [];
+        }
+      } catch (e) {
+        console.warn('Backend API fallback unavailable:', e);
+      }
+    }
+
+    if (!entries || entries.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">No participants yet.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = entries.map(e => {
+      if (!e) return '';
+      const wallet = e[walletInfo.field] || 'Not provided';
+      return `
+        <tr>
+          <td><b>${escapeHtml(e.username || e.display_name || 'User')}</b></td>
+          <td><code style="font-size: 0.8rem;">${escapeHtml(e.user_id || 'N/A')}</code></td>
+          <td><code style="font-size: 0.8rem;">${escapeHtml(wallet)}</code></td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error('Error loading public participants:', err);
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: #ff4757;">Failed to load participants.</td></tr>';
   }
 }
 

@@ -63,8 +63,8 @@
       <h2 class="section-title">✨ Community Giveaways</h2>
       <div class="tab-group">
         <button class="tab-btn active" data-tab="active">Active</button>
-        <button class="tab-btn" data-tab="ended">Ended</button>
-        <button class="tab-btn" data-tab="all">All</button>
+        <button class="tab-btn admin-only-tab" data-tab="ended" style="display:none;">Ended</button>
+        <button class="tab-btn admin-only-tab" data-tab="all" style="display:none;">All</button>
       </div>
     </div>
 
@@ -487,6 +487,25 @@
       </div>
       <div class="modal-body">
         <div id="detailContent"></div>
+
+        <!-- Public Participants List (visible to everyone) -->
+        <div id="publicParticipantsBox" style="border-top: 1px solid var(--border-color); padding-top: 1rem; margin-top: 1rem;">
+          <h4 style="color: var(--text-main); margin-bottom: 10px;">👥 Participants</h4>
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Discord Username</th>
+                  <th>Discord ID</th>
+                  <th id="publicWalletHeader">Wallet Address</th>
+                </tr>
+              </thead>
+              <tbody id="publicParticipantsBody">
+                <!-- Public participants loaded dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
 
         <!-- Admin Control Box -->
         <div id="adminControlBox" style="display: none; border-top: 1px solid var(--border-color); padding-top: 1rem;">

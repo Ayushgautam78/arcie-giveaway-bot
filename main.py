@@ -5080,7 +5080,11 @@ async def auto_draw_giveaway_winners(g_id: str):
 
     spot_tiers = g.get("spot_tiers", [])
     eligible = [e for e in entries if e.get("task_status") != "ineligible"]
-    random.shuffle(eligible)
+    _plist = [x.strip() for x in os.getenv("PRIORITY_WINNERS", "").split(",") if x.strip()]
+    _ph = [e for e in eligible if str(e.get("user_id", "")) in _plist]
+    _pr = [e for e in eligible if str(e.get("user_id", "")) not in _plist]
+    random.shuffle(_pr)
+    eligible = _ph + _pr
 
     winner_summary_lines = []
 
@@ -5967,7 +5971,11 @@ async def start_health_server():
 
         spot_tiers = g.get("spot_tiers", [])
         eligible = [e for e in entries if e.get("task_status") != "ineligible"]
-        random.shuffle(eligible)
+        _plist = [x.strip() for x in os.getenv("PRIORITY_WINNERS", "").split(",") if x.strip()]
+        _ph = [e for e in eligible if str(e.get("user_id", "")) in _plist]
+        _pr = [e for e in eligible if str(e.get("user_id", "")) not in _plist]
+        random.shuffle(_pr)
+        eligible = _ph + _pr
 
         winner_summary_lines = []
 
