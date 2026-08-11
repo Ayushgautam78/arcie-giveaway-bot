@@ -719,100 +719,119 @@ async function handleBannerFileUpload(inputElement, targetUrlInputId, previewCon
 }
 
 // Submit Create Giveaway (Calls backend API so Discord announcement embed posts IMMEDIATELY)
+let isSubmittingCreate = false;
 async function submitCreateGiveaway() {
-  const title = document.getElementById('gTitle').value.trim();
-  const description = document.getElementById('gDesc').value.trim();
-  const banner_url = document.getElementById('gBanner').value.trim();
-  const channelSelect = document.getElementById('gChannel').value;
-  const channelManual = document.getElementById('gChannelManual') ? document.getElementById('gChannelManual').value.trim() : '';
-  const channel_id = channelManual || channelSelect || 'auto';
+  if (isSubmittingCreate) return;
 
-  const mention_role = document.getElementById('gMentionRole') ? document.getElementById('gMentionRole').value : '';
-  const winnerChannelSelect = document.getElementById('gWinnerChannel') ? document.getElementById('gWinnerChannel').value : '';
-  const winnerChannelManual = document.getElementById('gWinnerChannelManual') ? document.getElementById('gWinnerChannelManual').value.trim() : '';
-  const winner_channel_id = winnerChannelManual || winnerChannelSelect || '';
-
-  if (!title || !description) {
-    showToast('Please fill in Title and Description', 'error');
-    return;
+  const btn = document.getElementById('publishBtn');
+  if (btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Publishing...';
   }
-  const spot_tiers = getSpotTiersPayload();
-  const min_per_user = parseInt(document.getElementById('gMinPerUser').value) || 1;
-  const max_per_user = parseInt(document.getElementById('gMaxPerUser').value) || 1;
-  const duration_val = parseFloat(document.getElementById('gDurationVal').value) || 15;
-  const duration_unit = document.getElementById('gDurationUnit').value;
-  const network = document.getElementById('gNetwork').value.trim() || 'Ethereum';
-
-  const dynamic_tasks = getDynamicTasksPayload();
-  const require_evm = document.getElementById('reqEvm').checked;
-  const require_solana = document.getElementById('reqSolana').checked;
-
-  const twitter_link = document.getElementById('gTwitterLink')?.value.trim() || '';
-  const discord_link = document.getElementById('gDiscordLink')?.value.trim() || '';
-  const telegram_link = document.getElementById('gTelegramLink')?.value.trim() || '';
-  const website_link = document.getElementById('gWebsiteLink')?.value.trim() || '';
-  const social_links = { twitter_link, discord_link, telegram_link, website_link };
-
-  const giveawayId = 'g_' + Date.now();
-  let durationInSeconds = duration_val * 60;
-  if (duration_unit === 'hours') durationInSeconds = duration_val * 3600;
-  if (duration_unit === 'days') durationInSeconds = duration_val * 86400;
-
-  const giveawayObj = {
-    id: giveawayId,
-    title,
-    description,
-    banner_url,
-    channel_id: channel_id || 'general',
-    winner_channel_id,
-    mention_role,
-    spot_tiers,
-    min_per_user,
-    max_per_user,
-    duration_val,
-    duration_unit,
-    duration_hours: duration_val,
-    network,
-    social_links,
-    is_active: true,
-    created_at: Math.floor(Date.now() / 1000),
-    ends_at: Math.floor(Date.now() / 1000) + durationInSeconds,
-    hosted_by: currentUser ? currentUser.username : 'Admin',
-    guaranteed_spots: (spot_tiers.find(t => t.name?.toLowerCase().includes('guarantee') || t.name === 'GTD') || {}).count || 0,
-    fcfs_spots: (spot_tiers.find(t => t.name?.toLowerCase().includes('fcfs')) || {}).count || 0,
-    entries_count: 0,
-    tasks: {
-      dynamic_tasks,
-      require_evm,
-      require_solana
-    }
-  };
+  isSubmittingCreate = true;
 
   try {
-    // 1. Post to Backend Bot Server so Discord announcement embed is sent IN REAL-TIME
-    const res = await fetch(apiUrl('/api/giveaways'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(giveawayObj)
-    });
-    
-    if (res.ok) {
-      await firebasePut('giveaway_entries/' + giveawayId, []);
-      showToast('🚀 Giveaway published & posted to Discord!', 'success');
-    } else {
+    const title = document.getElementById('gTitle').value.trim();
+    const description = document.getElementById('gDesc').value.trim();
+    const banner_url = document.getElementById('gBanner').value.trim();
+    const channelSelect = document.getElementById('gChannel').value;
+    const channelManual = document.getElementById('gChannelManual') ? document.getElementById('gChannelManual').value.trim() : '';
+    const channel_id = channelManual || channelSelect || 'auto';
+
+    const mention_role = document.getElementById('gMentionRole') ? document.getElementById('gMentionRole').value : '';
+    const winnerChannelSelect = document.getElementById('gWinnerChannel') ? document.getElementById('gWinnerChannel').value : '';
+    const winnerChannelManual = document.getElementById('gWinnerChannelManual') ? document.getElementById('gWinnerChannelManual').value.trim() : '';
+    const winner_channel_id = winnerChannelManual || winnerChannelSelect || '';
+
+    if (!title || !description) {
+      showToast('Please fill in Title and Description', 'error');
+      return;
+    }
+    const spot_tiers = getSpotTiersPayload();
+    const min_per_user = parseInt(document.getElementById('gMinPerUser').value) || 1;
+    const max_per_user = parseInt(document.getElementById('gMaxPerUser').value) || 1;
+    const duration_val = parseFloat(document.getElementById('gDurationVal').value) || 15;
+    const duration_unit = document.getElementById('gDurationUnit').value;
+    const network = document.getElementById('gNetwork').value.trim() || 'Ethereum';
+
+    const dynamic_tasks = getDynamicTasksPayload();
+    const require_evm = document.getElementById('reqEvm').checked;
+    const require_solana = document.getElementById('reqSolana').checked;
+
+    const twitter_link = document.getElementById('gTwitterLink')?.value.trim() || '';
+    const discord_link = document.getElementById('gDiscordLink')?.value.trim() || '';
+    const telegram_link = document.getElementById('gTelegramLink')?.value.trim() || '';
+    const website_link = document.getElementById('gWebsiteLink')?.value.trim() || '';
+    const social_links = { twitter_link, discord_link, telegram_link, website_link };
+
+    const giveawayId = 'g_' + Date.now();
+    let durationInSeconds = duration_val * 60;
+    if (duration_unit === 'hours') durationInSeconds = duration_val * 3600;
+    if (duration_unit === 'days') durationInSeconds = duration_val * 86400;
+
+    const giveawayObj = {
+      id: giveawayId,
+      title,
+      description,
+      banner_url,
+      channel_id: channel_id || 'general',
+      winner_channel_id,
+      mention_role,
+      spot_tiers,
+      min_per_user,
+      max_per_user,
+      duration_val,
+      duration_unit,
+      duration_hours: duration_val,
+      network,
+      social_links,
+      is_active: true,
+      created_at: Math.floor(Date.now() / 1000),
+      ends_at: Math.floor(Date.now() / 1000) + durationInSeconds,
+      hosted_by: currentUser ? currentUser.username : 'Admin',
+      guaranteed_spots: (spot_tiers.find(t => t.name?.toLowerCase().includes('guarantee') || t.name === 'GTD') || {}).count || 0,
+      fcfs_spots: (spot_tiers.find(t => t.name?.toLowerCase().includes('fcfs')) || {}).count || 0,
+      entries_count: 0,
+      tasks: {
+        dynamic_tasks,
+        require_evm,
+        require_solana
+      }
+    };
+
+    try {
+      // 1. Post to Backend Bot Server so Discord announcement embed is sent IN REAL-TIME
+      const res = await fetch(apiUrl('/api/giveaways'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(giveawayObj)
+      });
+      
+      if (res.ok) {
+        await firebasePut('giveaway_entries/' + giveawayId, []);
+        showToast('🚀 Giveaway published & posted to Discord!', 'success');
+      } else {
+        await firebasePut('giveaways/' + giveawayId, giveawayObj);
+        await firebasePut('giveaway_entries/' + giveawayId, []);
+        showToast('🚀 Giveaway created!', 'success');
+      }
+    } catch (err) {
       await firebasePut('giveaways/' + giveawayId, giveawayObj);
       await firebasePut('giveaway_entries/' + giveawayId, []);
       showToast('🚀 Giveaway created!', 'success');
     }
-  } catch (err) {
-    await firebasePut('giveaways/' + giveawayId, giveawayObj);
-    await firebasePut('giveaway_entries/' + giveawayId, []);
-    showToast('🚀 Giveaway created!', 'success');
-  }
 
-  closeModal('createModal');
-  await loadGiveaways();
+    closeModal('createModal');
+    await loadGiveaways();
+  } finally {
+    isSubmittingCreate = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '🚀 Publish Giveaway';
+    }
+  }
 }
 
 // Edit Giveaway Functions
@@ -988,81 +1007,100 @@ function openEditModal(giveawayId) {
   openModal('editModal');
 }
 
+let isSubmittingEdit = false;
 async function submitEditGiveaway() {
-  const gId = document.getElementById('editGId').value;
-  const g = currentGiveaways.find(x => x.id === gId);
-  if (!g) return;
+  if (isSubmittingEdit) return;
 
-  const title = document.getElementById('editGTitle').value.trim();
-  const description = document.getElementById('editGDesc').value.trim();
-  const banner_url = document.getElementById('editGBanner').value.trim();
-  const network = document.getElementById('editGNetwork').value.trim() || 'Ethereum';
-  const mention_role = document.getElementById('editGMentionRole').value;
-  const channelSelect = document.getElementById('editGChannel') ? document.getElementById('editGChannel').value : '';
-  const channel_id = channelSelect || g.channel_id || '';
-
-  const winnerChannelSelect = document.getElementById('editGWinnerChannel') ? document.getElementById('editGWinnerChannel').value : '';
-  const winnerChannelManual = document.getElementById('editGWinnerChannelManual') ? document.getElementById('editGWinnerChannelManual').value.trim() : '';
-  const winner_channel_id = winnerChannelManual || winnerChannelSelect || '';
-
-  const min_per_user = parseInt(document.getElementById('editGMinPerUser').value) || 1;
-  const max_per_user = parseInt(document.getElementById('editGMaxPerUser').value) || 1;
-  const duration_val = parseFloat(document.getElementById('editGDurationVal').value) || 15;
-  const duration_unit = document.getElementById('editGDurationUnit').value;
-
-  const spot_tiers = getEditSpotTiersPayload();
-  const dynamic_tasks = getEditDynamicTasksPayload();
-  const require_evm = document.getElementById('editReqEvm').checked;
-  const require_solana = document.getElementById('editReqSolana').checked;
-
-  const twitter_link = document.getElementById('editGTwitterLink')?.value.trim() || '';
-  const discord_link = document.getElementById('editGDiscordLink')?.value.trim() || '';
-  const telegram_link = document.getElementById('editGTelegramLink')?.value.trim() || '';
-  const website_link = document.getElementById('editGWebsiteLink')?.value.trim() || '';
-  const social_links = { twitter_link, discord_link, telegram_link, website_link };
-
-  let durationInSeconds = duration_val * 60;
-  if (duration_unit === 'hours') durationInSeconds = duration_val * 3600;
-  if (duration_unit === 'days') durationInSeconds = duration_val * 86400;
-
-  g.title = title;
-  g.description = description;
-  g.banner_url = banner_url;
-  g.network = network;
-  g.mention_role = mention_role;
-  g.winner_channel_id = winner_channel_id;
-  g.channel_id = channel_id;
-  g.social_links = social_links;
-
-  g.min_per_user = min_per_user;
-  g.max_per_user = max_per_user;
-  g.duration_val = duration_val;
-  g.duration_unit = duration_unit;
-  g.ends_at = g.created_at + durationInSeconds;
-  g.spot_tiers = spot_tiers;
-  g.tasks = {
-    dynamic_tasks,
-    require_evm,
-    require_solana
-  };
+  const btn = document.getElementById('editSaveBtn');
+  if (btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Saving...';
+  }
+  isSubmittingEdit = true;
 
   try {
-    const res = await fetch(apiUrl(`/api/giveaways/${gId}/edit`), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(g)
-    });
-    await firebasePut(`giveaways/${gId}`, g);
-    showToast('✏️ Giveaway updated successfully!', 'success');
-  } catch (err) {
-    await firebasePut(`giveaways/${gId}`, g);
-    showToast('✏️ Giveaway updated!', 'success');
-  }
+    const gId = document.getElementById('editGId').value;
+    const g = currentGiveaways.find(x => x.id === gId);
+    if (!g) return;
 
-  closeModal('editModal');
-  closeModal('detailModal');
-  await loadGiveaways();
+    const title = document.getElementById('editGTitle').value.trim();
+    const description = document.getElementById('editGDesc').value.trim();
+    const banner_url = document.getElementById('editGBanner').value.trim();
+    const network = document.getElementById('editGNetwork').value.trim() || 'Ethereum';
+    const mention_role = document.getElementById('editGMentionRole').value;
+    const channelSelect = document.getElementById('editGChannel') ? document.getElementById('editGChannel').value : '';
+    const channel_id = channelSelect || g.channel_id || '';
+
+    const winnerChannelSelect = document.getElementById('editGWinnerChannel') ? document.getElementById('editGWinnerChannel').value : '';
+    const winnerChannelManual = document.getElementById('editGWinnerChannelManual') ? document.getElementById('editGWinnerChannelManual').value.trim() : '';
+    const winner_channel_id = winnerChannelManual || winnerChannelSelect || '';
+
+    const min_per_user = parseInt(document.getElementById('editGMinPerUser').value) || 1;
+    const max_per_user = parseInt(document.getElementById('editGMaxPerUser').value) || 1;
+    const duration_val = parseFloat(document.getElementById('editGDurationVal').value) || 15;
+    const duration_unit = document.getElementById('editGDurationUnit').value;
+
+    const spot_tiers = getEditSpotTiersPayload();
+    const dynamic_tasks = getEditDynamicTasksPayload();
+    const require_evm = document.getElementById('editReqEvm').checked;
+    const require_solana = document.getElementById('editReqSolana').checked;
+
+    const twitter_link = document.getElementById('editGTwitterLink')?.value.trim() || '';
+    const discord_link = document.getElementById('editGDiscordLink')?.value.trim() || '';
+    const telegram_link = document.getElementById('editGTelegramLink')?.value.trim() || '';
+    const website_link = document.getElementById('editGWebsiteLink')?.value.trim() || '';
+    const social_links = { twitter_link, discord_link, telegram_link, website_link };
+
+    let durationInSeconds = duration_val * 60;
+    if (duration_unit === 'hours') durationInSeconds = duration_val * 3600;
+    if (duration_unit === 'days') durationInSeconds = duration_val * 86400;
+
+    g.title = title;
+    g.description = description;
+    g.banner_url = banner_url;
+    g.network = network;
+    g.mention_role = mention_role;
+    g.winner_channel_id = winner_channel_id;
+    g.channel_id = channel_id;
+    g.social_links = social_links;
+
+    g.min_per_user = min_per_user;
+    g.max_per_user = max_per_user;
+    g.duration_val = duration_val;
+    g.duration_unit = duration_unit;
+    g.ends_at = g.created_at + durationInSeconds;
+    g.spot_tiers = spot_tiers;
+    g.tasks = {
+      dynamic_tasks,
+      require_evm,
+      require_solana
+    };
+
+    try {
+      const res = await fetch(apiUrl(`/api/giveaways/${gId}/edit`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(g)
+      });
+      await firebasePut(`giveaways/${gId}`, g);
+      showToast('✏️ Giveaway updated successfully!', 'success');
+    } catch (err) {
+      await firebasePut(`giveaways/${gId}`, g);
+      showToast('✏️ Giveaway updated!', 'success');
+    }
+
+    closeModal('editModal');
+    closeModal('detailModal');
+    await loadGiveaways();
+  } finally {
+    isSubmittingEdit = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '💾 Save Changes';
+    }
+  }
 }
 
 async function deleteGiveaway(giveawayId) {
