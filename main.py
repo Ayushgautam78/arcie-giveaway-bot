@@ -3724,36 +3724,40 @@ class GiveawayView(discord.ui.View):
             await safe_respond(interaction, f"✅ You are already registered for **{g.get('title', 'Giveaway')}**!", ephemeral=True)
             return
 
-        # 2. Check task completion with 2nd-click bypass
+        # 2. FIRST CLICK: Always show task list and do NOT join yet
         prompted_set = giveaway_join_prompted.setdefault(g_id, set())
         has_been_prompted = uid in prompted_set
 
-        required_tasks = get_required_task_list(g)
-        if required_tasks and not has_been_prompted:
-            completed = giveaway_task_progress.get(g_id, {}).get(uid, set())
-            remaining = [(label, url) for task_type, label, url in required_tasks if task_type not in completed]
+        if not has_been_prompted:
+            # Mark user as prompted so 2nd click will join them directly
+            prompted_set.add(uid)
 
-            if remaining:
+            required_tasks = get_required_task_list(g)
+            if required_tasks:
                 lines = []
-                for label, url in remaining:
+                for task_type, label, url in required_tasks:
                     if url:
-                        lines.append(f"  ❌ **{label}** — [Click here]({url})")
+                        lines.append(f"  📌 **{label}** — [Click here]({url})")
                     else:
-                        lines.append(f"  ❌ **{label}**")
-                remaining_text = "\n".join(lines)
-
-                # Mark user as prompted so their 2nd click on [Join Giveaway] enters them directly!
-                prompted_set.add(uid)
+                        lines.append(f"  📌 **{label}**")
+                tasks_text = "\n".join(lines)
 
                 await safe_respond(
                     interaction,
-                    f"⚠️ **Please complete tasks before joining:**\n\n"
-                    f"**Required Tasks ({len(remaining)}):**\n{remaining_text}\n\n"
-                    f"👉 *Complete tasks above, then click **[Join Giveaway]** again to enter!*",
+                    f"📋 **Complete the following tasks to participate:**\n\n"
+                    f"**Required Tasks ({len(required_tasks)}):**\n{tasks_text}\n\n"
+                    f"👉 *Once done, click **[Join Giveaway]** again to enter!*",
                     ephemeral=True
                 )
-                return
+            else:
+                await safe_respond(
+                    interaction,
+                    f"👉 *Click **[Join Giveaway]** one more time to confirm your entry!*",
+                    ephemeral=True
+                )
+            return
 
+        # 3. SECOND CLICK: Join the giveaway directly
         # Profile & Wallet setup modal (if missing profile info or required wallets)
         prof = user_profiles.get(uid, {})
         tasks = g.get("tasks", {})
