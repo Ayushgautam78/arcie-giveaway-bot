@@ -166,8 +166,45 @@ if os.path.exists(GIVEAWAYS_FILE):
     except Exception as e:
         print(f"[GIVEAWAYS ERROR] Failed to load giveaways: {e}")
 
+def save_banner_image_if_data_url(g_data: dict) -> str:
+    """If banner_url is a Base64 data:image string, save it to static/uploads/ and return relative path."""
+    if not isinstance(g_data, dict):
+        return ""
+    banner = str(g_data.get("banner_url", "")).strip()
+    if not banner or not banner.startswith("data:image"):
+        return banner
+    
+    try:
+        header, encoded = banner.split(",", 1)
+        ext = ".png"
+        if "jpeg" in header or "jpg" in header: ext = ".jpg"
+        elif "gif" in header: ext = ".gif"
+        elif "webp" in header: ext = ".webp"
+        
+        img_bytes = base64.b64decode(encoded)
+        gid = g_data.get("id", f"banner_{int(time.time())}")
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        uploads_dir = os.path.join(base_dir, "static", "uploads")
+        os.makedirs(uploads_dir, exist_ok=True)
+        
+        filename = f"banner_{gid}{ext}"
+        filepath = os.path.join(uploads_dir, filename)
+        with open(filepath, "wb") as f:
+            f.write(img_bytes)
+        
+        rel_url = f"/static/uploads/{filename}"
+        g_data["banner_url"] = rel_url
+        print(f"[BANNER SAVE SUCCESS] Saved base64 banner to {rel_url}")
+        return rel_url
+    except Exception as e:
+        print(f"[BANNER SAVE ERROR] {e}")
+        return banner
+
 def save_giveaways():
     try:
+        for g_id, g in list(giveaways.items()):
+            if isinstance(g, dict):
+                save_banner_image_if_data_url(g)
         with open(GIVEAWAYS_FILE, "w", encoding="utf-8") as f:
             json.dump(giveaways, f, indent=2, ensure_ascii=False)
     except Exception as e:
@@ -5104,6 +5141,9 @@ async def sync_and_post_giveaways():
                 for g_id, g_data in fb_giveaways.items():
                     if not isinstance(g_data, dict):
                         continue
+                    # Preserve local banner_url if Firebase has empty banner_url
+                    if not g_data.get("banner_url") and giveaways.get(g_id, {}).get("banner_url"):
+                        g_data["banner_url"] = giveaways[g_id]["banner_url"]
                     giveaways[g_id] = g_data
                     
                     # Check if active giveaway needs Discord announcement embed posted or restored
@@ -5833,6 +5873,7 @@ async def start_health_server():
         }
 
         giveaways[g_id] = g_data
+        save_banner_image_if_data_url(g_data)
         save_giveaways()
         await firebase_put(f"giveaways/{g_id}", g_data)
 
@@ -5894,7 +5935,9 @@ async def start_health_server():
         if "title" in body: g["title"] = body["title"]
         if "description" in body: g["description"] = body["description"]
         if "winners_text" in body: g["winners_text"] = body["winners_text"]
-        if "banner_url" in body: g["banner_url"] = body["banner_url"]
+        if "banner_url" in body:
+            g["banner_url"] = body["banner_url"]
+            save_banner_image_if_data_url(g)
         if "network" in body: g["network"] = body["network"]
         if "min_per_user" in body: g["min_per_user"] = int(body["min_per_user"])
         if "max_per_user" in body: g["max_per_user"] = int(body["max_per_user"])

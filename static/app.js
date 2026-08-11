@@ -4,6 +4,13 @@
 const FIREBASE_DB = 'https://arcie-bot-default-rtdb.asia-southeast1.firebasedatabase.app';
 const ADMIN_PASSWORD = 'innercirclefcfs78@1';
 
+// Helper: API URL resolver (prevents ReferenceError)
+function apiUrl(path) {
+  if (!path) return '';
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  return path.startsWith('/') ? path : '/' + path;
+}
+
 let currentUser = null;
 let currentGiveaways = [];
 let currentFilter = 'active';
