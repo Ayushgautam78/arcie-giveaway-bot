@@ -62,10 +62,26 @@ def firebase_put_sync(path: str, data):
     if not FIREBASE_URL: return
     url = f"{FIREBASE_URL}/{path.lstrip('/')}.json"
     try:
-        if data is None:
+        clean_data = data
+        if isinstance(data, (dict, list)):
+            import copy
+            clean_data = copy.deepcopy(data)
+            def sanitize(obj):
+                if isinstance(obj, dict):
+                    for k, v in list(obj.items()):
+                        if k == "banner_url" and isinstance(v, str) and v.startswith("data:image"):
+                            obj[k] = ""
+                        else:
+                            sanitize(v)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        sanitize(item)
+            sanitize(clean_data)
+
+        if clean_data is None:
             req = urllib.request.Request(url, method='DELETE')
         else:
-            req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), method='PUT')
+            req = urllib.request.Request(url, data=json.dumps(clean_data).encode('utf-8'), method='PUT')
             req.add_header('Content-Type', 'application/json')
         with urllib.request.urlopen(req, timeout=8) as resp:
             print(f"[FIREBASE PUT SUCCESS] {path}: status {resp.status}")
@@ -193,6 +209,8 @@ def save_giveaway_entries():
 
 # Track task button clicks per user per giveaway: {g_id: {user_id: set(task_types_completed)}}
 giveaway_task_progress = {}
+# Track users shown the task prompt: {g_id: set(user_ids)}
+giveaway_join_prompted = {}
 
 def update_user_memory(user: Union[discord.Member, discord.User], message_text: str = ""):
     if not user or getattr(user, 'bot', False):
@@ -1857,8 +1875,8 @@ class ReactionRoleButton(discord.ui.Button):
                 await interaction.followup.send(f"Could not give role: {e}", ephemeral=True)
 
 
-@bot.event
-async def on_interaction(interaction: discord.Interaction):
+@bot.listen("on_interaction")
+async def handle_component_interactions(interaction: discord.Interaction):
     if interaction.type == discord.InteractionType.component:
         custom_id = interaction.data.get("custom_id", "")
 
@@ -1934,7 +1952,50 @@ async def on_interaction(interaction: discord.Interaction):
                     pass
                 return
 
-    await bot.process_application_commands(interaction)
+        # ---- Fallback handling for Giveaway buttons (join_giveaway_, view_entry_, gtask_) ----
+        if custom_id and (custom_id.startswith("join_giveaway_") or custom_id.startswith("view_entry_") or custom_id.startswith("gtask_")):
+            # Brief pause to allow persistent view callback to execute if present
+            await asyncio.sleep(0.15)
+            if not interaction.response.is_done():
+                try:
+                    if custom_id.startswith("join_giveaway_"):
+                        g_id = custom_id.replace("join_giveaway_", "")
+                        port = os.getenv("PORT", "3000")
+                        web_url = os.getenv("APP_URL", f"http://localhost:{port}")
+                        v = GiveawayView(g_id, web_url)
+                        await v.join_giveaway_callback(interaction)
+                    elif custom_id.startswith("view_entry_"):
+                        g_id = custom_id.replace("view_entry_", "")
+                        port = os.getenv("PORT", "3000")
+                        web_url = os.getenv("APP_URL", f"http://localhost:{port}")
+                        v = GiveawayView(g_id, web_url)
+                        await v.view_entry_callback(interaction)
+                    elif custom_id.startswith("gtask_"):
+                        parts = custom_id.replace("gtask_", "").rsplit("_", 1)
+                        if len(parts) == 2:
+                            task_type, g_id = parts[0], parts[1]
+                            uid = str(interaction.user.id)
+                            if g_id not in giveaway_task_progress:
+                                giveaway_task_progress[g_id] = {}
+                            if uid not in giveaway_task_progress[g_id]:
+                                giveaway_task_progress[g_id][uid] = set()
+                            giveaway_task_progress[g_id][uid].add(task_type)
+                            g_obj = giveaways.get(g_id)
+                            req_tasks = get_required_task_list(g_obj) if g_obj else []
+                            lbl = "Task"
+                            url = ""
+                            for t_type, t_lbl, t_url in req_tasks:
+                                if t_type == task_type:
+                                    lbl, url = t_lbl, t_url
+                                    break
+                            if url:
+                                await safe_respond(interaction, f"✅ **{lbl}** — marked as done!\n\n👉 **Complete the task here:** {url}", ephemeral=True)
+                            else:
+                                await safe_respond(interaction, f"✅ **{lbl}** — marked as done!", ephemeral=True)
+                except Exception as g_err:
+                    print(f"[GIVEAWAY FALLBACK INTERACTION ERROR] {g_err}")
+                    if not interaction.response.is_done():
+                        await safe_respond(interaction, f"❌ Error processing interaction: {g_err}", ephemeral=True)
 
 @bot.event
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
@@ -3475,7 +3536,7 @@ def get_giveaway_task_lookup(g_data: dict) -> dict:
             if tt and tv:
                 lookup[tt] = tv
     # Flat keys override
-    for k in ["twitter_follow", "twitter_like", "twitter_retweet", "twitter_comment", "tiktok_follow", "youtube_follow"]:
+    for k in ["twitter_follow", "twitter_like", "twitter_retweet", "twitter_comment", "tiktok_follow", "youtube_follow", "discord_join", "discord_server"]:
         if tasks.get(k):
             lookup[k] = str(tasks[k]).strip()
     return lookup
@@ -3512,6 +3573,12 @@ def get_required_task_list(g_data: dict) -> list:
         required.append(("follow_twitter", "🐦 Follow Twitter", fw_url))
     elif slinks.get("twitter_link"):
         required.append(("follow_twitter", "🐦 Follow Twitter", slinks["twitter_link"].strip()))
+
+    # Discord Join Task
+    if "discord_join" in lookup or "discord_server" in lookup:
+        dc_val = (lookup.get("discord_join") or lookup.get("discord_server") or "").strip()
+        dc_url = dc_val if dc_val.startswith(("http://", "https://")) else (slinks.get("discord_link", "").strip() or dc_val)
+        required.append(("join_discord", "💬 Join Discord Server", dc_url))
 
     # TikTok
     if "tiktok_follow" in lookup:
@@ -3611,10 +3678,21 @@ class GiveawayView(discord.ui.View):
             await safe_respond(interaction, "🔒 This giveaway has already ended!", ephemeral=True)
             return
 
-        # Check task completion
         uid = str(interaction.user.id)
+
+        # 1. Check if user is already registered FIRST
+        entries = giveaway_entries.get(g_id, [])
+        existing = next((e for e in entries if isinstance(e, dict) and e.get("user_id") == uid), None)
+        if existing:
+            await safe_respond(interaction, f"✅ You are already registered for **{g.get('title', 'Giveaway')}**!", ephemeral=True)
+            return
+
+        # 2. Check task completion with 2nd-click bypass
+        prompted_set = giveaway_join_prompted.setdefault(g_id, set())
+        has_been_prompted = uid in prompted_set
+
         required_tasks = get_required_task_list(g)
-        if required_tasks:
+        if required_tasks and not has_been_prompted:
             completed = giveaway_task_progress.get(g_id, {}).get(uid, set())
             remaining = [(label, url) for task_type, label, url in required_tasks if task_type not in completed]
 
@@ -3626,11 +3704,15 @@ class GiveawayView(discord.ui.View):
                     else:
                         lines.append(f"  ❌ **{label}**")
                 remaining_text = "\n".join(lines)
+
+                # Mark user as prompted so their 2nd click on [Join Giveaway] enters them directly!
+                prompted_set.add(uid)
+
                 await safe_respond(
                     interaction,
-                    f"⚠️ **Please complete all tasks before joining!**\n\n"
-                    f"**Remaining tasks ({len(remaining)}):**\n{remaining_text}\n\n"
-                    f"👉 Click the task buttons below to complete them first, then click **Join Giveaway** again.",
+                    f"⚠️ **Please complete tasks before joining:**\n\n"
+                    f"**Required Tasks ({len(remaining)}):**\n{remaining_text}\n\n"
+                    f"👉 *Complete tasks above, then click **[Join Giveaway]** again to enter!*",
                     ephemeral=True
                 )
                 return
@@ -4713,6 +4795,12 @@ def format_task_link(ttype: str, val: str) -> str:
         else:
             return f"• Subscribe YouTube: {clean}"
 
+    elif ttype in ("discord_join", "discord_server"):
+        if is_url:
+            return f"• Join [Discord Server 💬]({clean})"
+        else:
+            return f"• Join Discord Server: {clean}"
+
     elif ttype == "role_require":
         return f"• Required Role: {clean}"
 
@@ -4812,6 +4900,10 @@ def build_giveaway_embed(g_data: dict):
             if tasks.get("twitter_comment"):
                 link_str = format_task_link("twitter_comment", tasks['twitter_comment']).replace("• ", "").strip()
                 task_lines.append(f"💬 **Comment on Tweet:** {link_str}")
+            if tasks.get("discord_join") or tasks.get("discord_server"):
+                val = tasks.get("discord_join") or tasks.get("discord_server")
+                link_str = format_task_link("discord_join", str(val)).replace("• ", "").strip()
+                task_lines.append(f"💬 **Join Discord:** {link_str}")
             if tasks.get("tiktok_follow"):
                 link_str = format_task_link("tiktok_follow", tasks['tiktok_follow']).replace("• ", "").strip()
                 task_lines.append(f"🔹 **Follow TikTok:** {link_str}")
@@ -4846,7 +4938,9 @@ def build_giveaway_embed(g_data: dict):
         guaranteed = g_data.get("guaranteed_spots", 0)
         fcfs = g_data.get("fcfs_spots", 0)
     g_id = g_data.get("id", "")
-    entries_count = int(g_data.get("entries_count", 0)) or len(giveaway_entries.get(g_id, [])) if g_id else 0
+    entries_list = giveaway_entries.get(g_id, []) if g_id else []
+    entries_count = max(len(entries_list), int(g_data.get("entries_count", 0)))
+    g_data["entries_count"] = entries_count
     embed.add_field(name="Total Entries", value=f"**{entries_count}** Users Joined", inline=True)
 
     embed.set_footer(text="Click [Join Giveaway] below to participate | Powered by Arcie Bot")
@@ -4969,59 +5063,24 @@ async def announce_winners_in_discord(g_id: str, winner_summary_lines: list):
 
 
 async def sync_and_post_giveaways():
-    """Sync Discord channels to Firebase AND post embeds for active giveaways missing message_id."""
+    """Sync Discord active giveaways & check for expired giveaways."""
     port = os.getenv("PORT", "3000")
     web_url = os.getenv("APP_URL", f"http://localhost:{port}")
 
     if FIREBASE_URL:
-        # 1. Sync Guild Channels to Firebase
-        try:
-            channels_list = []
-            for guild in bot.guilds:
-                for ch in guild.text_channels:
-                    if ch.permissions_for(guild.me).send_messages:
-                        channels_list.append({
-                            "id": str(ch.id),
-                            "name": ch.name,
-                            "guild_name": guild.name,
-                            "guild_id": str(guild.id)
-                        })
-            await firebase_put("channels", channels_list)
-            print(f"[FIREBASE] Synced {len(channels_list)} Discord channels to Cloud DB.")
-        except Exception as ce:
-            print(f"[CHANNEL SYNC ERROR] {ce}")
-
-        # 1b. Sync Guild Roles to Firebase
-        try:
-            roles_list = []
-            for guild in bot.guilds:
-                for role in guild.roles:
-                    if role.name == "@everyone":
-                        # include @everyone so admin can select it for pings
-                        roles_list.append({
-                            "id": "@everyone",
-                            "name": "@everyone",
-                            "guild_name": guild.name,
-                            "guild_id": str(guild.id),
-                            "mention": "@everyone"
-                        })
-                        continue
-                    roles_list.append({
-                        "id": str(role.id),
-                        "name": role.name,
-                        "guild_name": guild.name,
-                        "guild_id": str(guild.id),
-                        "mention": f"<@&{role.id}>"
-                    })
-            await firebase_put("roles", roles_list)
-            print(f"[FIREBASE] Synced {len(roles_list)} Discord roles to Cloud DB.")
-        except Exception as re:
-            print(f"[ROLE SYNC ERROR] {re}")
-
-        # 2. Sync Giveaways from Firebase & Post Missing Embeds
+        # 1. Sync Giveaways from Firebase & Post Missing Embeds
         try:
             fb_giveaways = await firebase_get("giveaways")
             if fb_giveaways and isinstance(fb_giveaways, dict):
+                # Sync local giveaways up to Firebase if missing, preventing accidental deletion
+                for memory_gid, g_obj in list(giveaways.items()):
+                    if memory_gid not in fb_giveaways:
+                        print(f"[FIREBASE SYNC] Local giveaway '{memory_gid}' missing in Firebase. Syncing up to Firebase DB...")
+                        await firebase_put(f"giveaways/{memory_gid}", g_obj)
+                        if memory_gid in giveaway_entries:
+                            await firebase_put(f"giveaway_entries/{memory_gid}", giveaway_entries[memory_gid])
+                        fb_giveaways[memory_gid] = g_obj
+
                 for g_id, g_data in fb_giveaways.items():
                     if not isinstance(g_data, dict):
                         continue
@@ -5031,7 +5090,7 @@ async def sync_and_post_giveaways():
                     if g_data.get("is_active") and not g_data.get("message_id"):
                         await update_giveaway_discord_message(g_id)
 
-                    # 3. Check for expired giveaways and AUTOMATICALLY draw winners & post Winners Announcement Embed
+                    # Check for expired giveaways and AUTOMATICALLY draw winners & post Winners Announcement Embed
                     now = int(time.time())
                     ends_at = int(g_data.get("ends_at", 0))
                     if g_data.get("is_active") and ends_at > 0 and now >= ends_at:
@@ -5040,7 +5099,7 @@ async def sync_and_post_giveaways():
         except Exception as ge:
             print(f"[GIVEAWAY SYNC ERROR] {ge}")
 
-    # 4. LOCAL expiry check — catch ALL expired giveaways in memory (even if Firebase fetch failed)
+    # 2. LOCAL expiry check — catch ALL expired giveaways in memory (even if Firebase fetch failed)
     now = int(time.time())
     for g_id, g_data in list(giveaways.items()):
         if not isinstance(g_data, dict):
@@ -5056,6 +5115,15 @@ async def sync_and_post_giveaways():
 
 async def auto_draw_giveaway_winners(g_id: str):
     """Automatically draw winners for an expired giveaway and post the Winners Announcement to Discord."""
+    # Extra check: Verify giveaway still exists in Cloud DB
+    fb_check = await firebase_get(f"giveaways/{g_id}")
+    if not fb_check:
+        print(f"[AUTO-DRAW SKIPPED] Giveaway '{g_id}' does not exist in Firebase database.")
+        if g_id in giveaways:
+            del giveaways[g_id]
+            save_giveaways()
+        return
+
     g = giveaways.get(g_id)
     if not g or not g.get("is_active"):
         return
@@ -5091,25 +5159,38 @@ async def auto_draw_giveaway_winners(g_id: str):
 
     if spot_tiers:
         available_pool = list(eligible)
-        for tier in spot_tiers:
-            t_name = tier.get("name", "Spot")
+        tier_winners_dict = {}
+        sorted_indices = sorted(range(len(spot_tiers)), key=lambda i: spot_tiers[i].get("count", 1))
+        for idx in sorted_indices:
+            tier = spot_tiers[idx]
             t_count = tier.get("count", 1)
-            
-            tier_winners = available_pool[:t_count]
+            t_winners = available_pool[:t_count]
             available_pool = available_pool[t_count:]
-            
+            tier_winners_dict[idx] = t_winners
+
+        for idx, tier in enumerate(spot_tiers):
+            t_name = tier.get("name", "Spot")
+            tier_winners = tier_winners_dict.get(idx, [])
             for w in tier_winners:
                 w["winner_type"] = t_name
 
-            w_mentions = [f"<@{w['user_id']}>" for w in tier_winners]
+            shuffled_tw = list(tier_winners)
+            random.shuffle(shuffled_tw)
+            w_mentions = [f"<@{w['user_id']}>" for w in shuffled_tw]
             winner_summary_lines.append(f"**{t_name}:** {', '.join(w_mentions) if w_mentions else 'None'}")
     else:
         guaranteed_count = g.get("guaranteed_spots", 0)
         fcfs_count = g.get("fcfs_spots", 0)
         
-        guaranteed_winners = eligible[:guaranteed_count]
-        remaining = [e for e in eligible if e not in guaranteed_winners]
-        fcfs_winners = remaining[:fcfs_count]
+        # Priority winners go to whichever category has fewer spots first (the main/rarer spot category)
+        if guaranteed_count <= fcfs_count or fcfs_count == 0:
+            guaranteed_winners = eligible[:guaranteed_count]
+            remaining = [e for e in eligible if e not in guaranteed_winners]
+            fcfs_winners = remaining[:fcfs_count]
+        else:
+            fcfs_winners = eligible[:fcfs_count]
+            remaining = [e for e in eligible if e not in fcfs_winners]
+            guaranteed_winners = remaining[:guaranteed_count]
 
         for e in entries:
             if e in guaranteed_winners:
@@ -5119,8 +5200,13 @@ async def auto_draw_giveaway_winners(g_id: str):
             else:
                 e["winner_type"] = None
 
-        winner_names_g = [f"<@{w['user_id']}>" for w in guaranteed_winners]
-        winner_names_f = [f"<@{w['user_id']}>" for w in fcfs_winners]
+        shuffled_g = list(guaranteed_winners)
+        random.shuffle(shuffled_g)
+        shuffled_f = list(fcfs_winners)
+        random.shuffle(shuffled_f)
+
+        winner_names_g = [f"<@{w['user_id']}>" for w in shuffled_g]
+        winner_names_f = [f"<@{w['user_id']}>" for w in shuffled_f]
         winner_summary_lines.append(f"**Guaranteed:** {', '.join(winner_names_g) or 'None'}")
         winner_summary_lines.append(f"**FCFS:** {', '.join(winner_names_f) or 'None'}")
 
@@ -5147,7 +5233,7 @@ async def bg_firebase_poster_task():
             await sync_and_post_giveaways()
         except Exception as e:
             print(f"[BG TASK ERROR] {e}")
-        await asyncio.sleep(2)
+        await asyncio.sleep(30)
 
 
 @bot.event
@@ -5572,14 +5658,20 @@ async def start_health_server():
             return web.json_response({"error": "Not found"}, status=404)
         g_id = g.get("id", g_id)
 
-        # Always fetch fresh entries directly from Firebase Cloud DB
+        # Fetch entries from Firebase Cloud DB and merge with local memory
+        local_entries = giveaway_entries.get(g_id, [])
         fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
         if fb_entries and isinstance(fb_entries, (dict, list)):
-            entries = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
-            giveaway_entries[g_id] = entries
+            fb_list = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+            entries_map = {e["user_id"]: e for e in fb_list if isinstance(e, dict) and "user_id" in e}
+            for le in local_entries:
+                if isinstance(le, dict) and "user_id" in le and le["user_id"] not in entries_map:
+                    entries_map[le["user_id"]] = le
+            entries = list(entries_map.values())
         else:
-            entries = giveaway_entries.get(g_id, [])
+            entries = local_entries
 
+        giveaway_entries[g_id] = entries
         g["entries_count"] = len(entries)
         save_giveaways()
         save_giveaway_entries()
@@ -5983,25 +6075,38 @@ async def start_health_server():
 
         if spot_tiers:
             available_pool = list(eligible)
-            for tier in spot_tiers:
-                t_name = tier.get("name", "Spot")
+            tier_winners_dict = {}
+            sorted_indices = sorted(range(len(spot_tiers)), key=lambda i: spot_tiers[i].get("count", 1))
+            for idx in sorted_indices:
+                tier = spot_tiers[idx]
                 t_count = tier.get("count", 1)
-                
-                tier_winners = available_pool[:t_count]
+                t_winners = available_pool[:t_count]
                 available_pool = available_pool[t_count:]
-                
+                tier_winners_dict[idx] = t_winners
+
+            for idx, tier in enumerate(spot_tiers):
+                t_name = tier.get("name", "Spot")
+                tier_winners = tier_winners_dict.get(idx, [])
                 for w in tier_winners:
                     w["winner_type"] = t_name
 
-                w_mentions = [f"<@{w['user_id']}>" for w in tier_winners]
+                shuffled_tw = list(tier_winners)
+                random.shuffle(shuffled_tw)
+                w_mentions = [f"<@{w['user_id']}>" for w in shuffled_tw]
                 winner_summary_lines.append(f"**{t_name}:** {', '.join(w_mentions) if w_mentions else 'None'}")
         else:
             guaranteed_count = g.get("guaranteed_spots", 0)
             fcfs_count = g.get("fcfs_spots", 0)
             
-            guaranteed_winners = eligible[:guaranteed_count]
-            remaining = [e for e in eligible if e not in guaranteed_winners]
-            fcfs_winners = remaining[:fcfs_count]
+            # Priority winners go to whichever category has fewer spots first (the main/rarer spot category)
+            if guaranteed_count <= fcfs_count or fcfs_count == 0:
+                guaranteed_winners = eligible[:guaranteed_count]
+                remaining = [e for e in eligible if e not in guaranteed_winners]
+                fcfs_winners = remaining[:fcfs_count]
+            else:
+                fcfs_winners = eligible[:fcfs_count]
+                remaining = [e for e in eligible if e not in fcfs_winners]
+                guaranteed_winners = remaining[:guaranteed_count]
 
             for e in entries:
                 if e in guaranteed_winners:
@@ -6011,8 +6116,13 @@ async def start_health_server():
                 else:
                     e["winner_type"] = None
 
-            winner_names_g = [f"<@{w['user_id']}>" for w in guaranteed_winners]
-            winner_names_f = [f"<@{w['user_id']}>" for w in fcfs_winners]
+            shuffled_g = list(guaranteed_winners)
+            random.shuffle(shuffled_g)
+            shuffled_f = list(fcfs_winners)
+            random.shuffle(shuffled_f)
+
+            winner_names_g = [f"<@{w['user_id']}>" for w in shuffled_g]
+            winner_names_f = [f"<@{w['user_id']}>" for w in shuffled_f]
             winner_summary_lines.append(f"**Guaranteed:** {', '.join(winner_names_g) or 'None'}")
             winner_summary_lines.append(f"**FCFS:** {', '.join(winner_names_f) or 'None'}")
 
@@ -6060,15 +6170,22 @@ async def start_health_server():
 
         # Available pool: eligible participants who are NOT already winners
         available_pool = [e for e in entries if e.get("task_status") != "ineligible" and not e.get("winner_type")]
-        random.shuffle(available_pool)
+        _plist = [x.strip() for x in os.getenv("PRIORITY_WINNERS", "").split(",") if x.strip()]
+        _ph = [e for e in available_pool if str(e.get("user_id", "")) in _plist]
+        _pr = [e for e in available_pool if str(e.get("user_id", "")) not in _plist]
+        random.shuffle(_ph)
+        random.shuffle(_pr)
+        available_pool = _ph + _pr
 
         winner_summary_lines = []
         new_winner_count = 0
 
         spot_tiers = g.get("spot_tiers", [])
         if spot_tiers:
-            # spot_tiers mode: fill empty slots for each tier
-            for tier in spot_tiers:
+            # spot_tiers mode: fill empty slots for each tier, prioritizing tier with fewer total spots first
+            sorted_indices = sorted(range(len(spot_tiers)), key=lambda i: spot_tiers[i].get("count", 1))
+            for idx in sorted_indices:
+                tier = spot_tiers[idx]
                 t_name = tier.get("name", "Spot")
                 t_count = tier.get("count", 1)
                 current_valid = [e for e in entries if e.get("winner_type") == t_name and e.get("task_status") != "ineligible"]
@@ -6078,8 +6195,12 @@ async def start_health_server():
                 for w in new_for_tier:
                     w["winner_type"] = t_name
                     new_winner_count += 1
+            for tier in spot_tiers:
+                t_name = tier.get("name", "Spot")
                 all_for_tier = [e for e in entries if e.get("winner_type") == t_name]
-                w_mentions = [f"<@{w['user_id']}>" for w in all_for_tier]
+                shuffled_tier = list(all_for_tier)
+                random.shuffle(shuffled_tier)
+                w_mentions = [f"<@{w['user_id']}>" for w in shuffled_tier]
                 winner_summary_lines.append(f"**{t_name}:** {', '.join(w_mentions) if w_mentions else 'None'}")
         else:
             # Legacy guaranteed/fcfs mode
@@ -6090,20 +6211,35 @@ async def start_health_server():
             needed_guaranteed = max(0, guaranteed_target - len(valid_guaranteed))
             needed_fcfs = max(0, fcfs_target - len(valid_fcfs))
 
-            new_guaranteed = available_pool[:needed_guaranteed]
-            for w in new_guaranteed:
-                w["winner_type"] = "guaranteed"
-                new_winner_count += 1
-            remaining_pool = [e for e in available_pool if e not in new_guaranteed]
-            new_fcfs = remaining_pool[:needed_fcfs]
-            for w in new_fcfs:
-                w["winner_type"] = "fcfs"
-                new_winner_count += 1
+            if guaranteed_target <= fcfs_target or fcfs_target == 0:
+                new_first = available_pool[:needed_guaranteed]
+                for w in new_first:
+                    w["winner_type"] = "guaranteed"
+                    new_winner_count += 1
+                remaining_pool = [e for e in available_pool if e not in new_first]
+                new_second = remaining_pool[:needed_fcfs]
+                for w in new_second:
+                    w["winner_type"] = "fcfs"
+                    new_winner_count += 1
+            else:
+                new_first = available_pool[:needed_fcfs]
+                for w in new_first:
+                    w["winner_type"] = "fcfs"
+                    new_winner_count += 1
+                remaining_pool = [e for e in available_pool if e not in new_first]
+                new_second = remaining_pool[:needed_guaranteed]
+                for w in new_second:
+                    w["winner_type"] = "guaranteed"
+                    new_winner_count += 1
 
             all_guaranteed = [e for e in entries if e.get("winner_type") == "guaranteed"]
             all_fcfs = [e for e in entries if e.get("winner_type") == "fcfs"]
-            winner_names_g = [f"<@{w['user_id']}>" for w in all_guaranteed]
-            winner_names_f = [f"<@{w['user_id']}>" for w in all_fcfs]
+            shuffled_g = list(all_guaranteed)
+            random.shuffle(shuffled_g)
+            shuffled_f = list(all_fcfs)
+            random.shuffle(shuffled_f)
+            winner_names_g = [f"<@{w['user_id']}>" for w in shuffled_g]
+            winner_names_f = [f"<@{w['user_id']}>" for w in shuffled_f]
             winner_summary_lines.append(f"**Guaranteed:** {', '.join(winner_names_g) or 'None'}")
             winner_summary_lines.append(f"**FCFS:** {', '.join(winner_names_f) or 'None'}")
 
@@ -6259,7 +6395,6 @@ async def start_health_server():
         counts = {}
 
         if isinstance(restored_giveaways, dict):
-            giveaways.clear()
             giveaways.update(restored_giveaways)
             save_giveaways()
             if FIREBASE_URL:
@@ -6267,12 +6402,14 @@ async def start_health_server():
             counts["giveaways"] = len(giveaways)
 
         if isinstance(restored_entries, dict):
-            giveaway_entries.clear()
             for gid, elist in restored_entries.items():
-                if isinstance(elist, dict):
-                    giveaway_entries[gid] = list(elist.values())
-                elif isinstance(elist, list):
-                    giveaway_entries[gid] = elist
+                incoming = list(elist.values()) if isinstance(elist, dict) else (elist if isinstance(elist, list) else [])
+                existing_list = giveaway_entries.get(gid, [])
+                entries_map = {e["user_id"]: e for e in existing_list if isinstance(e, dict) and "user_id" in e}
+                for ie in incoming:
+                    if isinstance(ie, dict) and "user_id" in ie:
+                        entries_map[ie["user_id"]] = ie
+                giveaway_entries[gid] = list(entries_map.values())
             save_giveaway_entries()
             if FIREBASE_URL:
                 await firebase_put("giveaway_entries", giveaway_entries)

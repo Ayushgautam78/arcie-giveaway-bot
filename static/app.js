@@ -15,12 +15,28 @@ async function firebaseGet(path) {
   return await res.json();
 }
 
-// Helper: Firebase REST write
+// Helper: Firebase REST write (Strips heavy Base64 image payloads to protect Firebase bandwidth)
 async function firebasePut(path, data) {
+  let cleanData = data;
+  if (data && typeof data === 'object') {
+    cleanData = JSON.parse(JSON.stringify(data));
+    const sanitize = (obj) => {
+      if (!obj || typeof obj !== 'object') return;
+      for (const k in obj) {
+        if (k === 'banner_url' && typeof obj[k] === 'string' && obj[k].startsWith('data:image')) {
+          obj[k] = '';
+        } else if (typeof obj[k] === 'object') {
+          sanitize(obj[k]);
+        }
+      }
+    };
+    sanitize(cleanData);
+  }
+
   await fetch(`${FIREBASE_DB}/${path}.json`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data)
+    body: JSON.stringify(cleanData)
   });
 }
 
@@ -321,19 +337,27 @@ async function handleRestoreBackup(input) {
         console.warn('Backend restore API unavailable, trying direct Firebase restore:', e);
       }
 
-      // 2. Fallback to direct Firebase restore (Vercel / static mode)
+      // 2. Direct Firebase sync/restore fallback (Vercel / static mode)
       if (!restored) {
         if (data.giveaways && typeof data.giveaways === 'object') {
-          await firebasePut('giveaways', data.giveaways);
+          const existingG = await firebaseGet('giveaways') || {};
+          const mergedG = Object.assign({}, existingG, data.giveaways);
+          await firebasePut('giveaways', mergedG);
         }
         if (data.giveaway_entries && typeof data.giveaway_entries === 'object') {
-          await firebasePut('giveaway_entries', data.giveaway_entries);
+          const existingE = await firebaseGet('giveaway_entries') || {};
+          const mergedE = Object.assign({}, existingE, data.giveaway_entries);
+          await firebasePut('giveaway_entries', mergedE);
         }
         if (data.user_profiles && typeof data.user_profiles === 'object') {
-          await firebasePut('user_profiles', data.user_profiles);
+          const existingP = await firebaseGet('user_profiles') || {};
+          const mergedP = Object.assign({}, existingP, data.user_profiles);
+          await firebasePut('user_profiles', mergedP);
         }
         if (data.reaction_roles && typeof data.reaction_roles === 'object') {
-          await firebasePut('reaction_roles', data.reaction_roles);
+          const existingR = await firebaseGet('reaction_roles') || {};
+          const mergedR = Object.assign({}, existingR, data.reaction_roles);
+          await firebasePut('reaction_roles', mergedR);
         }
         restored = true;
       }
@@ -382,10 +406,33 @@ function adminLogout() {
   }
 }
 
-// Load Giveaways directly from Firebase
+// Load Giveaways directly from Firebase with API fallback
 async function loadGiveaways() {
   try {
-    const data = await firebaseGet('giveaways');
+    let data = null;
+    try {
+      data = await firebaseGet('giveaways');
+    } catch (e) {
+      console.warn('Firebase giveaways fetch failed, attempting API fallback:', e);
+    }
+
+    if (!data || typeof data !== 'object' || Object.keys(data).length === 0) {
+      try {
+        const res = await fetch(apiUrl('/api/giveaways'), { credentials: 'include' });
+        if (res.ok) {
+          const apiData = await res.json();
+          if (Array.isArray(apiData) && apiData.length > 0) {
+            currentGiveaways = apiData;
+            updateHeroStats();
+            renderGiveaways();
+            return;
+          }
+        }
+      } catch (apiErr) {
+        console.warn('Backend API giveaways fallback failed:', apiErr);
+      }
+    }
+
     if (data && typeof data === 'object') {
       currentGiveaways = Object.values(data);
     } else {
@@ -577,6 +624,9 @@ function addDynamicTask(type, defaultVal = '') {
   } else if (type === 'twitter_comment') {
     typeBadge = '💬 Comment';
     placeholder = 'Tweet Link / URL to Comment';
+  } else if (type === 'discord_join' || type === 'discord_server') {
+    typeBadge = '💬 Discord';
+    placeholder = 'https://discord.gg/invitecode or Server Name';
   } else if (type === 'tiktok_follow') {
     typeBadge = '🎵 TikTok';
     placeholder = 'TikTok Handle / Link';
@@ -737,13 +787,16 @@ async function submitCreateGiveaway() {
     });
     
     if (res.ok) {
+      await firebasePut('giveaway_entries/' + giveawayId, []);
       showToast('🚀 Giveaway published & posted to Discord!', 'success');
     } else {
       await firebasePut('giveaways/' + giveawayId, giveawayObj);
+      await firebasePut('giveaway_entries/' + giveawayId, []);
       showToast('🚀 Giveaway created!', 'success');
     }
   } catch (err) {
     await firebasePut('giveaways/' + giveawayId, giveawayObj);
+    await firebasePut('giveaway_entries/' + giveawayId, []);
     showToast('🚀 Giveaway created!', 'success');
   }
 
@@ -761,6 +814,7 @@ function addEditSpotTier(defaultName = '', defaultCount = 1) {
   const id = `edit_spot_tier_${editSpotTierCount}`;
   const div = document.createElement('div');
   div.id = id;
+  div.className = 'spot-tier-row';
   div.style.display = 'flex';
   div.style.gap = '8px';
   div.style.alignItems = 'center';
@@ -780,7 +834,7 @@ function addEditSpotTier(defaultName = '', defaultCount = 1) {
 
 function getEditSpotTiersPayload() {
   const tiers = [];
-  document.querySelectorAll('#editSpotTiersList > div').forEach(row => {
+  document.querySelectorAll('#editSpotTiersList .spot-tier-row').forEach(row => {
     const nameInput = row.querySelector('.edit-spot-tier-name');
     const countInput = row.querySelector('.edit-spot-tier-count');
     if (nameInput && countInput) {
@@ -802,7 +856,7 @@ function addEditDynamicTask(type, defaultVal = '') {
   editDynamicTaskCount++;
   const id = `edit_task_item_${editDynamicTaskCount}`;
   const div = document.createElement('div');
-  div.className = 'task-builder-item';
+  div.className = 'dynamic-task-row';
   div.id = id;
   div.style.display = 'flex';
   div.style.gap = '8px';
@@ -817,6 +871,7 @@ function addEditDynamicTask(type, defaultVal = '') {
   else if (type === 'twitter_like') typeBadge = '❤️ Like';
   else if (type === 'twitter_retweet') typeBadge = '🔄 Retweet';
   else if (type === 'twitter_comment') typeBadge = '💬 Comment';
+  else if (type === 'discord_join' || type === 'discord_server') typeBadge = '💬 Discord';
   else if (type === 'tiktok_follow') typeBadge = '🎵 TikTok';
   else if (type === 'youtube_follow') typeBadge = '▶️ YouTube';
   else if (type === 'role_require') typeBadge = '🏅 Role';
@@ -903,6 +958,8 @@ function openEditModal(giveawayId) {
     if (g.tasks.twitter_like) addEditDynamicTask('twitter_like', g.tasks.twitter_like);
     if (g.tasks.twitter_retweet) addEditDynamicTask('twitter_retweet', g.tasks.twitter_retweet);
     if (g.tasks.twitter_comment) addEditDynamicTask('twitter_comment', g.tasks.twitter_comment);
+    if (g.tasks.discord_join) addEditDynamicTask('discord_join', g.tasks.discord_join);
+    if (g.tasks.discord_server) addEditDynamicTask('discord_server', g.tasks.discord_server);
     if (g.tasks.tiktok_follow) addEditDynamicTask('tiktok_follow', g.tasks.tiktok_follow);
     if (g.tasks.youtube_follow) addEditDynamicTask('youtube_follow', g.tasks.youtube_follow);
     if (g.tasks.manual_task) addEditDynamicTask('manual_task', g.tasks.manual_task);
