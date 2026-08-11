@@ -3746,6 +3746,7 @@ class GiveawayView(discord.ui.View):
                     interaction,
                     f"📋 **Complete the following tasks to participate:**\n\n"
                     f"**Required Tasks ({len(required_tasks)}):**\n{tasks_text}\n\n"
+                    f"**If you have already done the tasks, ignore this and click on [Join Giveaway] button again!**\n\n"
                     f"👉 *Once done, click **[Join Giveaway]** again to enter!*",
                     ephemeral=True
                 )
