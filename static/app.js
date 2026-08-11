@@ -22,22 +22,26 @@ async function firebaseGet(path) {
   return await res.json();
 }
 
-// Helper: Firebase REST write (Strips heavy Base64 image payloads to protect Firebase bandwidth)
+// Helper: Firebase REST write
 async function firebasePut(path, data) {
+  // Clone data to avoid mutating the original, and strip excessively large base64 banner_url
+  // strings (>500KB) from Firebase to prevent quota abuse, but preserve smaller images
+  // so the bot can convert them to local files on sync.
   let cleanData = data;
   if (data && typeof data === 'object') {
     cleanData = JSON.parse(JSON.stringify(data));
-    const sanitize = (obj) => {
+    const sanitizeLargeBlobs = (obj) => {
       if (!obj || typeof obj !== 'object') return;
       for (const k in obj) {
-        if (k === 'banner_url' && typeof obj[k] === 'string' && obj[k].startsWith('data:image')) {
+        if (k === 'banner_url' && typeof obj[k] === 'string' && obj[k].startsWith('data:image') && obj[k].length > 500000) {
+          // Only strip if >500KB (extremely large base64) — smaller ones are kept for bot processing
           obj[k] = '';
         } else if (typeof obj[k] === 'object') {
-          sanitize(obj[k]);
+          sanitizeLargeBlobs(obj[k]);
         }
       }
     };
-    sanitize(cleanData);
+    sanitizeLargeBlobs(cleanData);
   }
 
   await fetch(`${FIREBASE_DB}/${path}.json`, {

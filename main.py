@@ -69,7 +69,7 @@ def firebase_put_sync(path: str, data):
             def sanitize(obj):
                 if isinstance(obj, dict):
                     for k, v in list(obj.items()):
-                        if k == "banner_url" and isinstance(v, str) and v.startswith("data:image"):
+                        if k == "banner_url" and isinstance(v, str) and v.startswith("data:image") and len(v) > 500000:
                             obj[k] = ""
                         else:
                             sanitize(v)
@@ -5144,6 +5144,15 @@ async def sync_and_post_giveaways():
                     # Preserve local banner_url if Firebase has empty banner_url
                     if not g_data.get("banner_url") and giveaways.get(g_id, {}).get("banner_url"):
                         g_data["banner_url"] = giveaways[g_id]["banner_url"]
+                    # Convert any base64 banner images from Firebase into local files
+                    banner = str(g_data.get("banner_url", "")).strip()
+                    if banner.startswith("data:image"):
+                        save_banner_image_if_data_url(g_data)
+                        # Update Firebase with local file path instead of base64
+                        try:
+                            await firebase_put(f"giveaways/{g_id}/banner_url", g_data.get("banner_url", ""))
+                        except Exception:
+                            pass
                     giveaways[g_id] = g_data
                     
                     # Check if active giveaway needs Discord announcement embed posted or restored
