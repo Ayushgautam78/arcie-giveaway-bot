@@ -4867,8 +4867,18 @@ def build_giveaway_embed(g_data: dict):
                 embed.set_image(url="attachment://banner.png")
             except Exception as img_e:
                 print(f"[BASE64 IMAGE DECODE ERROR] {img_e}")
-        elif (banner_url.startswith("http://") or banner_url.startswith("https://")) and len(banner_url) <= 2048:
-            embed.set_image(url=banner_url)
+        else:
+            # Check if banner_url points to a local file in static/uploads
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            uploads_dir = os.path.join(base_dir, "static", "uploads")
+            filename = os.path.basename(banner_url.split("?")[0])
+            local_path = os.path.join(uploads_dir, filename)
+
+            if filename and os.path.exists(local_path) and os.path.isfile(local_path):
+                file_to_send = discord.File(local_path, filename=filename)
+                embed.set_image(url=f"attachment://{filename}")
+            elif (banner_url.startswith("http://") or banner_url.startswith("https://")) and not ("localhost" in banner_url or "127.0.0.1" in banner_url):
+                embed.set_image(url=banner_url)
 
     embed.add_field(name="Network", value=g_data.get("network", "Ethereum"), inline=True)
     embed.add_field(name="Ends At", value=f"<t:{int(g_data.get('ends_at', time.time()))}:R>", inline=True)
@@ -4969,6 +4979,7 @@ async def announce_winners_in_discord(g_id: str, winner_summary_lines: list):
         if g:
             giveaways[g_id] = g
     if not g:
+        print(f"[ANNOUNCE ERROR] Giveaway '{g_id}' not found")
         return
 
     winner_summary_lines = [line for line in winner_summary_lines if line and line.strip()]
@@ -5048,8 +5059,17 @@ async def announce_winners_in_discord(g_id: str, winner_summary_lines: list):
                     embed.set_image(url="attachment://banner.png")
                 except Exception:
                     pass
-            elif (banner_url.startswith("http://") or banner_url.startswith("https://")) and len(banner_url) <= 2048:
-                embed.set_image(url=banner_url)
+            else:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                uploads_dir = os.path.join(base_dir, "static", "uploads")
+                filename = os.path.basename(banner_url.split("?")[0])
+                local_path = os.path.join(uploads_dir, filename)
+
+                if filename and os.path.exists(local_path) and os.path.isfile(local_path):
+                    file_to_send = discord.File(local_path, filename=filename)
+                    embed.set_image(url=f"attachment://{filename}")
+                elif (banner_url.startswith("http://") or banner_url.startswith("https://")) and not ("localhost" in banner_url or "127.0.0.1" in banner_url):
+                    embed.set_image(url=banner_url)
 
         embed.set_footer(text="Powered by Arcie Bot")
 
