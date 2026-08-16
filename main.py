@@ -4654,37 +4654,40 @@ class RumbleGame:
         return embeds
 
 
-def build_rumble_lobby_embed(players: list, join_duration: int, start_time: int) -> discord.Embed:
-    """Build or update the live Rumble Royale lobby announcement embed with registered gladiator roster."""
+def build_rumble_lobby_embed(players: list, join_duration: int, start_time: int, host_name: str = "Host") -> discord.Embed:
+    """Build or update the live Rumble Royale lobby announcement embed matching Diffy style."""
     count = len(players)
     embed = discord.Embed(
-        title="⚔️ RUMBLE ROYALE — JOIN NOW!",
-        description=(
-            f"A **battle royale** is about to begin!\n\n"
-            f"Click the **⚔️ Join Battle** button below to enter as a gladiator.\n"
-            f"The lobby will auto-close in **{join_duration}** seconds, or an admin can click **Start Battle**.\n\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"*Only ONE will survive. Revives are possible. Glory awaits.*"
-        ),
-        color=discord.Color.from_rgb(255, 69, 0)
+        title="⚔️ RUMBLE ROYALE MATCH ANNOUNCED! ⚔️",
+        color=discord.Color.gold()
     )
-    embed.add_field(name="⚔️ Gladiators Enlisted", value=f"**{count}** warriors ready", inline=True)
-    embed.add_field(name="⏱️ Lobby Closes", value=f"<t:{start_time + join_duration}:R>", inline=True)
 
     if players:
-        roster_mentions = ", ".join(p["mention"] for p in players[:40])
+        player_lines = []
+        for idx, p in enumerate(players[:40], start=1):
+            uname = p.get("username", p.get("name", "warrior"))
+            player_lines.append(f"**{idx}.** {p['name']} (@{uname})")
         if len(players) > 40:
-            roster_mentions += f"\n*...and {len(players) - 40} more*"
-        embed.add_field(name=f"👥 Registered Gladiators ({count})", value=roster_mentions, inline=False)
+            player_lines.append(f"*...and {len(players) - 40} more*")
+        players_text = "\n".join(player_lines)
     else:
-        embed.add_field(name="👥 Registered Gladiators (0)", value="*Waiting for warriors to join...*", inline=False)
+        players_text = "*No players registered yet.*"
 
-    embed.set_footer(text="Minimum 3 players required to start | Click [Join Battle] below")
+    desc = (
+        f"Hosted by **{host_name}**!\n\n"
+        f"⏰ **LOBBY CLOCK:** Starts in <t:{start_time + join_duration}:R>!\n"
+        f"Click [ ⚔️ **Join Battle** ] to sign up for the Rumble Royale!\n"
+        f"*(Minimum 2 real players required to start!)*\n\n"
+        f"👤 **REAL REGISTERED PLAYERS ({count}):**\n"
+        f"{players_text}"
+    )
+    embed.description = desc
+    embed.set_footer(text="Rumble Royale • Click button to join!")
     return embed
 
 
 # -------- Active Rumble Sessions -------- #
-active_rumbles: Dict[int, dict] = {}  # channel_id -> {"players": [...], "message_id": int, "started": bool, "created_at": int, "join_duration": int}
+active_rumbles: Dict[int, dict] = {}  # channel_id -> {"players": [...], "message_id": int, "started": bool, "created_at": int, "join_duration": int, "host_name": str}
 
 
 class RumbleJoinView(discord.ui.View):
@@ -4694,7 +4697,7 @@ class RumbleJoinView(discord.ui.View):
         super().__init__(timeout=None)
         self.channel_id = channel_id
 
-    @discord.ui.button(label="Join Rumble", style=discord.ButtonStyle.primary, custom_id="rumble_join", emoji="⚔️", row=0)
+    @discord.ui.button(label="Join Battle", style=discord.ButtonStyle.success, custom_id="rumble_join", emoji="⚔️", row=0)
     async def join_rumble_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         session = active_rumbles.get(self.channel_id)
         if not session:
@@ -4712,6 +4715,7 @@ class RumbleJoinView(discord.ui.View):
         session["players"].append({
             "id": uid,
             "name": interaction.user.display_name,
+            "username": interaction.user.name,
             "mention": interaction.user.mention
         })
 
@@ -4724,15 +4728,50 @@ class RumbleJoinView(discord.ui.View):
                 msg = await channel.fetch_message(session["message_id"])
                 start_time = session.get("created_at", int(time.time()))
                 join_duration = session.get("join_duration", 120)
-                new_embed = build_rumble_lobby_embed(session["players"], join_duration, start_time)
+                host_name = session.get("host_name", "Host")
+                new_embed = build_rumble_lobby_embed(session["players"], join_duration, start_time, host_name)
                 await msg.edit(embed=new_embed)
         except Exception as edit_err:
             print(f"[RUMBLE EMBED EDIT ERROR] {edit_err}")
 
         # Send ONLY an ephemeral response to the user so the chat is never spammed
-        await safe_respond(interaction, f"⚔️ You joined the Rumble! (**{count}** warriors in arena)", ephemeral=True)
+        await safe_respond(interaction, f"⚔️ You signed up for the Rumble Royale! (**{count}** registered)", ephemeral=True)
 
-    @discord.ui.button(label="Start Battle", style=discord.ButtonStyle.danger, custom_id="rumble_start", emoji="🚀", row=0)
+    @discord.ui.button(label="Leave", style=discord.ButtonStyle.secondary, custom_id="rumble_leave", emoji="🏃", row=0)
+    async def leave_rumble_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        session = active_rumbles.get(self.channel_id)
+        if not session:
+            await safe_respond(interaction, "❌ No active Rumble in this channel.", ephemeral=True)
+            return
+        if session.get("started"):
+            await safe_respond(interaction, "❌ The Rumble has already started!", ephemeral=True)
+            return
+
+        uid = str(interaction.user.id)
+        existing = next((p for p in session["players"] if p["id"] == uid), None)
+        if not existing:
+            await safe_respond(interaction, "❌ You are not registered in this Rumble!", ephemeral=True)
+            return
+
+        session["players"].remove(existing)
+        count = len(session["players"])
+
+        # Update the announcement embed
+        try:
+            channel = interaction.channel
+            if channel and session.get("message_id"):
+                msg = await channel.fetch_message(session["message_id"])
+                start_time = session.get("created_at", int(time.time()))
+                join_duration = session.get("join_duration", 120)
+                host_name = session.get("host_name", "Host")
+                new_embed = build_rumble_lobby_embed(session["players"], join_duration, start_time, host_name)
+                await msg.edit(embed=new_embed)
+        except Exception as edit_err:
+            print(f"[RUMBLE EMBED EDIT ERROR] {edit_err}")
+
+        await safe_respond(interaction, f"🏃 You left the Rumble Royale. ({count} registered)", ephemeral=True)
+
+    @discord.ui.button(label="Start Battle Now", style=discord.ButtonStyle.danger, custom_id="rumble_start", emoji="🚀", row=1)
     async def start_rumble_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Admin-only check
         if not is_admin(interaction.user, interaction.guild):
@@ -4746,8 +4785,8 @@ class RumbleJoinView(discord.ui.View):
         if session.get("started"):
             await safe_respond(interaction, "❌ The Rumble has already started!", ephemeral=True)
             return
-        if len(session["players"]) < 3:
-            await safe_respond(interaction, "❌ Need at least **3 players** to start a Rumble!", ephemeral=True)
+        if len(session["players"]) < 2:
+            await safe_respond(interaction, "❌ Need at least **2 players** to start a Rumble!", ephemeral=True)
             return
 
         session["started"] = True
@@ -4756,7 +4795,7 @@ class RumbleJoinView(discord.ui.View):
         # Run the game in the background
         asyncio.create_task(run_rumble_game(interaction.channel, session["players"]))
 
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="rumble_cancel", emoji="❌", row=0)
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="rumble_cancel", emoji="❌", row=1)
     async def cancel_rumble_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction.user, interaction.guild):
             await safe_respond(interaction, "❌ Only admins can cancel the Rumble!", ephemeral=True)
@@ -4886,8 +4925,8 @@ async def _rumble_countdown(channel, ch_id: int, join_duration: int):
         if not session or session.get("started"):
             return
 
-        if len(session["players"]) < 3:
-            await channel.send("❌ **Rumble cancelled** — not enough players joined (minimum 3 required).")
+        if len(session["players"]) < 2:
+            await channel.send("❌ **Rumble cancelled** — not enough players joined (minimum 2 required).")
             if ch_id in active_rumbles:
                 del active_rumbles[ch_id]
             return
@@ -4929,6 +4968,7 @@ async def rumble_command(
         join_duration = max(30, min(join_duration or 120, 600))
 
         start_time = int(time.time())
+        host_name = interaction.user.display_name
         # Initialize session
         active_rumbles[ch_id] = {
             "players": [],
@@ -4936,10 +4976,11 @@ async def rumble_command(
             "started": False,
             "created_at": start_time,
             "join_duration": join_duration,
+            "host_name": host_name,
         }
 
         # Post join embed using build_rumble_lobby_embed
-        join_embed = build_rumble_lobby_embed([], join_duration, start_time)
+        join_embed = build_rumble_lobby_embed([], join_duration, start_time, host_name)
         view = RumbleJoinView(ch_id)
         if not interaction.response.is_done():
             await interaction.response.send_message(embed=join_embed, view=view)
