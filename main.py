@@ -4664,12 +4664,12 @@ class RumbleGame:
         return template
 
     def _kill_player(self, victim: dict, killer: Optional[dict] = None) -> str:
-        """Eliminate a player and return the event text using bold name (no @tag)."""
+        """Eliminate a player and return the event text using bold username (e.g. ayx5hhh)."""
         template = self._pick_template("deaths")
-        v_display = f"**{victim.get('name', victim.get('username', 'Warrior'))}**"
+        v_display = f"**{victim.get('username', victim.get('name', 'Warrior'))}**"
         if killer:
             self.kills[killer["id"]] = self.kills.get(killer["id"], 0) + 1
-            k_display = f"**{killer.get('name', killer.get('username', 'Warrior'))}**"
+            k_display = f"**{killer.get('username', killer.get('name', 'Warrior'))}**"
             text = template.format(player1=v_display, killer=k_display, player2=v_display)
         else:
             text = template.format(player1=v_display, killer="**The Arena**", player2=v_display)
@@ -4680,9 +4680,9 @@ class RumbleGame:
         return text
 
     def _survival_event(self, player: dict) -> str:
-        """Generate a survival event for a player using bold name (no @tag)."""
+        """Generate a survival event for a player using bold username."""
         template = self._pick_template("survival")
-        p_display = f"**{player.get('name', player.get('username', 'Warrior'))}**"
+        p_display = f"**{player.get('username', player.get('name', 'Warrior'))}**"
         return template.format(player1=p_display)
 
     def _try_revive(self) -> Optional[str]:
@@ -4697,7 +4697,7 @@ class RumbleGame:
         if revived["id"] in self.death_order:
             self.death_order.remove(revived["id"])
         template = self._pick_template("revives")
-        r_display = f"**{revived.get('name', revived.get('username', 'Warrior'))}**"
+        r_display = f"**{revived.get('username', revived.get('name', 'Warrior'))}**"
         return template.format(player1=r_display)
 
     def run_phase(self, phase_name: str, is_final: bool = False, phases_remaining: int = 1) -> discord.Embed:
@@ -4747,13 +4747,13 @@ class RumbleGame:
             if revive_text:
                 events.append(revive_text)
 
-        # Build phase embed with surviving players list (names in bold, no @tags)
+        # Build phase embed with surviving players list (usernames in bold, no @tags)
         total_players = len(self.alive) + len(self.dead)
         eliminated_total = len(self.dead)
 
         # Add surviving players section
         if self.alive:
-            survivor_names = ", ".join(f"**{p.get('name', p.get('username', 'Warrior'))}**" for p in self.alive[:25])
+            survivor_names = ", ".join(f"**{p.get('username', p.get('name', 'Warrior'))}**" for p in self.alive[:25])
             extra = f"\n*...and {len(self.alive) - 25} more*" if len(self.alive) > 25 else ""
             events.append(f"\n🟢 **SURVIVING PLAYERS ({len(self.alive)}):**\n{survivor_names}{extra}")
 
@@ -4770,7 +4770,7 @@ class RumbleGame:
         return embed
 
     def build_leaderboard_embeds(self) -> List[discord.Embed]:
-        """Build 3 end-of-game leaderboard summary embeds."""
+        """Build 3 end-of-game leaderboard summary embeds using usernames."""
         embeds = []
 
         # --- Determine final rankings ---
@@ -4810,8 +4810,9 @@ class RumbleGame:
             k = self.kills.get(pid, 0)
             rv = self.revives.get(pid, 0)
             status = "CHAMPION" if i == 0 else f"#{i+1} Place"
+            p_uname = p.get("username", p.get("name", "warrior"))
             revive_str = f" | 💫 {rv} revive(s)" if rv > 0 else ""
-            finalists_lines.append(f"{medal} **{p['name']}** — {status} | ⚔️ {k} kill(s){revive_str}")
+            finalists_lines.append(f"{medal} **{p_uname}** — {status} | ⚔️ {k} kill(s){revive_str}")
 
         e1 = discord.Embed(
             title="🏆 TOP 5 FINALISTS",
@@ -4819,7 +4820,8 @@ class RumbleGame:
             color=discord.Color.gold()
         )
         if champion:
-            e1.set_footer(text=f"👑 Champion: {champion['name']} | Theme: {self.theme_info['name']}")
+            champ_uname = champion.get("username", champion.get("name", "warrior"))
+            e1.set_footer(text=f"👑 Champion: {champ_uname} | Theme: {self.theme_info['name']}")
         embeds.append(e1)
 
         # --- LEADERBOARD 2: TOP 3 MOST KILLS (APEX PREDATORS) ---
@@ -4832,7 +4834,8 @@ class RumbleGame:
             if not p or count == 0:
                 continue
             m = kill_medals[i] if i < len(kill_medals) else f"#{i+1}"
-            kill_lines.append(f"{m} **{p['name']}** — ⚔️ {count} kill(s)")
+            p_uname = p.get("username", p.get("name", "warrior"))
+            kill_lines.append(f"{m} **{p_uname}** — ⚔️ {count} kill(s)")
 
         e2 = discord.Embed(
             title="⚔️ APEX PREDATORS — Most Kills",
@@ -4850,7 +4853,8 @@ class RumbleGame:
             p = all_players_map.get(pid)
             if not p:
                 continue
-            revive_lines.append(f"💫 **{p['name']}** — {count} revive(s)")
+            p_uname = p.get("username", p.get("name", "warrior"))
+            revive_lines.append(f"💫 **{p_uname}** — {count} revive(s)")
 
         e3 = discord.Embed(
             title="💫 PHOENIX AWARD — Most Revived Warriors",
@@ -4871,7 +4875,7 @@ def build_rumble_lobby_embed(
     tag_role: Optional[Union[discord.Role, str]] = None,
     theme: str = "modern"
 ) -> discord.Embed:
-    """Build or update the live Rumble Royale lobby announcement embed matching Diffy style with role tagging & themes."""
+    """Build or update the live Rumble Royale lobby announcement embed with usernames."""
     count = len(players)
     theme_info = RUMBLE_THEMES.get(theme, RUMBLE_THEMES["modern"])
     embed = discord.Embed(
@@ -4883,7 +4887,7 @@ def build_rumble_lobby_embed(
         player_lines = []
         for idx, p in enumerate(players[:40], start=1):
             uname = p.get("username", p.get("name", "warrior"))
-            player_lines.append(f"**{idx}.** {p['name']} (@{uname})")
+            player_lines.append(f"**{idx}.** {uname}")
         if len(players) > 40:
             player_lines.append(f"*...and {len(players) - 40} more*")
         players_text = "\n".join(player_lines)
@@ -5047,8 +5051,8 @@ async def run_rumble_game(channel, players: list, theme: str = "modern"):
         await channel.send(embed=lobby_embed)
         await asyncio.sleep(2)
 
-        # Dramatic intro with all player names (no @tags)
-        player_names = ", ".join(f"**{p.get('name', p.get('username', 'Warrior'))}**" for p in players[:40])
+        # Dramatic intro with all player usernames (no @tags)
+        player_names = ", ".join(f"**{p.get('username', p.get('name', 'Warrior'))}**" for p in players[:40])
         extra_players = f"\n*...and {len(players) - 40} more*" if len(players) > 40 else ""
 
         intro_embed = discord.Embed(
@@ -5085,11 +5089,11 @@ async def run_rumble_game(channel, players: list, theme: str = "modern"):
         # Champion announcement (clean username display, no @tags)
         if game.alive:
             champ = game.alive[0]
-            champ_name = champ.get('name', champ.get('username', 'Warrior'))
+            champ_uname = champ.get('username', champ.get('name', 'Warrior'))
             champ_embed = discord.Embed(
                 title="👑 THE CHAMPION STANDS!",
-                description=f"# 🏆 **{champ_name}**\n\n"
-                            f"**{champ_name}** is the last warrior standing in **{theme_info['name']}**!\n\n"
+                description=f"# 🏆 **{champ_uname}**\n\n"
+                            f"**{champ_uname}** is the last warrior standing in **{theme_info['name']}**!\n\n"
                             f"⚔️ **{game.kills.get(champ['id'], 0)}** kills\n"
                             f"💫 **{game.revives.get(champ['id'], 0)}** revives\n\n"
                             f"*They have earned the title of **RUMBLE ROYALE CHAMPION**!*",
@@ -5213,7 +5217,7 @@ async def rumble_command(
             theme_key = "modern"
 
         start_time = int(time.time())
-        host_name = interaction.user.display_name
+        host_name = interaction.user.name  # Use host's username
         # Initialize session
         active_rumbles[ch_id] = {
             "players": [],
