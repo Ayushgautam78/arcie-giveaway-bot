@@ -4664,13 +4664,12 @@ class RumbleGame:
         return template
 
     def _kill_player(self, victim: dict, killer: Optional[dict] = None) -> str:
-        """Eliminate a player and return the event text."""
+        """Eliminate a player and return the event text using bold name (no @tag)."""
         template = self._pick_template("deaths")
-        # Use @mentions for player names (bold mention style like Diffy bot)
-        v_display = f"**{victim['mention']}**"
+        v_display = f"**{victim.get('name', victim.get('username', 'Warrior'))}**"
         if killer:
             self.kills[killer["id"]] = self.kills.get(killer["id"], 0) + 1
-            k_display = f"**{killer['mention']}**"
+            k_display = f"**{killer.get('name', killer.get('username', 'Warrior'))}**"
             text = template.format(player1=v_display, killer=k_display, player2=v_display)
         else:
             text = template.format(player1=v_display, killer="**The Arena**", player2=v_display)
@@ -4681,9 +4680,10 @@ class RumbleGame:
         return text
 
     def _survival_event(self, player: dict) -> str:
-        """Generate a survival event for a player."""
+        """Generate a survival event for a player using bold name (no @tag)."""
         template = self._pick_template("survival")
-        return template.format(player1=f"**{player['mention']}**")
+        p_display = f"**{player.get('name', player.get('username', 'Warrior'))}**"
+        return template.format(player1=p_display)
 
     def _try_revive(self) -> Optional[str]:
         """20% chance to revive a dead player. Returns event text or None."""
@@ -4697,7 +4697,8 @@ class RumbleGame:
         if revived["id"] in self.death_order:
             self.death_order.remove(revived["id"])
         template = self._pick_template("revives")
-        return template.format(player1=revived["mention"])
+        r_display = f"**{revived.get('name', revived.get('username', 'Warrior'))}**"
+        return template.format(player1=r_display)
 
     def run_phase(self, phase_name: str, is_final: bool = False, phases_remaining: int = 1) -> discord.Embed:
         """Execute one phase of the battle and return an embed with results."""
@@ -4746,15 +4747,15 @@ class RumbleGame:
             if revive_text:
                 events.append(revive_text)
 
-        # Build phase embed with surviving players list (like Diffy bot)
+        # Build phase embed with surviving players list (names in bold, no @tags)
         total_players = len(self.alive) + len(self.dead)
         eliminated_total = len(self.dead)
 
         # Add surviving players section
         if self.alive:
-            survivor_mentions = ", ".join(p["mention"] for p in self.alive[:25])
+            survivor_names = ", ".join(f"**{p.get('name', p.get('username', 'Warrior'))}**" for p in self.alive[:25])
             extra = f"\n*...and {len(self.alive) - 25} more*" if len(self.alive) > 25 else ""
-            events.append(f"\n🟢 **SURVIVING PLAYERS ({len(self.alive)}):**\n{survivor_mentions}{extra}")
+            events.append(f"\n🟢 **SURVIVING PLAYERS ({len(self.alive)}):**\n{survivor_names}{extra}")
 
         desc_text = "\n\n".join(events)
         if len(desc_text) > 4000:
@@ -5031,7 +5032,7 @@ class RumbleJoinView(discord.ui.View):
 
 
 async def run_rumble_game(channel, players: list, theme: str = "modern"):
-    """Execute the full Rumble Royale game sequence in a channel."""
+    """Execute the full Rumble Royale game sequence in a channel with 15s gap between phases."""
     channel_id = channel.id
     game = RumbleGame(players, theme=theme)
     theme_info = RUMBLE_THEMES.get(theme, RUMBLE_THEMES["modern"])
@@ -5046,14 +5047,14 @@ async def run_rumble_game(channel, players: list, theme: str = "modern"):
         await channel.send(embed=lobby_embed)
         await asyncio.sleep(2)
 
-        # Dramatic intro with all player @mentions
-        player_mentions = ", ".join(p["mention"] for p in players[:40])
+        # Dramatic intro with all player names (no @tags)
+        player_names = ", ".join(f"**{p.get('name', p.get('username', 'Warrior'))}**" for p in players[:40])
         extra_players = f"\n*...and {len(players) - 40} more*" if len(players) > 40 else ""
 
         intro_embed = discord.Embed(
             title=f"🔥 RUMBLE ROYALE — {theme_info['name'].upper()} ARENA OPEN! 🔔",
             description=f"**{len(players)} Real Players** have dropped into the arena!\n\n"
-                        f"{player_mentions}{extra_players}\n\n"
+                        f"{player_names}{extra_players}\n\n"
                         f"*The countdown reaches zero... FIGHT!*",
             color=discord.Color.dark_red()
         )
@@ -5064,7 +5065,7 @@ async def run_rumble_game(channel, players: list, theme: str = "modern"):
         phases = get_dynamic_rumble_phases(len(players), theme=theme)
         total_phases = len(phases)
 
-        # Run each phase with smooth pacing
+        # Run each phase with 15-second pacing gap between each phase
         for idx, (phase_name, is_final) in enumerate(phases):
             if len(game.alive) <= 1:
                 break
@@ -5072,7 +5073,7 @@ async def run_rumble_game(channel, players: list, theme: str = "modern"):
             phases_remaining = total_phases - idx
             phase_embed = game.run_phase(phase_name, is_final=is_final, phases_remaining=phases_remaining)
             await channel.send(embed=phase_embed)
-            await asyncio.sleep(4)  # Pacing between phases
+            await asyncio.sleep(15)  # 15-second gap between each phase
 
         # Post leaderboard embeds
         await asyncio.sleep(3)
@@ -5081,13 +5082,14 @@ async def run_rumble_game(channel, players: list, theme: str = "modern"):
             await channel.send(embed=lb_embed)
             await asyncio.sleep(2)
 
-        # Champion announcement
+        # Champion announcement (clean username display, no @tags)
         if game.alive:
             champ = game.alive[0]
+            champ_name = champ.get('name', champ.get('username', 'Warrior'))
             champ_embed = discord.Embed(
                 title="👑 THE CHAMPION STANDS!",
-                description=f"# 🏆 {champ['mention']}\n\n"
-                            f"**{champ['name']}** is the last warrior standing in **{theme_info['name']}**!\n\n"
+                description=f"# 🏆 **{champ_name}**\n\n"
+                            f"**{champ_name}** is the last warrior standing in **{theme_info['name']}**!\n\n"
                             f"⚔️ **{game.kills.get(champ['id'], 0)}** kills\n"
                             f"💫 **{game.revives.get(champ['id'], 0)}** revives\n\n"
                             f"*They have earned the title of **RUMBLE ROYALE CHAMPION**!*",
