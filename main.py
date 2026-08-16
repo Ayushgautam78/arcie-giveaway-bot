@@ -4170,209 +4170,412 @@ async def update_giveaway_discord_message(giveaway_id: str):
 # ========== FEATURE 1: STORY-DRIVEN RUMBLE ROYALE MINIGAME ENGINE ======= #
 # ======================================================================== #
 
-# -------- 120+ Unique Death / Elimination Event Templates -------- #
-RUMBLE_DEATH_TEMPLATES = [
-    # ---- Combat Deaths ----
-    "{killer} sliced {player1} clean in half with a diamond sword.",
-    "{killer} sniped {player1} from 300 meters away with a scoped crossbow.",
-    "{killer} ran {player1} over with a stolen monster truck.",
-    "{killer} shoved {player1} off a cliff and watched them fall into the void.",
-    "{killer} drop-kicked {player1} into a pool of lava.",
-    "{killer} challenged {player1} to a duel — it lasted 0.3 seconds.",
-    "{killer} backstabbed {player1} while they were eating a sandwich.",
-    "{killer} yeeted {player1} into a tornado of razor blades.",
-    "{killer} electrocuted {player1} with a makeshift taser.",
-    "{killer} crushed {player1} under a falling anvil, cartoon-style.",
-    "{killer} set {player1} on fire with a flaming arrow.",
-    "{killer} poisoned {player1}'s water supply — they drank it without checking.",
-    "{killer} threw {player1} into a pit of hungry alligators.",
-    "{killer} smashed {player1} with a comically oversized mallet.",
-    "{killer} hit {player1} with a truck full of NFTs — the emotional damage was fatal.",
-    "{killer} launched {player1} into orbit with a trebuchet.",
-    "{killer} locked {player1} in a room with 100 angry wasps.",
-    "{killer} clotheslined {player1} at full sprint — instant elimination.",
-    "{killer} knocked {player1} unconscious with a frying pan to the face.",
-    "{killer} tripped {player1} into a pit of quicksand.",
-    "{killer} ambushed {player1} from behind a waterfall.",
-    "{killer} detonated a TNT trap right under {player1}'s feet.",
-    "{killer} strangled {player1} with a USB-C cable.",
-    "{killer} hit {player1} so hard they respawned in a different game.",
-    "{killer} convinced {player1} to eat a mystery mushroom — it was NOT the good kind.",
-    # ---- Web3 / Crypto-Themed Deaths ----
-    "{killer} rug-pulled {player1}'s entire existence. They are now worth $0.00.",
-    "{killer} minted {player1} as a worthless NFT and burned the collection.",
-    "{killer} drained {player1}'s liquidity pool — they evaporated instantly.",
-    "{player1} aped into a fake presale by {killer} and got liquidated.",
-    "{killer} flash-loaned {player1}'s life savings. Goodbye.",
-    "{killer} sent {player1} a malicious smart contract — they signed it without reading.",
-    "{player1} tried to paper hand their way out, but {killer} already dumped.",
-    "{killer} created a memecoin called $DEAD and {player1} was the only holder.",
-    "{player1} staked their life on {killer}'s validator — it got slashed.",
-    "{killer} exploited {player1}'s unaudited code. Critical vulnerability: existence.",
-    "{player1} connected their wallet to {killer}'s fake dApp — instant drain.",
-    "{killer} sandwiched {player1} in the MEV bot. Absolutely rekt.",
-    "{player1} tried to bridge to safety but {killer} hacked the bridge.",
-    "{killer} put {player1} in a Ponzi scheme so deep they disappeared.",
-    "{player1} got exit-scammed by {killer}. The roadmap was a lie.",
-    # ---- Funny / Absurd Deaths ----
-    "{player1} accidentally walked into a cactus and ceased to exist.",
-    "{player1} tripped over their own shoelaces and fell into a volcano.",
-    "{player1} tried to pet a wild bear — it did not go well.",
-    "{player1} ate 47 ghost peppers on a dare and spontaneously combusted.",
-    "{player1} laughed so hard at a meme they literally died.",
-    "{player1} forgot how to breathe. Just... forgot.",
-    "{player1} was eliminated by a rogue shopping cart in a parking lot.",
-    "{player1} tried to fight a kangaroo. The kangaroo won. Easily.",
-    "{player1} slipped on a banana peel into a woodchipper. Classic.",
-    "{player1} got struck by lightning while complaining about the weather.",
-    "{player1} sneezed so violently they launched themselves off a cliff.",
-    "{player1} tried to speedrun life and hit a fatal glitch.",
-    "{player1} was bonked so hard by the bonk meme dog they ceased to exist.",
-    "{player1} challenged gravity to a fight. Gravity always wins.",
-    "{player1} stepped on a Lego and ascended to another dimension from the pain.",
-    "{player1} drank bathwater from a questionable source. Game over.",
-    "{player1} opened 10,000 loot boxes and found nothing but despair.",
-    "{player1} got roasted so hard in the group chat they vaporized.",
-    "{player1} tried to divide by zero. Reality rejected them.",
-    "{player1} was cancelled on Twitter so hard they disappeared from existence.",
-    # ---- Environmental Hazard Deaths ----
-    "{player1} was swallowed by a sinkhole that appeared out of nowhere.",
-    "{player1} got crushed by a falling meteor — wrong place, wrong time.",
-    "{player1} walked into a sandstorm and was never seen again.",
-    "{player1} fell into a glacier crevasse — frozen for eternity.",
-    "{player1} was caught in a flash flood while taking a selfie.",
-    "{player1} was buried alive in a sudden avalanche.",
-    "{player1} got swept away by a tsunami of molten cheese.",
-    "{player1} wandered into a zone of toxic gas — they thought it was fog.",
-    "{player1} got struck by a falling tree during a windstorm.",
-    "{player1} fell through thin ice into freezing water. No escape.",
-    # ---- Trap / Stealth Deaths ----
-    "{killer} rigged {player1}'s camp with tripwire explosives. BOOM.",
-    "{killer} dug a hidden pitfall trap — {player1} walked right into it.",
-    "{killer} replaced {player1}'s health potion with bleach.",
-    "{killer} programmed {player1}'s GPS to lead them off a cliff.",
-    "{killer} hid inside a supply crate and jumped out at {player1}.",
-    "{killer} waited 6 hours in a bush just to eliminate {player1}. Dedication.",
-    "{killer} left a fake treasure chest — {player1} opened it. It was a bomb.",
-    "{killer} disguised themselves as an ally and stabbed {player1} in the back.",
-    # ---- Arena / PvP Deaths ----
-    "{killer} and {player1} had a 1v1 bare-knuckle brawl. {killer} won by KO.",
-    "{killer} outplayed {player1} in a high-speed hovercraft chase.",
-    "{killer} eliminated {player1} with a perfectly timed parry counter-attack.",
-    "{killer} used {player1} as a human shield and then discarded them.",
-    "{killer} 360 no-scoped {player1}. The crowd went wild.",
-    "{killer} combo'd {player1} with a 47-hit chain attack. Flawless victory.",
-    "{killer} and {player1} fought on the edge of a volcano. {killer} won.",
-    "{killer} summoned a pack of wolves that chased down {player1}.",
-    "{killer} threw a boomerang that came back and hit {player1} in the face.",
-    "{killer} pulled {player1} underwater and held them there. Brutal.",
-    # ---- Epic / Lore-Heavy Deaths ----
-    "{killer} activated the ancient artifact and {player1} was vaporized by holy light.",
-    "{player1} angered the arena gods and was smited by divine lightning.",
-    "The ground beneath {player1} opened up — the arena itself consumed them.",
-    "{killer} recited an ancient spell. {player1} turned to stone instantly.",
-    "{player1} was chosen by the arena as the blood sacrifice. No escape.",
-    "A dragon swooped down and carried {player1} away. They were not seen again.",
-    "{killer} unleashed a forbidden technique — {player1} was erased from the timeline.",
-    "The cursed blade of {killer} drained {player1}'s life force completely.",
-    "{player1} wandered into the Shadow Realm. The door locked behind them.",
-    "{killer} opened a portal beneath {player1} — they fell into the endless void.",
-    # ---- Multi-Kill Events ----
-    "{killer} detonated a massive bomb! {player1} was caught in the blast!",
-    "{killer} triggered a chain explosion! {player1} didn't stand a chance!",
-    "A meteor shower hit the arena! {player1} was obliterated by the impact!",
-    "The arena flooded with acid! {player1} couldn't reach high ground in time!",
-    "{killer} unleashed a devastating shockwave that sent {player1} flying into the void!",
-    # ---- Technology / Modern Deaths ----
-    "{killer} hacked {player1}'s cybernetic implants — instant shutdown.",
-    "{player1} got caught in {killer}'s EMP blast. All systems offline. Permanently.",
-    "{killer} deployed a swarm of attack drones on {player1}.",
-    "{player1} trusted AI to save them. The AI chose {killer} instead.",
-    "{killer} overloaded {player1}'s power suit. It exploded spectacularly.",
-    "{player1} was digitized and deleted from the simulation by {killer}.",
-    # ---- Betrayal Deaths ----
-    "{killer} and {player1} were allies... until they weren't. Backstab!",
-    "{player1} turned their back on {killer} for ONE second. Fatal mistake.",
-    "{killer} pretended to surrender, then struck {player1} down.",
-    "{player1} shared their last supplies with {killer}. {killer} used them to craft a weapon.",
-    "{killer} invited {player1} to a 'peace treaty' — it was an ambush.",
-]
+# -------- THEMATIC STORY-DRIVEN RUMBLE ROYALE MINIGAME ENGINE -------- #
+RUMBLE_THEMES = {
+    "modern": {
+        "name": "Modern & Urban Memes",
+        "emoji": "🏙️",
+        "deaths": [
+            "{killer} ran {player1} over with a stolen Tesla on Autopilot.",
+            "{killer} sniped {player1} while they were busy filming a TikTok dance.",
+            "{killer} exposed {player1}'s search history in the group chat — instant vaporization.",
+            "{killer} replaced {player1}'s iced latte with pure liquid nitrogen.",
+            "{killer} cancelled {player1} on Twitter so hard they ceased to exist.",
+            "{killer} air-dropped an unskippable 10-hour podcast directly into {player1}'s brain.",
+            "{killer} pushed {player1} into an open manhole during rush hour.",
+            "{killer} hacked {player1}'s smart fridge and froze them into a popsicle.",
+            "{killer} disconnected {player1}'s Wi-Fi during a clutch 1v1 — heart stopped.",
+            "{killer} hit {player1} with an electric scooter going 45 mph.",
+            "{killer} tricked {player1} into clicking a suspicious phishing link — drained from reality.",
+            "{killer} trapped {player1} in an IKEA maze. They were never seen again.",
+            "{killer} dropped a 50lb dumbbell on {player1} during leg day.",
+            "{killer} roasted {player1} in a rap battle so badly their soul left their body.",
+            "{killer} convinced {player1} to drink 12 cans of Monster Energy at once.",
+            "{killer} challenged {player1} to a microwave burrito duel — third-degree burns.",
+            "{killer} locked {player1} in a room playing baby shark on infinite loop.",
+            "{killer} hit {player1} in the face with a frozen pizza like a frisbee.",
+            "{killer} sent a drone strike loaded with glitter bombs directly at {player1}.",
+            "{killer} flashbanged {player1} with light mode Discord at 3 AM.",
+            "{player1} slipped on a puddle of spilled Boba tea and cracked the space-time continuum.",
+            "{player1} stepped on a hidden Lego brick barefoot and ascended to heaven.",
+            "{player1} walked into a glass sliding door at full speed.",
+            "{player1} tried to microwave aluminum foil. BOOM.",
+            "{player1} choked on a single potato chip while binge-watching Netflix.",
+            "{player1} forgot to breathe while doom-scrolling Twitter at 4 AM.",
+            "{player1} tried to pet a wild raccoon behind the dumpster. The raccoon won.",
+            "{player1} got taken out by a rogue automated Roomba with a taped kitchen knife.",
+            "{player1} fell asleep in a tanning bed and turned into extra crispy bacon.",
+            "{player1} tried to parallel park between two semi-trucks. Fatal error.",
+            "{player1} drank water from a suspicious fountain in the subway station.",
+            "{player1} sneezed so violently they got launched through a second-story window.",
+            "{player1} accidentally joined a Zoom call without muting — died of embarrassment.",
+            "{player1} tried to fight their reflection in a department store mirror.",
+            "{player1} was crushed by an avalanche of Amazon delivery boxes.",
+            "{player1} tried to jump the subway turnstile and got stuck upside down forever.",
+            "{player1} ate a 3-week-old taco found behind the couch. RIP.",
+            "{player1} got tangled in 100 meters of wired headphone cables and suffocated.",
+            "{player1} attempted a parkour stunt off a dumpster and faceplanted concrete.",
+            "{player1} tried to charge their phone in a microwave. Results were explosive.",
+        ],
+        "survival": [
+            "{player1} found a functioning 100% battery power bank and full 5G signal.",
+            "{player1} dodged an attack thanks to active noise-cancelling AirPods.",
+            "{player1} ordered an emergency Uber Comfort and escaped the danger zone.",
+            "{player1} hid inside a cardboard Amazon Prime box and went unnoticed.",
+            "{player1} chugged an iced matcha latte and gained ultra-instinct speed.",
+            "{player1} used a tactical ring light to blind approaching enemies.",
+            "{player1} set up a fake Wi-Fi hotspot to lure enemies away.",
+            "{player1} found an unopened box of glazed donuts in the breakroom.",
+            "{player1} survived the night by binge-watching survival tutorials on YouTube.",
+            "{player1} put on high-visibility construction vest — everyone ignored them.",
+        ],
+        "revives": [
+            "✨ **CLOUD BACKUP!** **{player1}** restored their life from an iCloud backup!",
+            "✨ **DEFIBRILLATOR!** Paramedics arrived with 500 volts — **{player1}** is ALIVE!",
+            "✨ **COLD BREW REBIRTH!** An intravenous drip of iced coffee revived **{player1}**!",
+            "✨ **RESPAWN!** **{player1}** bought an extra life with microtransactions!",
+            "✨ **MIRACLE!** **{player1}** survived because the hit didn't register on 200ms ping!",
+        ],
+        "phases": [
+            "🩸 THE RUSH HOUR BLOODBATH",
+            "🌅 DAY 1 — COMMUTE OF CHAOS",
+            "🌙 NIGHT 1 — MIDNIGHT DOORDASH",
+            "🌋 ARENA HAZARD — SERVER ROOM FIRE",
+            "🌅 DAY 2 — OFFICE WARFARE",
+            "🌙 NIGHT 2 — LATE NIGHT BINGE",
+            "⚡ ARENA HAZARD — WI-FI BLACKOUT",
+            "🌅 DAY 3 — VIRAL CLOUT WAR",
+            "🌙 NIGHT 3 — GHOSTED IN THE DARK",
+            "☕ THE COFFEE RUN SUPPLY DROP",
+            "🌅 DAY 4 — CANCEL CULTURE CLASH",
+            "🌙 NIGHT 4 — SCREAMS IN THE SUBWAY",
+            "📱 ARENA HAZARD — SCREEN TIME OVERDOSE",
+            "🌅 DAY 5 — SMARTPHONE SURVIVAL",
+            "🌙 NIGHT 5 — TWILIGHT IN THE ALLEY",
+            "🔥 ARENA HAZARD — TESLA AUTO-PILOT MALFUNCTION",
+            "🌅 DAY 6 — GYM BRO SHOWDOWN",
+            "🌙 NIGHT 6 — ALL-NIGHTER PANIC",
+            "🌪️ ARENA HAZARD — BLACK FRIDAY STAMPEDE",
+            "🌅 DAY 7 — SIDE HUSTLE ROYALE",
+            "🌙 NIGHT 7 — URBAN MYTHS",
+            "☣️ ARENA HAZARD — ENERGY DRINK SPILL",
+            "🌅 DAY 8 — THE METRO MAYHEM",
+            "🌙 NIGHT 8 — LAST CALL MADNESS",
+            "☠️ SUDDEN DEATH — EVICTION NOTICE",
+            "🌅 DAY 9 — THE STREET BRAWL",
+            "🌙 NIGHT 9 — DARK CITY GLORY",
+            "🔥 ARENA HAZARD — AIR FRYER EXPLOSION",
+            "🌅 DAY 10 — THE FINAL DEADLINE",
+            "🌙 NIGHT 10 — END OF THE LEASE",
+        ],
+        "final_phase": "⚔️ THE METROPOLIS SHOWDOWN — FINAL 1V1"
+    },
+    "japanese": {
+        "name": "Japanese Anime & Samurai Lore",
+        "emoji": "⛩️",
+        "deaths": [
+            "{killer} drew a legendary folded Nippon katana and sliced {player1} in 0.001 seconds.",
+            "{killer} trapped {player1} in an endless anime filler beach episode — soul evaporated.",
+            "{killer} executed the forbidden '1,000 Years of Death' jutsu on {player1}.",
+            "{killer} shouted a 3-minute powerup attack monologue and vaporized {player1}.",
+            "{killer} summoned a giant mecha robot and stomped {player1} into a pancake.",
+            "{killer} hit {player1} with Truck-kun — {player1} was instantly isekai'd to another world.",
+            "{killer} overpowered {player1} using the undisputed, unstoppable 'Power of Friendship'.",
+            "{killer} forced {player1} to eat a lethal dumpling infused with 100% pure wasabi paste.",
+            "{killer} sliced {player1}'s shadow — {player1} split in half 5 seconds later.",
+            "{killer} activated a Death Note and wrote {player1}'s name in bold calligraphy.",
+            "{killer} roundhouse kicked {player1} straight through a traditional paper shoji screen.",
+            "{killer} threw a flurry of poisoned shurikens into {player1}'s armor gap.",
+            "{killer} challenged {player1} to a spicy ramen speed-eating duel — stomach exploded.",
+            "{killer} summoned a nine-tailed spirit fox that devoured {player1} whole.",
+            "{killer} sliced {player1}'s bamboo staff and followed up with a sonic boom chop.",
+            "{killer} blinded {player1} with cherry blossom petals before striking the fatal blow.",
+            "{killer} unleashed an almighty Domain Expansion — {player1} had no counter-measure.",
+            "{killer} used substitution jutsu with a log right as {player1} ran off a cliff.",
+            "{killer} punched {player1} so hard they shattered the anime animation budget.",
+            "{killer} placed an explosive seal paper bomb under {player1}'s tatami mat.",
+            "{player1} committed accidental seppuku while trying to open a can of tuna with a wakizashi.",
+            "{player1} tried to run like Naruto with arms back and tripped face-first down Mount Fuji.",
+            "{player1} got distracted by a cute cat anime girl and walked straight into a spike pit.",
+            "{player1} took a bite of a poisonous blowfish (fugu) prepared by an amateur chef.",
+            "{player1} shouted 'NANI?!' so loud their vocal cords snapped and they collapsed.",
+            "{player1} challenged an elderly master with a broom — master one-shotted them.",
+            "{player1} fell into a steaming hot spring filled with boiling volcanic magma.",
+            "{player1} opened an ancient sealed scroll and unleashed an angry sealed demon.",
+            "{player1} tried to catch a speeding katana blade barehanded. Did not work.",
+            "{player1} got trampled by a stampede of enraged wild tanukis.",
+            "{player1} forgot to eat their daily onigiri rice ball and ran out of chakra.",
+            "{player1} tried to deflect a laser beam with a wooden soup bowl.",
+            "{player1} stepped on a caltrop trap hidden in the tall bamboo forest.",
+            "{player1} tried to power up for 45 minutes straight and suffered a brain aneurysm.",
+            "{player1} got swallowed by Godzilla during a casual morning stroll in Tokyo.",
+            "{player1} tried to tame a wild samurai horse — got kicked into orbit.",
+            "{player1} ate 50 pieces of poisonous fugu sushi on a bet.",
+            "{player1} stared directly into an enchanted mirror and turned into an anime plushie.",
+            "{player1} lost their way in the haunted Aokigahara mist and faded away.",
+            "{player1} attempted forbidden shadow clone technique without sufficient mana.",
+        ],
+        "survival": [
+            "{player1} remembered an emotional childhood flashback and gained a 300% strength boost.",
+            "{player1} ate a hot bowl of tonkotsu ramen and fully restored their health and spirit.",
+            "{player1} swapped places with a wooden log using substitution jutsu just in time.",
+            "{player1} found a rare Senzu Bean and instantly healed all mortal wounds.",
+            "{player1} meditated under a freezing waterfall and unlocked ultra sensory awareness.",
+            "{player1} disguised themselves as a humble tea merchant and bypassed danger.",
+            "{player1} found a legendary dragon-forged helmet inside an abandoned shrine.",
+            "{player1} forged a blood oath alliance with a wandering ronin warrior.",
+            "{player1} caught a flying ninja star out of mid-air with chopsticks.",
+            "{player1} blended seamlessly into a field of blooming cherry blossoms.",
+        ],
+        "revives": [
+            "✨ **EDO TENSEI!** Dark talisman seals glow — **{player1}** is reanimated from the ashes!",
+            "✨ **DRAGON BALLS!** Shenron granted a wish — **{player1}** is brought back to life!",
+            "✨ **PLOT ARMOR!** The anime author gave **{player1}** plot armor — they SURVIVE!",
+            "✨ **ISEKAI REVERSE!** **{player1}** rejected the afterlife and respawned into the arena!",
+            "✨ **PHOENIX REBIRTH!** The legendary Suzaku flame ignites — **{player1}** rises anew!",
+        ],
+        "phases": [
+            "⛩️ SAKURA BLOODBATH — THE TOURNAMENT COMMENCES",
+            "🌅 DAY 1 — TRAINING ARC BEGINS",
+            "🌙 NIGHT 1 — SHADOW OF THE NINJA",
+            "🌋 ARENA HAZARD — VOLCANIC KAIJU ROAR",
+            "🌅 DAY 2 — SHOGUN'S RECKONING",
+            "🌙 NIGHT 2 — MOONLIT BUSHIDO",
+            "⚡ ARENA HAZARD — ANIME LIGHTNING BLITZ",
+            "🌅 DAY 3 — MECHA OVERDRIVE",
+            "🌙 NIGHT 3 — SPIRITS OF THE SHRINE",
+            "🍜 THE RAMEN FEAST CRATE",
+            "🌅 DAY 4 — FINAL FORM UNLOCKED",
+            "🌙 NIGHT 4 — SENPAI'S WRATH",
+            "🩸 BLOOD MOON — YOKAI FRENZY",
+            "🌅 DAY 5 — KATANA CROSSROADS",
+            "🌙 NIGHT 5 — SILENT KUNAI WHISPERS",
+            "❄️ ARENA HAZARD — MOUNT FUJI BLIZZARD",
+            "🌅 DAY 6 — POWER LEVEL OVER 9000",
+            "🌙 NIGHT 6 — MIDNIGHT RONIN",
+            "🌪️ ARENA HAZARD — CHERRY BLOSSOM TYPHOON",
+            "🌅 DAY 7 — THE DOJO ELIMINATION",
+            "🌙 NIGHT 7 — CLAN WARFARE",
+            "☣️ ARENA HAZARD — WASABI TOXIC MIST",
+            "🌅 DAY 8 — ANIME BETRAYAL",
+            "🌙 NIGHT 8 — EVE OF HONOUR",
+            "☠️ SUDDEN DEATH — COLLAPSING MECHA HANGAR",
+            "🌅 DAY 9 — TSUNDERE GAUNTLET",
+            "🌙 NIGHT 9 — THE LAST SAMURAI SHADOW",
+            "🔥 ARENA HAZARD — GODZILLA ATOMIC BREATH",
+            "🌅 DAY 10 — THE ULTIMATE JUTSU",
+            "🌙 NIGHT 10 — TWILIGHT OF GLORY",
+        ],
+        "final_phase": "⚔️ THE SHOGUN'S DUEL — FINAL 1V1 SHOWDOWN"
+    },
+    "european": {
+        "name": "European Medieval & Comic Knights",
+        "emoji": "🏰",
+        "deaths": [
+            "{killer} launched {player1} over the castle walls with a 90-meter counterweight trebuchet.",
+            "{killer} beat {player1} to death with a 3-day-old rock-hard French baguette.",
+            "{killer} challenged {player1} to a formal joust — lance went straight through the chest.",
+            "{killer} released the vicious Killer Rabbit of Caerbannog upon {player1}.",
+            "{killer} pushed {player1} into the castle moat infested with hungry pikes and leeches.",
+            "{killer} dropped a massive iron portcullis directly onto {player1}.",
+            "{killer} insulted {player1}'s mother with severe French mockery — emotional death.",
+            "{killer} challenged {player1} to a drinking duel with 90% proof mead. Liver gave out.",
+            "{killer} poured a cauldron of boiling hot soup from the ramparts onto {player1}.",
+            "{killer} beheaded {player1} on the public guillotine for treason against the realm.",
+            "{killer} challenged {player1} to a duel of honour and struck before the glove hit the ground.",
+            "{killer} locked {player1} inside the castle torture dungeon with the iron maiden.",
+            "{killer} set fire to {player1}'s thatch-roof cottage while they were asleep inside.",
+            "{killer} shot {player1} through an arrow slit with a heavy English longbow.",
+            "{killer} convinced the royal court that {player1} was a witch — burnt at the stake.",
+            "{killer} struck {player1} with a spiked flail right through their steel plate helmet.",
+            "{killer} challenged {player1} to a sword fight, but pulled out a hidden crossbow.",
+            "{killer} pushed {player1} into a giant vat of fermenting grape wine. Drowned happy.",
+            "{killer} dropped a church bell from the bell tower onto {player1}.",
+            "{killer} banished {player1} into the dark Bavarian forest inhabited by bloodthirsty wolves.",
+            "{player1} fell off the drawbridge while trying to do a theatrical knight salute.",
+            "{player1} got stuck inside their heavy steel armor during a rainstorm and rusted solid.",
+            "{player1} tried to pet a fire-breathing dragon. Dragon was not in a petting mood.",
+            "{player1} ate a wheel of unpasteurized medieval cheese from the 14th century.",
+            "{player1} tripped over their oversized royal cape and plummeted down the spiral staircase.",
+            "{player1} tried to pull the sword from the stone — herniated three discs and perished.",
+            "{player1} got kicked in the chest by an armored warhorse at full gallop.",
+            "{player1} mistook toxic belladonna berries for sweet grapes at the royal feast.",
+            "{player1} tried to parry a cannonball with a small wooden buckler shield.",
+            "{player1} got lost in the royal hedge maze and starved to death 20 feet from the exit.",
+            "{player1} tried to swim across the English Channel in full plate armor. Sunk like an anchor.",
+            "{player1} was pecked to pieces by a flock of aggressive carrier pigeons.",
+            "{player1} challenged the Black Knight — learned the hard way 'tis NOT just a scratch.",
+            "{player1} danced the medieval jig so vigorously they suffered cardiac arrest.",
+            "{player1} dropped their holy relic into a bottomless well and jumped in after it.",
+            "{player1} ate a bowl of court jester's mystery soup. It contained hemlock.",
+            "{player1} got crushed under a collapsing wooden siege tower.",
+            "{player1} was charged by an angry wild boar during the royal hunt.",
+            "{player1} tried to climb the slippery ivy wall of the fortress and slipped.",
+            "{player1} drank water downstream from the castle latrine. Cholera speedrun.",
+        ],
+        "survival": [
+            "{player1} found the Holy Hand Grenade of Antioch and kept the beasts at bay.",
+            "{player1} took refuge in the tavern cellar with three casks of fine elderberry wine.",
+            "{player1} shielded themselves with a solid wheel of 5-year aged parmesan cheese.",
+            "{player1} received a royal pardon sealed by the King's golden signet ring.",
+            "{player1} discovered a secret underground passage connecting the dungeons to safety.",
+            "{player1} donned a full suit of gilded knight armor with +50 defense.",
+            "{player1} befriended a wandering troubadour who sang songs of their glory.",
+            "{player1} found a roasted turkey leg in the banquet hall and restored full vigor.",
+            "{player1} successfully climbed into the fortress bell tower and watched enemies pass.",
+            "{player1} bribed the castle guards with a pouch of shiny silver florins.",
+        ],
+        "revives": [
+            "✨ **'TIS BUT A SCRATCH!** **{player1}** stood right back up! Just a flesh wound!",
+            "✨ **HOLY BLESSING!** The Archbishop cast a miraculous resurrection chant on **{player1}**!",
+            "✨ **ALCHEMIST ELIXIR!** The royal court alchemist poured philosopher's stone liquid on **{player1}**!",
+            "✨ **DIVINE INTERVENTION!** Saint George intervened — **{player1}** rises from death!",
+            "✨ **ROYAL RESURRECTION!** The King decrees that **{player1}** is NOT allowed to die yet!",
+        ],
+        "phases": [
+            "🏰 SIEGE OF THE BASTILLE — BLOODBATH",
+            "🌅 DAY 1 — MARCH OF THE CRUSADERS",
+            "🌙 NIGHT 1 — CASTLE DUNGEON SCREAMS",
+            "🌋 ARENA HAZARD — CATAPULT VOLLEY",
+            "🌅 DAY 2 — THE GRAND TOURNAMENT",
+            "🌙 NIGHT 2 — WHISPERS IN THE TAVERN",
+            "⚡ ARENA HAZARD — WITCH'S CURSE",
+            "🌅 DAY 3 — THE GUILLOTINE GAUNTLET",
+            "🌙 NIGHT 3 — BLACK KNIGHT'S AMBUSH",
+            "🍗 THE ROYAL BANQUET CRATE",
+            "🌅 DAY 4 — PEASANT REBELLION",
+            "🌙 NIGHT 4 — SHADOWS OF THE CATHEDRAL",
+            "🩸 BLOOD MOON — WEREWOLF SIEGE",
+            "🌅 DAY 5 — KNIGHTS OF THE ROUND TABLE",
+            "🌙 NIGHT 5 — MIDNIGHT AT THE MOAT",
+            "❄️ ARENA HAZARD — ALPINE GLACIAL FROST",
+            "🌅 DAY 6 — THE DRAWBRIDGE CLASH",
+            "🌙 NIGHT 6 — ASSASSINS IN THE TAVERN",
+            "🌪️ ARENA HAZARD — PLAGUE WIND",
+            "🌅 DAY 7 — JOUSTING ROYALE",
+            "🌙 NIGHT 7 — THE KING'S GAMBIT",
+            "☣️ ARENA HAZARD — ROTTEN CHEESE FOG",
+            "🌅 DAY 8 — REVOLUTION DAWN",
+            "🌙 NIGHT 8 — TAVERN BRAWL",
+            "☠️ SUDDEN DEATH — COLLAPSING FORTRESS",
+            "🌅 DAY 9 — THE MONARCH'S WRATH",
+            "🌙 NIGHT 9 — THE LAST BASTION",
+            "🔥 ARENA HAZARD — DRAGON BREATH INFERNO",
+            "🌅 DAY 10 — CHIVALRIC SHOWDOWN",
+            "🌙 NIGHT 10 — DUSK OF THE EMPIRE",
+        ],
+        "final_phase": "⚔️ THE CROWN JOUST — FINAL 1V1 DUEL"
+    },
+    "web3_ancient": {
+        "name": "Web3 Crypto & Ancient Colosseum",
+        "emoji": "🏛️",
+        "deaths": [
+            "{killer} rug-pulled {player1}'s entire existence. {player1} is now worth $0.00.",
+            "{killer} fed {player1} to the Roman colosseum lions for the entertainment of Caesar.",
+            "{killer} minted {player1} into a worthless JPEG and burned the smart contract.",
+            "{killer} liquidated {player1}'s 100x leveraged long position on Bitcoin. Instant rekt.",
+            "{killer} flash-loaned {player1}'s soul and drained the liquidity pool.",
+            "{killer} impaled {player1} with a gladiator trident and cast them into the fire pit.",
+            "{killer} sent a phishing transaction to {player1}'s MetaMask — wallet and life drained.",
+            "{killer} trapped {player1} inside an un-audited smart contract loop forever.",
+            "{killer} struck {player1} with Zeus's golden thunderbolt from Mount Olympus.",
+            "{killer} crushed {player1} under a falling marble Roman statue of Apollo.",
+            "{killer} sandwiched {player1}'s trade with MEV sniper bots. Total annihilation.",
+            "{killer} pushed {player1} into a pit of hungry gladiatorial vipers.",
+            "{killer} threw {player1} out of a chariot moving at supersonic speed.",
+            "{killer} hacked the cross-chain bridge {player1} was crossing. Sunk to the bottom.",
+            "{killer} convinced {player1} to ape their life savings into $LUNA 3.0. Dead on arrival.",
+            "{killer} slashed {player1}'s validator node and confiscated their life force.",
+            "{killer} fed {player1} to the mythical Minotaur in the depths of the labyrinth.",
+            "{killer} sold {player1}'s private seed phrase on the dark web.",
+            "{killer} hit {player1} in the face with a heavy stone Spartan shield.",
+            "{killer} initiated a 51% attack on {player1}'s brainwaves.",
+            "{player1} paid 14 ETH in gas fees for a $2 transaction and suffered heart failure.",
+            "{player1} lost their 24-word seed phrase and evaporated into thin air.",
+            "{player1} tried to pet a Roman colosseum tiger. Tiger had high slippage.",
+            "{player1} aped into a memecoin called $SCAM and got exit-scammed in 4 seconds.",
+            "{player1} fell off the top row of the colosseum while checking portfolio on phone.",
+            "{player1} drank water from an ancient lead Roman aqueduct. Heavy metal poisoning.",
+            "{player1} staked their tokens on an anonymous dev's farm. Dev moved to Bahamas.",
+            "{player1} tried to wrestle a Spartan warrior while wearing sandals.",
+            "{player1} connected cold wallet to a shady Discord DM link. Drained instantly.",
+            "{player1} got struck by lightning while praying to the Crypto Gods for a pump.",
+            "{player1} paper-handed at the exact bottom of the red candle and perished from grief.",
+            "{player1} tried to jump across the chariot track and got run over by 4 teams.",
+            "{player1} forgot to approve token allowance and got stuck in limbo.",
+            "{player1} ate ancient Roman fermented fish sauce (Garum) that was 2,000 years expired.",
+            "{player1} tried to arbitrage between Uniswap and Sushiswap and lost everything.",
+            "{player1} got crushed under a mountain of worthless physical Bitcoin tokens.",
+            "{player1} looked directly into Medusa's eyes while trading on DexScreener.",
+            "{player1} sent 10 BTC to a burner address by typing one wrong letter.",
+            "{player1} got tackled by an armored gladiator right into the spiked arena wall.",
+            "{player1} tried to short Ethereum right before the biggest green candle in history.",
+        ],
+        "survival": [
+            "{player1} held with DIAMOND HANDS 💎 through the crash and emerged unscathed.",
+            "{player1} was protected by Athena's golden aegis shield.",
+            "{player1} stored their vital essence inside a cold storage Ledger hardware wallet.",
+            "{player1} received an unexpected 100,000 token airdrop from an ancient whale.",
+            "{player1} took shelter in the VIP box with Emperor Caesar and drank nectar.",
+            "{player1} bypassed the gas war by using a private flashbot bundle.",
+            "{player1} found a legendary Spartan spear buried beneath the arena sand.",
+            "{player1} dodged the liquidation wick with 0.01% health remaining.",
+            "{player1} was blessed by Hermes with winged sandals for maximum agility.",
+            "{player1} diversified into gold and survived the bear market storm.",
+        ],
+        "revives": [
+            "✨ **HARD FORK!** The blockchain rolled back the state — **{player1}** is RESTORED!",
+            "✨ **LAZARUS PROTOCOL!** **{player1}** executed a smart recovery contract and lives!",
+            "✨ **BUY THE DIP!** **{player1}** bought their own bottom and surged back to life!",
+            "✨ **OLYMPUS BLESSING!** Zeus cast a spark of eternal fire — **{player1}** is REBORN!",
+            "✨ **AIRDROP RECOVERY!** An anonymous whale funded **{player1}**'s resurrection!",
+        ],
+        "phases": [
+            "🏛️ COLOSSEUM BLOODBATH — THE GATES OPEN",
+            "🌅 DAY 1 — DAWN OF GLADIATORS",
+            "🌙 NIGHT 1 — LIQUIDATION DESPERATION",
+            "🌋 ARENA HAZARD — LAVA PIT ARENA",
+            "🌅 DAY 2 — THE BEAR MARKET DIP",
+            "🌙 NIGHT 2 — COLD WALLET HIDING",
+            "⚡ ARENA HAZARD — GAS FEE TSUNAMI",
+            "🌅 DAY 3 — GLADIATOR GAUNTLET",
+            "🌙 NIGHT 3 — CHARIOT CRASHES",
+            "🍖 THE BULL RUN AIRDROP",
+            "🌅 DAY 4 — SHITCOIN SHAKEDOWN",
+            "🌙 NIGHT 4 — CRYPTO WINTER SHADOWS",
+            "🩸 BLOOD MOON — SHORT SQUEEZE SLAUGHTER",
+            "🌅 DAY 5 — TITANS OF THE ARENA",
+            "🌙 NIGHT 5 — MIDNIGHT RUGPULL",
+            "❄️ ARENA HAZARD — HARD FORK BLIZZARD",
+            "🌅 DAY 6 — CHARIOT DUEL",
+            "🌙 NIGHT 6 — STAKING SHADOWS",
+            "🌪️ ARENA HAZARD — TORNADO CASH STORM",
+            "🌅 DAY 7 — ROMAN LEGION CLASH",
+            "🌙 NIGHT 7 — THE LION'S DEN",
+            "☣️ ARENA HAZARD — TOXIC SMART CONTRACT",
+            "🌅 DAY 8 — DEGEN OVERDRIVE",
+            "🌙 NIGHT 8 — EVE OF ETERNITY",
+            "☠️ SUDDEN DEATH — COLLAPSING COLOSSEUM",
+            "🌅 DAY 9 — THE FINAL HARDFORK",
+            "🌙 NIGHT 9 — TWILIGHT OF ZEUS",
+            "🔥 ARENA HAZARD — MOUNT OLYMPUS LIGHTNING",
+            "🌅 DAY 10 — THE 100X GLORY",
+            "🌙 NIGHT 10 — CHAMPION'S PANTHEON",
+        ],
+        "final_phase": "⚔️ THE TITAN DUEL — FINAL 1V1 SHOWDOWN"
+    }
+}
 
-# -------- Survival Event Templates -------- #
-RUMBLE_SURVIVAL_TEMPLATES = [
-    "{player1} found a hidden supply cache and restocked on weapons.",
-    "{player1} camouflaged themselves in mud and went completely invisible.",
-    "{player1} built a fortified shelter from debris and survived the night.",
-    "{player1} outran a pack of wolves through sheer willpower.",
-    "{player1} dodged a sniper shot by pure luck — the bullet grazed their hair.",
-    "{player1} treated their wounds with medicinal herbs found nearby.",
-    "{player1} hid inside a hollowed-out tree for 3 hours straight.",
-    "{player1} befriended a wild eagle that warned them of approaching enemies.",
-    "{player1} found a freshwater spring and recovered their stamina.",
-    "{player1} crafted a shield from scrap metal and timber.",
-    "{player1} discovered an abandoned bunker with enough food for a week.",
-    "{player1} navigated through a minefield without a single scratch.",
-    "{player1} climbed to the highest peak and scouted enemy positions.",
-    "{player1} forged an alliance with another survivor. Trust is everything.",
-    "{player1} stole supplies from a fallen warrior's camp.",
-    "{player1} practiced their sword technique alone in the moonlight.",
-    "{player1} set up decoy campfires to mislead hunters.",
-    "{player1} found a mysterious potion — drank it and felt invincible.",
-    "{player1} meditated through the chaos and found inner peace.",
-    "{player1} narrowly escaped a collapsing building by jumping through a window.",
-]
+# Fallback aggregate lists
+RUMBLE_DEATH_TEMPLATES = [d for t in RUMBLE_THEMES.values() for d in t["deaths"]]
+RUMBLE_SURVIVAL_TEMPLATES = [s for t in RUMBLE_THEMES.values() for s in t["survival"]]
+RUMBLE_REVIVE_TEMPLATES = [r for t in RUMBLE_THEMES.values() for r in t["revives"]]
+RUMBLE_PHASE_NAMES = RUMBLE_THEMES["modern"]["phases"]
 
-# -------- Revive / Resurrection Event Templates -------- #
-RUMBLE_REVIVE_TEMPLATES = [
-    "✨ **REVIVE!** The arena gods have shown mercy! **{player1}** rises from the dead!",
-    "✨ **RESURRECTION!** A phoenix feather activates — **{player1}** is BACK!",
-    "✨ **MIRACLE!** **{player1}** was revived by a mysterious healer in the shadows!",
-    "✨ **COMEBACK!** **{player1}** crawled back from the underworld. They refuse to stay dead!",
-    "✨ **REBIRTH!** The sacred altar glows — **{player1}** is resurrected!",
-    "✨ **SECOND CHANCE!** A rare revival token activates for **{player1}**!",
-    "✨ **UNDYING!** **{player1}** drank a hidden elixir of life. They live again!",
-    "✨ **REBORN!** The blockchain minted a new life for **{player1}**. They're BACK!",
-    "✨ **RESPAWN!** **{player1}** found a respawn beacon and returned to the fight!",
-    "✨ **DEFIANCE!** **{player1}** made a deal with Death itself. They live... for now.",
-]
 
-# -------- Dynamic Phase Pool & Generator -------- #
-RUMBLE_PHASE_NAMES = [
-    "🩸 THE BLOODBATH — THE CORNUCOPIA",
-    "🌅 DAY 1 — DAWN OF CARNAGE",
-    "🌙 NIGHT 1 — DARK DESPERATION",
-    "🌅 DAY 2 — HUNT FOR SURVIVAL",
-    "🌙 NIGHT 2 — COLD BLOODED",
-    "🌋 ARENA HAZARD — LAVA SURGE",
-    "🌅 DAY 3 — RISE OF THE PREDATORS",
-    "🌙 NIGHT 3 — SHADOWS & STALKERS",
-    "🍖 THE FEAST — SUPPLY CRATE DROP",
-    "🌅 DAY 4 — BRUTAL CROSSROADS",
-    "🌙 NIGHT 4 — SCREAMS IN THE DARK",
-    "⚡ ARENA HAZARD — ACID THUNDERSTORM",
-    "🌅 DAY 5 — THE NO MERCY ZONE",
-    "🌙 NIGHT 5 — WHISPERS OF THE FALLEN",
-    "🩸 BLOOD MOON — UNLEASHED RAMPAGE",
-    "🌅 DAY 6 — ASHES & EMBER",
-    "🌙 NIGHT 6 — SILENT ASSASSINS",
-    "❄️ ARENA HAZARD — CRYOGENIC BLIZZARD",
-    "🌅 DAY 7 — DESPERATE CLASH",
-    "🌙 NIGHT 7 — MIDNIGHT MAYHEM",
-    "🌪️ ARENA HAZARD — TORNADO FRENZY",
-    "🌅 DAY 8 — THE PENULTIMATE DAWN",
-    "🌙 NIGHT 8 — EVE OF RECKONING",
-    "☣️ ARENA HAZARD — TOXIC FALLOUT",
-    "🌅 DAY 9 — THE GAUNTLET",
-    "🌙 NIGHT 9 — THE LAST SHADOWS",
-    "☠️ SUDDEN DEATH — THE COLLAPSING RING",
-    "🌅 DAY 10 — THE FINAL DAWN",
-    "🌙 NIGHT 10 — TWILIGHT OF GLORY",
-    "🔥 ARENA HAZARD — METEOR SHOWER",
-]
-
-def get_dynamic_rumble_phases(total_players: int) -> List[Tuple[str, bool]]:
+def get_dynamic_rumble_phases(total_players: int, theme: str = "modern") -> List[Tuple[str, bool]]:
     """
-    Generate dynamic story phases scaled according to total registered player count.
+    Generate dynamic story phases scaled according to total registered player count and theme.
     - 3-8 players: 4-5 phases
     - 9-18 players: 7-9 phases
     - 19-28 players: 10-11 phases
@@ -4401,18 +4604,21 @@ def get_dynamic_rumble_phases(total_players: int) -> List[Tuple[str, bool]]:
     else:
         target_count = min(30, max(26, int(total_players * 0.33)))
 
+    theme_info = RUMBLE_THEMES.get(theme, RUMBLE_THEMES["modern"])
+    names_pool = theme_info["phases"]
+
     phases = []
-    # 1. Opening phase: Bloodbath
-    phases.append((RUMBLE_PHASE_NAMES[0], False))
+    # 1. Opening phase
+    phases.append((names_pool[0], False))
     
     # 2. Intermediate phases
     mid_count = target_count - 2
     if mid_count > 0:
-        names_pool = RUMBLE_PHASE_NAMES[1:]
-        if mid_count <= len(names_pool):
-            step_names = names_pool[:mid_count]
+        mid_pool = names_pool[1:]
+        if mid_count <= len(mid_pool):
+            step_names = mid_pool[:mid_count]
         else:
-            step_names = list(names_pool)
+            step_names = list(mid_pool)
             while len(step_names) < mid_count:
                 day_num = len(step_names) // 2 + 10
                 step_names.append(f"🌅 DAY {day_num} — SURVIVAL CLASH")
@@ -4422,17 +4628,18 @@ def get_dynamic_rumble_phases(total_players: int) -> List[Tuple[str, bool]]:
             phases.append((p_name, False))
             
     # 3. Final Showdown
-    phases.append(("⚔️ THE FINAL SHOWDOWN — DUEL TO THE DEATH", True))
+    phases.append((theme_info.get("final_phase", "⚔️ THE FINAL SHOWDOWN — DUEL TO THE DEATH"), True))
     return phases
 
 
 class RumbleGame:
     """Core state machine for the Rumble Royale battle royale minigame."""
 
-    def __init__(self, players: List[dict]):
+    def __init__(self, players: List[dict], theme: str = "modern"):
         """
         Args:
-            players: List of dicts with 'id' (user_id str), 'name' (display_name), 'mention' (<@id>)
+            players: List of dicts with 'id' (user_id str), 'name' (display_name), 'username' (str), 'mention' (<@id>)
+            theme: Theme key ('modern', 'japanese', 'european', 'web3_ancient')
         """
         self.alive: List[dict] = list(players)
         self.dead: List[dict] = []
@@ -4441,13 +4648,15 @@ class RumbleGame:
         self.death_order: List[str] = []  # IDs in order of elimination (first eliminated = last place)
         self.used_templates: Set[int] = set()
         self.phase_results: List[discord.Embed] = []
+        self.theme: str = theme if theme in RUMBLE_THEMES else "modern"
+        self.theme_info: dict = RUMBLE_THEMES[self.theme]
         random.shuffle(self.alive)
 
-    def _pick_template(self, pool: list) -> str:
-        """Pick a random non-repeating template from the pool."""
+    def _pick_template(self, pool_key: str) -> str:
+        """Pick a random non-repeating template from the theme's pool."""
+        pool = self.theme_info.get(pool_key, RUMBLE_THEMES["modern"].get(pool_key, []))
         available = [(i, t) for i, t in enumerate(pool) if i not in self.used_templates]
         if not available:
-            # Reset if all used
             self.used_templates.clear()
             available = list(enumerate(pool))
         idx, template = random.choice(available)
@@ -4456,7 +4665,7 @@ class RumbleGame:
 
     def _kill_player(self, victim: dict, killer: Optional[dict] = None) -> str:
         """Eliminate a player and return the event text."""
-        template = self._pick_template(RUMBLE_DEATH_TEMPLATES)
+        template = self._pick_template("deaths")
         # Use @mentions for player names (bold mention style like Diffy bot)
         v_display = f"**{victim['mention']}**"
         if killer:
@@ -4473,7 +4682,7 @@ class RumbleGame:
 
     def _survival_event(self, player: dict) -> str:
         """Generate a survival event for a player."""
-        template = self._pick_template(RUMBLE_SURVIVAL_TEMPLATES)
+        template = self._pick_template("survival")
         return template.format(player1=f"**{player['mention']}**")
 
     def _try_revive(self) -> Optional[str]:
@@ -4487,7 +4696,7 @@ class RumbleGame:
         # Remove from death order since they're alive again
         if revived["id"] in self.death_order:
             self.death_order.remove(revived["id"])
-        template = self._pick_template(RUMBLE_REVIVE_TEMPLATES)
+        template = self._pick_template("revives")
         return template.format(player1=revived["mention"])
 
     def run_phase(self, phase_name: str, is_final: bool = False, phases_remaining: int = 1) -> discord.Embed:
@@ -4556,7 +4765,7 @@ class RumbleGame:
             description=desc_text,
             color=discord.Color.red() if kills_this_phase > 3 else discord.Color.orange()
         )
-        embed.set_footer(text=f"Alive: {len(self.alive)} | Eliminated: {eliminated_total}")
+        embed.set_footer(text=f"Alive: {len(self.alive)} | Eliminated: {eliminated_total} | Theme: {self.theme_info['name']}")
         return embed
 
     def build_leaderboard_embeds(self) -> List[discord.Embed]:
@@ -4564,13 +4773,10 @@ class RumbleGame:
         embeds = []
 
         # --- Determine final rankings ---
-        # Champion is the last person alive (or if everyone died, last eliminated)
         if self.alive:
             champion = self.alive[0]
-            # Runners up = reverse death order (last eliminated = 2nd place, etc.)
             runner_up_ids = list(reversed(self.death_order))
         else:
-            # Everyone died somehow — last eliminated is champion
             runner_up_ids = list(reversed(self.death_order))
             champion_id = runner_up_ids.pop(0) if runner_up_ids else None
             champion = None
@@ -4612,7 +4818,7 @@ class RumbleGame:
             color=discord.Color.gold()
         )
         if champion:
-            e1.set_footer(text=f"👑 Champion: {champion['name']}")
+            e1.set_footer(text=f"👑 Champion: {champion['name']} | Theme: {self.theme_info['name']}")
         embeds.append(e1)
 
         # --- LEADERBOARD 2: TOP 3 MOST KILLS (APEX PREDATORS) ---
@@ -4632,6 +4838,7 @@ class RumbleGame:
             description="\n".join(kill_lines) if kill_lines else "*No kills recorded*",
             color=discord.Color.dark_red()
         )
+        e2.set_footer(text=f"Theme: {self.theme_info['name']}")
         embeds.append(e2)
 
         # --- LEADERBOARD 3: MOST REVIVED WARRIORS (PHOENIX AWARD) ---
@@ -4649,14 +4856,23 @@ class RumbleGame:
             description="\n".join(revive_lines) if revive_lines else "*No revives occurred this match*",
             color=discord.Color.purple()
         )
+        e3.set_footer(text=f"Theme: {self.theme_info['name']}")
         embeds.append(e3)
 
         return embeds
 
 
-def build_rumble_lobby_embed(players: list, join_duration: int, start_time: int, host_name: str = "Host") -> discord.Embed:
-    """Build or update the live Rumble Royale lobby announcement embed matching Diffy style."""
+def build_rumble_lobby_embed(
+    players: list,
+    join_duration: int,
+    start_time: int,
+    host_name: str = "Host",
+    tag_role: Optional[Union[discord.Role, str]] = None,
+    theme: str = "modern"
+) -> discord.Embed:
+    """Build or update the live Rumble Royale lobby announcement embed matching Diffy style with role tagging & themes."""
     count = len(players)
+    theme_info = RUMBLE_THEMES.get(theme, RUMBLE_THEMES["modern"])
     embed = discord.Embed(
         title="⚔️ RUMBLE ROYALE MATCH ANNOUNCED! ⚔️",
         color=discord.Color.gold()
@@ -4673,8 +4889,10 @@ def build_rumble_lobby_embed(players: list, join_duration: int, start_time: int,
     else:
         players_text = "*No players registered yet.*"
 
+    tag_line = f" • Tag: {tag_role.mention}" if tag_role and hasattr(tag_role, "mention") else ""
     desc = (
-        f"Hosted by **{host_name}**!\n\n"
+        f"Hosted by **{host_name}**!{tag_line}\n"
+        f"🎭 **THEME:** {theme_info['emoji']} **{theme_info['name']}**\n\n"
         f"⏰ **LOBBY CLOCK:** Starts in <t:{start_time + join_duration}:R>!\n"
         f"Click [ ⚔️ **Join Battle** ] to sign up for the Rumble Royale!\n"
         f"*(Minimum 2 real players required to start!)*\n\n"
@@ -4682,12 +4900,12 @@ def build_rumble_lobby_embed(players: list, join_duration: int, start_time: int,
         f"{players_text}"
     )
     embed.description = desc
-    embed.set_footer(text="Rumble Royale • Click button to join!")
+    embed.set_footer(text=f"Rumble Royale ({theme_info['name']}) • Click button to join!")
     return embed
 
 
 # -------- Active Rumble Sessions -------- #
-active_rumbles: Dict[int, dict] = {}  # channel_id -> {"players": [...], "message_id": int, "started": bool, "created_at": int, "join_duration": int, "host_name": str}
+active_rumbles: Dict[int, dict] = {}  # channel_id -> {"players": [...], "message_id": int, "started": bool, "created_at": int, "join_duration": int, "host_name": str, "tag_role": Role, "theme": str}
 
 
 class RumbleJoinView(discord.ui.View):
@@ -4729,7 +4947,9 @@ class RumbleJoinView(discord.ui.View):
                 start_time = session.get("created_at", int(time.time()))
                 join_duration = session.get("join_duration", 120)
                 host_name = session.get("host_name", "Host")
-                new_embed = build_rumble_lobby_embed(session["players"], join_duration, start_time, host_name)
+                tag_role = session.get("tag_role")
+                theme = session.get("theme", "modern")
+                new_embed = build_rumble_lobby_embed(session["players"], join_duration, start_time, host_name, tag_role, theme)
                 await msg.edit(embed=new_embed)
         except Exception as edit_err:
             print(f"[RUMBLE EMBED EDIT ERROR] {edit_err}")
@@ -4764,7 +4984,9 @@ class RumbleJoinView(discord.ui.View):
                 start_time = session.get("created_at", int(time.time()))
                 join_duration = session.get("join_duration", 120)
                 host_name = session.get("host_name", "Host")
-                new_embed = build_rumble_lobby_embed(session["players"], join_duration, start_time, host_name)
+                tag_role = session.get("tag_role")
+                theme = session.get("theme", "modern")
+                new_embed = build_rumble_lobby_embed(session["players"], join_duration, start_time, host_name, tag_role, theme)
                 await msg.edit(embed=new_embed)
         except Exception as edit_err:
             print(f"[RUMBLE EMBED EDIT ERROR] {edit_err}")
@@ -4790,10 +5012,11 @@ class RumbleJoinView(discord.ui.View):
             return
 
         session["started"] = True
+        theme_key = session.get("theme", "modern")
         await safe_respond(interaction, "🚀 **THE RUMBLE ROYALE BEGINS!** Brace yourselves...", ephemeral=False)
 
         # Run the game in the background
-        asyncio.create_task(run_rumble_game(interaction.channel, session["players"]))
+        asyncio.create_task(run_rumble_game(interaction.channel, session["players"], theme=theme_key))
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="rumble_cancel", emoji="❌", row=1)
     async def cancel_rumble_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -4807,16 +5030,17 @@ class RumbleJoinView(discord.ui.View):
         await safe_respond(interaction, "❌ The Rumble has been cancelled.", ephemeral=False)
 
 
-async def run_rumble_game(channel, players: list):
+async def run_rumble_game(channel, players: list, theme: str = "modern"):
     """Execute the full Rumble Royale game sequence in a channel."""
     channel_id = channel.id
-    game = RumbleGame(players)
+    game = RumbleGame(players, theme=theme)
+    theme_info = RUMBLE_THEMES.get(theme, RUMBLE_THEMES["modern"])
 
     try:
         # Lobby closed announcement
         lobby_embed = discord.Embed(
             title="⚔️ RUMBLE ROYALE LOBBY CLOSED!",
-            description=f"Match is starting with **{len(players)}** real registered players!",
+            description=f"Match is starting with **{len(players)}** real registered players!\n🎭 Theme: {theme_info['emoji']} **{theme_info['name']}**",
             color=discord.Color.from_rgb(255, 69, 0)
         )
         await channel.send(embed=lobby_embed)
@@ -4827,7 +5051,7 @@ async def run_rumble_game(channel, players: list):
         extra_players = f"\n*...and {len(players) - 40} more*" if len(players) > 40 else ""
 
         intro_embed = discord.Embed(
-            title="🔥 RUMBLE ROYALE — THE BLOODBATH HAS BEGUN! 🔔",
+            title=f"🔥 RUMBLE ROYALE — {theme_info['name'].upper()} ARENA OPEN! 🔔",
             description=f"**{len(players)} Real Players** have dropped into the arena!\n\n"
                         f"{player_mentions}{extra_players}\n\n"
                         f"*The countdown reaches zero... FIGHT!*",
@@ -4836,8 +5060,8 @@ async def run_rumble_game(channel, players: list):
         await channel.send(embed=intro_embed)
         await asyncio.sleep(4)
 
-        # Generate dynamic phases based on total registered players
-        phases = get_dynamic_rumble_phases(len(players))
+        # Generate dynamic phases based on total registered players & theme
+        phases = get_dynamic_rumble_phases(len(players), theme=theme)
         total_phases = len(phases)
 
         # Run each phase with smooth pacing
@@ -4863,7 +5087,7 @@ async def run_rumble_game(channel, players: list):
             champ_embed = discord.Embed(
                 title="👑 THE CHAMPION STANDS!",
                 description=f"# 🏆 {champ['mention']}\n\n"
-                            f"**{champ['name']}** is the last warrior standing!\n\n"
+                            f"**{champ['name']}** is the last warrior standing in **{theme_info['name']}**!\n\n"
                             f"⚔️ **{game.kills.get(champ['id'], 0)}** kills\n"
                             f"💫 **{game.revives.get(champ['id'], 0)}** revives\n\n"
                             f"*They have earned the title of **RUMBLE ROYALE CHAMPION**!*",
@@ -4898,13 +5122,16 @@ async def _rumble_countdown(channel, ch_id: int, join_duration: int):
             if not session or session.get("started"):
                 return  # Admin started manually or session cancelled
 
+            theme_key = session.get("theme", "modern")
+            theme_info = RUMBLE_THEMES.get(theme_key, RUMBLE_THEMES["modern"])
+
             # 1 minute reminder
             if remaining == 60 and not reminder_sent_60:
                 reminder_sent_60 = True
                 view = RumbleJoinView(ch_id)
                 remind_embed = discord.Embed(
-                    title="🔥 RUMBLE ROYALE REMINDER",
-                    description=f"Only **1 minute** left to join the battle! Click [ ⚔️ **Join Battle** ] below to enter! ⚔️",
+                    title=f"🔥 {theme_info['emoji']} RUMBLE ROYALE REMINDER",
+                    description=f"Only **1 minute** left to join the battle in **{theme_info['name']}**!\nClick [ ⚔️ **Join Battle** ] below to enter! ⚔️",
                     color=discord.Color.from_rgb(255, 165, 0)
                 )
                 await channel.send(embed=remind_embed, view=view)
@@ -4914,8 +5141,8 @@ async def _rumble_countdown(channel, ch_id: int, join_duration: int):
                 reminder_sent_30 = True
                 view = RumbleJoinView(ch_id)
                 remind_embed = discord.Embed(
-                    title="🚨 FINAL CALL!",
-                    description=f"Only **30 seconds** remaining!\nClick [ ⚔️ **Join Battle** ] below to enter!",
+                    title=f"🚨 {theme_info['emoji']} FINAL CALL!",
+                    description=f"Only **30 seconds** remaining for **{theme_info['name']}**!\nClick [ ⚔️ **Join Battle** ] below to enter!",
                     color=discord.Color.red()
                 )
                 await channel.send(embed=remind_embed, view=view)
@@ -4932,7 +5159,7 @@ async def _rumble_countdown(channel, ch_id: int, join_duration: int):
             return
 
         session["started"] = True
-        await run_rumble_game(channel, session["players"])
+        await run_rumble_game(channel, session["players"], theme=session.get("theme", "modern"))
 
     except Exception as e:
         print(f"[RUMBLE COUNTDOWN ERROR] {e}")
@@ -4943,12 +5170,24 @@ async def _rumble_countdown(channel, ch_id: int, join_duration: int):
 @bot.tree.command(name="rumble", description="Start a Rumble Royale battle royale minigame!")
 @app_commands.describe(
     join_duration="How many seconds to allow players to join (default: 120)",
+    tag_role="Optional role to tag/ping in the announcement (e.g. @everyone, @Rumble)",
+    theme="Thematic story style for deaths, events, and arena lore (default: Modern)",
+)
+@app_commands.choices(
+    theme=[
+        app_commands.Choice(name="🏙️ Modern / Memes & Urban (Default)", value="modern"),
+        app_commands.Choice(name="⛩️ Japanese Anime & Samurai Lore", value="japanese"),
+        app_commands.Choice(name="🏰 European Medieval & Comic Knights", value="european"),
+        app_commands.Choice(name="🏛️ Web3 Crypto & Ancient Colosseum", value="web3_ancient"),
+    ]
 )
 async def rumble_command(
     interaction: discord.Interaction,
     join_duration: Optional[int] = 120,
+    tag_role: Optional[discord.Role] = None,
+    theme: Optional[app_commands.Choice[str]] = None,
 ):
-    """Admin-only: Start a Rumble Royale session with a timed join phase."""
+    """Admin-only: Start a Rumble Royale session with custom theme and role ping."""
     try:
         if not is_admin(interaction.user, interaction.guild):
             await safe_respond(interaction, "❌ Only admins can start a Rumble!", ephemeral=True)
@@ -4967,6 +5206,10 @@ async def rumble_command(
         # Clamp join duration
         join_duration = max(30, min(join_duration or 120, 600))
 
+        theme_key = theme.value if isinstance(theme, app_commands.Choice) else (theme or "modern")
+        if theme_key not in RUMBLE_THEMES:
+            theme_key = "modern"
+
         start_time = int(time.time())
         host_name = interaction.user.display_name
         # Initialize session
@@ -4977,15 +5220,20 @@ async def rumble_command(
             "created_at": start_time,
             "join_duration": join_duration,
             "host_name": host_name,
+            "tag_role": tag_role,
+            "theme": theme_key,
         }
 
         # Post join embed using build_rumble_lobby_embed
-        join_embed = build_rumble_lobby_embed([], join_duration, start_time, host_name)
+        join_embed = build_rumble_lobby_embed([], join_duration, start_time, host_name, tag_role, theme_key)
         view = RumbleJoinView(ch_id)
+        
+        content = f"🔔 {tag_role.mention} **A new Rumble Royale has been announced!**" if tag_role else None
+
         if not interaction.response.is_done():
-            await interaction.response.send_message(embed=join_embed, view=view)
+            await interaction.response.send_message(content=content, embed=join_embed, view=view)
         else:
-            await interaction.followup.send(embed=join_embed, view=view)
+            await interaction.followup.send(content=content, embed=join_embed, view=view)
 
         # Get the sent message ID for later updates
         try:
@@ -5004,6 +5252,7 @@ async def rumble_command(
             await safe_respond(interaction, f"❌ Failed to start Rumble: {e}", ephemeral=True)
         except Exception:
             pass
+
 
 
 # -------- Slash Commands for Profile & Giveaways -------- #
