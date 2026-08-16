@@ -2919,16 +2919,41 @@ async def on_message(message: discord.Message):
             await message.reply(f"📋 **Bot Admin Database:**\n{admin_list}")
             return
 
-    # Crypto Price Lookup ($btc, $eth)
-    token_matches = re.findall(r'\$[a-zA-Z0-9]+', text)
-    if token_matches:
-        unique_tokens = list(dict.fromkeys(token_matches))
-        replies = []
-        for t in unique_tokens:
-            res = await get_crypto_price(t.replace("$", ""))
-            replies.append(res)
-        await message.reply("\n\n".join(replies))
-        return
+    # Crypto Price Lookup (.price btc, !price eth) — $token trigger removed
+    if text.startswith(('.price', '!price')):
+        parts = text.split(maxsplit=1)
+        if len(parts) > 1:
+            token_q = parts[1].strip().lstrip("$")
+            async with message.channel.typing():
+                token_data = await fetch_token_price(token_q)
+                if token_data and token_data.get("price") is not None:
+                    p_str = _format_usd(token_data["price"])
+                    ch = token_data.get("change_24h") or 0.0
+                    sign = "+" if ch >= 0 else ""
+                    ch_icon = "🟢" if ch >= 0 else "🔴"
+                    mcap_str = _format_big(token_data.get("market_cap") or 0)
+                    fdv_str = _format_big(token_data.get("fdv") or 0)
+                    rank_str = f"#{token_data['rank']}" if token_data.get("rank") else "N/A"
+                    embed = discord.Embed(
+                        title=f"{token_data.get('name', token_q.upper())} ({token_data.get('symbol', token_q).upper()})",
+                        color=discord.Color.green() if ch >= 0 else discord.Color.red()
+                    )
+                    embed.add_field(name="Price", value=f"**{p_str}**", inline=True)
+                    embed.add_field(name="24h Change", value=f"{ch_icon} {sign}{ch:.2f}%", inline=True)
+                    embed.add_field(name="Rank", value=rank_str, inline=True)
+                    embed.add_field(name="Market Cap", value=mcap_str, inline=True)
+                    embed.add_field(name="FDV", value=fdv_str, inline=True)
+                    if token_data.get("category"):
+                        embed.add_field(name="Category", value=token_data["category"], inline=True)
+                    embed.set_footer(text="Powered by CoinGecko / DEX | Use /price <token>")
+                    await message.reply(embed=embed)
+                else:
+                    res = await get_crypto_price(token_q)
+                    await message.reply(res)
+                return
+        else:
+            await message.reply("💡 Usage: `.price <token>` (e.g. `.price btc`) or use the `/price` slash command.")
+            return
 
     # Football Hashtags (#livescore, #plstandings, #news)
     if text.startswith(('#livescore', '#livescores')):
@@ -5648,6 +5673,47 @@ def _format_big(val: float) -> str:
     if val == 0:
         return "N/A"
     return f"${val:,.0f}"
+
+
+@bot.tree.command(name="price", description="Check real-time cryptocurrency token prices, market cap, and 24h change.")
+@app_commands.describe(token="Token symbol, name, or contract address (e.g. BTC, ETH, SOL, PEPE)")
+async def price_slash_command(interaction: discord.Interaction, token: str):
+    """Check real-time crypto prices across CoinGecko, Bitget, DexScreener, and GeckoTerminal."""
+    await interaction.response.defer()
+    try:
+        clean_token = token.strip().lstrip("$")
+        token_data = await fetch_token_price(clean_token)
+        if token_data and token_data.get("price") is not None:
+            p_str = _format_usd(token_data["price"])
+            ch = token_data.get("change_24h") or 0.0
+            sign = "+" if ch >= 0 else ""
+            ch_icon = "🟢" if ch >= 0 else "🔴"
+            mcap_str = _format_big(token_data.get("market_cap") or 0)
+            fdv_str = _format_big(token_data.get("fdv") or 0)
+            rank_str = f"#{token_data['rank']}" if token_data.get("rank") else "N/A"
+            embed = discord.Embed(
+                title=f"{token_data.get('name', clean_token.upper())} ({token_data.get('symbol', clean_token).upper()})",
+                color=discord.Color.green() if ch >= 0 else discord.Color.red()
+            )
+            embed.add_field(name="Price", value=f"**{p_str}**", inline=True)
+            embed.add_field(name="24h Change", value=f"{ch_icon} {sign}{ch:.2f}%", inline=True)
+            embed.add_field(name="Rank", value=rank_str, inline=True)
+            embed.add_field(name="Market Cap", value=mcap_str, inline=True)
+            embed.add_field(name="FDV", value=fdv_str, inline=True)
+            if token_data.get("category"):
+                embed.add_field(name="Category", value=token_data["category"], inline=True)
+            embed.set_footer(text="Powered by CoinGecko / DEX")
+            await interaction.followup.send(embed=embed)
+        else:
+            res = await get_crypto_price(clean_token)
+            await interaction.followup.send(res)
+    except Exception as e:
+        print(f"[PRICE COMMAND ERROR] {e}")
+        try:
+            await interaction.followup.send(f"❌ Failed to fetch price for `{token}`: {e}", ephemeral=True)
+        except Exception:
+            pass
+
 
 
 
