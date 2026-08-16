@@ -11,7 +11,7 @@ import base64
 import urllib.parse
 import unicodedata
 import traceback
-from typing import Optional, List, Dict, Set, Union
+from typing import Optional, List, Dict, Set, Union, Tuple, Any, Callable, Coroutine
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
