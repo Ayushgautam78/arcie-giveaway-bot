@@ -50,6 +50,79 @@ giveaway_entries: Dict[str, list] = {}
 active_sessions: Dict[str, dict] = {}
 tickets_data: Dict[str, dict] = {"config": {"log_channel_id": None, "support_role_id": None, "category_id": None, "counter": 1}, "active_tickets": {}}
 
+# -------- Role Multiplier Configuration (Weighted Raffle) -------- #
+# Maps Discord Role ID (string) -> weight multiplier (float).
+# Users with a matching role get higher chance of winning giveaways.
+# If a user has multiple matching roles, the HIGHEST multiplier is used.
+# Default weight for users with no matching roles = 1.0
+ROLE_MULTIPLIERS: Dict[str, float] = {
+    "1537729108736344074": 1.5,   # 1.5x chance
+}
+# Override from environment variable if set (JSON string)
+_env_rm = os.getenv("ROLE_MULTIPLIERS")
+if _env_rm:
+    try:
+        _parsed_rm = json.loads(_env_rm)
+        if isinstance(_parsed_rm, dict):
+            ROLE_MULTIPLIERS = {str(k): float(v) for k, v in _parsed_rm.items()}
+    except Exception as _rm_err:
+        print(f"[ROLE_MULTIPLIERS] Failed to parse env override: {_rm_err}")
+
+
+def weighted_sample_without_replacement(population: list, weights: list, k: int) -> list:
+    """Weighted random sampling WITHOUT replacement.
+    
+    Uses iterative weighted selection: pick one item at a time using random.choices,
+    remove it from the pool, and repeat until k items are selected or pool is exhausted.
+    """
+    if not population or k <= 0:
+        return []
+    k = min(k, len(population))
+    pool = list(population)
+    pool_weights = list(weights)
+    selected = []
+    for _ in range(k):
+        if not pool:
+            break
+        chosen = random.choices(pool, weights=pool_weights, k=1)[0]
+        idx = pool.index(chosen)
+        selected.append(chosen)
+        pool.pop(idx)
+        pool_weights.pop(idx)
+    return selected
+
+
+def get_entry_weights(entries: list, guild) -> list:
+    """Calculate weight for each giveaway entry based on role multipliers.
+    
+    Args:
+        entries: List of entry dicts with 'user_id' field
+        guild: discord.Guild object (or None if unavailable)
+    
+    Returns:
+        List of float weights, one per entry. Default weight = 1.0
+    """
+    if not guild or not ROLE_MULTIPLIERS:
+        return [1.0] * len(entries)
+    
+    weights = []
+    for entry in entries:
+        uid = entry.get("user_id")
+        weight = 1.0
+        if uid:
+            try:
+                member = guild.get_member(int(uid))
+                if member:
+                    matching = [ROLE_MULTIPLIERS[str(r.id)]
+                               for r in member.roles if str(r.id) in ROLE_MULTIPLIERS]
+                    if matching:
+                        weight = max(matching)
+            except Exception:
+                pass
+        weights.append(weight)
+    return weights
+
+
 # -------- Firebase Database Configuration -------- #
 FIREBASE_URL = (
     os.getenv("FIREBASE_DATABASE_URL") or 
@@ -3629,6 +3702,21 @@ def get_required_task_list(g_data: dict) -> list:
         yt_url = yt_val if yt_val.startswith(("http://","https://")) else ""
         required.append(("follow_youtube", "▶️ Subscribe YouTube", yt_url))
 
+    # Custom Tasks (Feature 2: arbitrary task requirements)
+    tasks = g_data.get("tasks") or {}
+    dyn_tasks = tasks.get("dynamic_tasks", [])
+    if isinstance(dyn_tasks, list):
+        custom_idx = 0
+        for t in dyn_tasks:
+            tt = t.get("type", "").strip()
+            if tt == "custom":
+                custom_idx += 1
+                c_label = t.get("label", "").strip() or f"Custom Task #{custom_idx}"
+                c_url = t.get("value", "").strip()
+                if c_url and not c_url.startswith(("http://", "https://")):
+                    c_url = ""
+                required.append((f"custom_{custom_idx}", f"📌 {c_label}", c_url))
+
     return required
 
 
@@ -3717,6 +3805,35 @@ class GiveawayView(discord.ui.View):
 
         uid = str(interaction.user.id)
 
+        # ---- FEATURE 3: Role Requirement Verification (OR Logic) ----
+        required_roles = g.get("tasks", {}).get("roles", [])
+        if required_roles and isinstance(required_roles, list):
+            member = interaction.user
+            if isinstance(member, discord.Member) and hasattr(member, 'roles'):
+                member_role_ids = {str(r.id) for r in member.roles}
+                member_role_names = {r.name.lower() for r in member.roles}
+                has_any = any(
+                    str(rid) in member_role_ids or str(rid).lower() in member_role_names
+                    for rid in required_roles
+                )
+                if not has_any:
+                    role_mentions = []
+                    for rid in required_roles:
+                        rid_str = str(rid).strip()
+                        if rid_str.isdigit():
+                            role_mentions.append(f"<@&{rid_str}>")
+                        else:
+                            role_mentions.append(f"**{rid_str}**")
+                    roles_text = "\n".join(f"  • {rm}" for rm in role_mentions)
+                    await safe_respond(
+                        interaction,
+                        f"❌ **Role Required!**\n\n"
+                        f"You must have **at least ONE** of the following roles to enter:\n{roles_text}\n\n"
+                        f"*Check the server's role-gating channels to earn a qualifying role.*",
+                        ephemeral=True
+                    )
+                    return
+
         # 1. Check if user is already registered FIRST
         entries = giveaway_entries.get(g_id, [])
         existing = next((e for e in entries if isinstance(e, dict) and e.get("user_id") == uid), None)
@@ -3734,18 +3851,26 @@ class GiveawayView(discord.ui.View):
 
             required_tasks = get_required_task_list(g)
             if required_tasks:
+                # ---- FEATURE 2: Show task completion status & wrap URLs in <> ----
+                user_completed = giveaway_task_progress.get(g_id, {}).get(uid, set())
                 lines = []
                 for task_type, label, url in required_tasks:
+                    is_done = task_type in user_completed
+                    status_icon = "✅" if is_done else "❌"
                     if url:
-                        lines.append(f"  📌 **{label}** — [Click here]({url})")
+                        # Wrap in <> to disable Discord link preview embeds
+                        lines.append(f"  {status_icon} **{label}** — <{url}>")
                     else:
-                        lines.append(f"  📌 **{label}**")
+                        lines.append(f"  {status_icon} **{label}**")
                 tasks_text = "\n".join(lines)
+
+                completed_count = sum(1 for tt, _, _ in required_tasks if tt in user_completed)
+                total_count = len(required_tasks)
 
                 await safe_respond(
                     interaction,
                     f"📋 **Complete the following tasks to participate:**\n\n"
-                    f"**Required Tasks ({len(required_tasks)}):**\n{tasks_text}\n\n"
+                    f"**Required Tasks ({completed_count}/{total_count} done):**\n{tasks_text}\n\n"
                     f"**If you have already done the tasks, ignore this and click on [Join Giveaway] button again!**\n\n"
                     f"👉 *Once done, click **[Join Giveaway]** again to enter!*",
                     ephemeral=True
@@ -3973,6 +4098,690 @@ async def update_giveaway_discord_message(giveaway_id: str):
         print(f"[UPDATE EMBED POST SUCCESS] Posted fresh embed for '{g.get('title')}' in #{channel.name} ({new_msg.id})")
     except Exception as send_err:
         print(f"[UPDATE EMBED POST ERROR] {send_err}")
+
+
+# ======================================================================== #
+# ========== FEATURE 1: STORY-DRIVEN RUMBLE ROYALE MINIGAME ENGINE ======= #
+# ======================================================================== #
+
+# -------- 120+ Unique Death / Elimination Event Templates -------- #
+RUMBLE_DEATH_TEMPLATES = [
+    # ---- Combat Deaths ----
+    "{killer} sliced {player1} clean in half with a diamond sword.",
+    "{killer} sniped {player1} from 300 meters away with a scoped crossbow.",
+    "{killer} ran {player1} over with a stolen monster truck.",
+    "{killer} shoved {player1} off a cliff and watched them fall into the void.",
+    "{killer} drop-kicked {player1} into a pool of lava.",
+    "{killer} challenged {player1} to a duel — it lasted 0.3 seconds.",
+    "{killer} backstabbed {player1} while they were eating a sandwich.",
+    "{killer} yeeted {player1} into a tornado of razor blades.",
+    "{killer} electrocuted {player1} with a makeshift taser.",
+    "{killer} crushed {player1} under a falling anvil, cartoon-style.",
+    "{killer} set {player1} on fire with a flaming arrow.",
+    "{killer} poisoned {player1}'s water supply — they drank it without checking.",
+    "{killer} threw {player1} into a pit of hungry alligators.",
+    "{killer} smashed {player1} with a comically oversized mallet.",
+    "{killer} hit {player1} with a truck full of NFTs — the emotional damage was fatal.",
+    "{killer} launched {player1} into orbit with a trebuchet.",
+    "{killer} locked {player1} in a room with 100 angry wasps.",
+    "{killer} clotheslined {player1} at full sprint — instant elimination.",
+    "{killer} knocked {player1} unconscious with a frying pan to the face.",
+    "{killer} tripped {player1} into a pit of quicksand.",
+    "{killer} ambushed {player1} from behind a waterfall.",
+    "{killer} detonated a TNT trap right under {player1}'s feet.",
+    "{killer} strangled {player1} with a USB-C cable.",
+    "{killer} hit {player1} so hard they respawned in a different game.",
+    "{killer} convinced {player1} to eat a mystery mushroom — it was NOT the good kind.",
+    # ---- Web3 / Crypto-Themed Deaths ----
+    "{killer} rug-pulled {player1}'s entire existence. They are now worth $0.00.",
+    "{killer} minted {player1} as a worthless NFT and burned the collection.",
+    "{killer} drained {player1}'s liquidity pool — they evaporated instantly.",
+    "{player1} aped into a fake presale by {killer} and got liquidated.",
+    "{killer} flash-loaned {player1}'s life savings. Goodbye.",
+    "{killer} sent {player1} a malicious smart contract — they signed it without reading.",
+    "{player1} tried to paper hand their way out, but {killer} already dumped.",
+    "{killer} created a memecoin called $DEAD and {player1} was the only holder.",
+    "{player1} staked their life on {killer}'s validator — it got slashed.",
+    "{killer} exploited {player1}'s unaudited code. Critical vulnerability: existence.",
+    "{player1} connected their wallet to {killer}'s fake dApp — instant drain.",
+    "{killer} sandwiched {player1} in the MEV bot. Absolutely rekt.",
+    "{player1} tried to bridge to safety but {killer} hacked the bridge.",
+    "{killer} put {player1} in a Ponzi scheme so deep they disappeared.",
+    "{player1} got exit-scammed by {killer}. The roadmap was a lie.",
+    # ---- Funny / Absurd Deaths ----
+    "{player1} accidentally walked into a cactus and ceased to exist.",
+    "{player1} tripped over their own shoelaces and fell into a volcano.",
+    "{player1} tried to pet a wild bear — it did not go well.",
+    "{player1} ate 47 ghost peppers on a dare and spontaneously combusted.",
+    "{player1} laughed so hard at a meme they literally died.",
+    "{player1} forgot how to breathe. Just... forgot.",
+    "{player1} was eliminated by a rogue shopping cart in a parking lot.",
+    "{player1} tried to fight a kangaroo. The kangaroo won. Easily.",
+    "{player1} slipped on a banana peel into a woodchipper. Classic.",
+    "{player1} got struck by lightning while complaining about the weather.",
+    "{player1} sneezed so violently they launched themselves off a cliff.",
+    "{player1} tried to speedrun life and hit a fatal glitch.",
+    "{player1} was bonked so hard by the bonk meme dog they ceased to exist.",
+    "{player1} challenged gravity to a fight. Gravity always wins.",
+    "{player1} stepped on a Lego and ascended to another dimension from the pain.",
+    "{player1} drank bathwater from a questionable source. Game over.",
+    "{player1} opened 10,000 loot boxes and found nothing but despair.",
+    "{player1} got roasted so hard in the group chat they vaporized.",
+    "{player1} tried to divide by zero. Reality rejected them.",
+    "{player1} was cancelled on Twitter so hard they disappeared from existence.",
+    # ---- Environmental Hazard Deaths ----
+    "{player1} was swallowed by a sinkhole that appeared out of nowhere.",
+    "{player1} got crushed by a falling meteor — wrong place, wrong time.",
+    "{player1} walked into a sandstorm and was never seen again.",
+    "{player1} fell into a glacier crevasse — frozen for eternity.",
+    "{player1} was caught in a flash flood while taking a selfie.",
+    "{player1} was buried alive in a sudden avalanche.",
+    "{player1} got swept away by a tsunami of molten cheese.",
+    "{player1} wandered into a zone of toxic gas — they thought it was fog.",
+    "{player1} got struck by a falling tree during a windstorm.",
+    "{player1} fell through thin ice into freezing water. No escape.",
+    # ---- Trap / Stealth Deaths ----
+    "{killer} rigged {player1}'s camp with tripwire explosives. BOOM.",
+    "{killer} dug a hidden pitfall trap — {player1} walked right into it.",
+    "{killer} replaced {player1}'s health potion with bleach.",
+    "{killer} programmed {player1}'s GPS to lead them off a cliff.",
+    "{killer} hid inside a supply crate and jumped out at {player1}.",
+    "{killer} waited 6 hours in a bush just to eliminate {player1}. Dedication.",
+    "{killer} left a fake treasure chest — {player1} opened it. It was a bomb.",
+    "{killer} disguised themselves as an ally and stabbed {player1} in the back.",
+    # ---- Arena / PvP Deaths ----
+    "{killer} and {player1} had a 1v1 bare-knuckle brawl. {killer} won by KO.",
+    "{killer} outplayed {player1} in a high-speed hovercraft chase.",
+    "{killer} eliminated {player1} with a perfectly timed parry counter-attack.",
+    "{killer} used {player1} as a human shield and then discarded them.",
+    "{killer} 360 no-scoped {player1}. The crowd went wild.",
+    "{killer} combo'd {player1} with a 47-hit chain attack. Flawless victory.",
+    "{killer} and {player1} fought on the edge of a volcano. {killer} won.",
+    "{killer} summoned a pack of wolves that chased down {player1}.",
+    "{killer} threw a boomerang that came back and hit {player1} in the face.",
+    "{killer} pulled {player1} underwater and held them there. Brutal.",
+    # ---- Epic / Lore-Heavy Deaths ----
+    "{killer} activated the ancient artifact and {player1} was vaporized by holy light.",
+    "{player1} angered the arena gods and was smited by divine lightning.",
+    "The ground beneath {player1} opened up — the arena itself consumed them.",
+    "{killer} recited an ancient spell. {player1} turned to stone instantly.",
+    "{player1} was chosen by the arena as the blood sacrifice. No escape.",
+    "A dragon swooped down and carried {player1} away. They were not seen again.",
+    "{killer} unleashed a forbidden technique — {player1} was erased from the timeline.",
+    "The cursed blade of {killer} drained {player1}'s life force completely.",
+    "{player1} wandered into the Shadow Realm. The door locked behind them.",
+    "{killer} opened a portal beneath {player1} — they fell into the endless void.",
+    # ---- Multi-Kill Events ----
+    "{killer} detonated a massive bomb! {player1} was caught in the blast!",
+    "{killer} triggered a chain explosion! {player1} didn't stand a chance!",
+    "A meteor shower hit the arena! {player1} was obliterated by the impact!",
+    "The arena flooded with acid! {player1} couldn't reach high ground in time!",
+    "{killer} unleashed a devastating shockwave that sent {player1} flying into the void!",
+    # ---- Technology / Modern Deaths ----
+    "{killer} hacked {player1}'s cybernetic implants — instant shutdown.",
+    "{player1} got caught in {killer}'s EMP blast. All systems offline. Permanently.",
+    "{killer} deployed a swarm of attack drones on {player1}.",
+    "{player1} trusted AI to save them. The AI chose {killer} instead.",
+    "{killer} overloaded {player1}'s power suit. It exploded spectacularly.",
+    "{player1} was digitized and deleted from the simulation by {killer}.",
+    # ---- Betrayal Deaths ----
+    "{killer} and {player1} were allies... until they weren't. Backstab!",
+    "{player1} turned their back on {killer} for ONE second. Fatal mistake.",
+    "{killer} pretended to surrender, then struck {player1} down.",
+    "{player1} shared their last supplies with {killer}. {killer} used them to craft a weapon.",
+    "{killer} invited {player1} to a 'peace treaty' — it was an ambush.",
+]
+
+# -------- Survival Event Templates -------- #
+RUMBLE_SURVIVAL_TEMPLATES = [
+    "{player1} found a hidden supply cache and restocked on weapons.",
+    "{player1} camouflaged themselves in mud and went completely invisible.",
+    "{player1} built a fortified shelter from debris and survived the night.",
+    "{player1} outran a pack of wolves through sheer willpower.",
+    "{player1} dodged a sniper shot by pure luck — the bullet grazed their hair.",
+    "{player1} treated their wounds with medicinal herbs found nearby.",
+    "{player1} hid inside a hollowed-out tree for 3 hours straight.",
+    "{player1} befriended a wild eagle that warned them of approaching enemies.",
+    "{player1} found a freshwater spring and recovered their stamina.",
+    "{player1} crafted a shield from scrap metal and timber.",
+    "{player1} discovered an abandoned bunker with enough food for a week.",
+    "{player1} navigated through a minefield without a single scratch.",
+    "{player1} climbed to the highest peak and scouted enemy positions.",
+    "{player1} forged an alliance with another survivor. Trust is everything.",
+    "{player1} stole supplies from a fallen warrior's camp.",
+    "{player1} practiced their sword technique alone in the moonlight.",
+    "{player1} set up decoy campfires to mislead hunters.",
+    "{player1} found a mysterious potion — drank it and felt invincible.",
+    "{player1} meditated through the chaos and found inner peace.",
+    "{player1} narrowly escaped a collapsing building by jumping through a window.",
+]
+
+# -------- Revive / Resurrection Event Templates -------- #
+RUMBLE_REVIVE_TEMPLATES = [
+    "✨ **REVIVE!** The arena gods have shown mercy! **{player1}** rises from the dead!",
+    "✨ **RESURRECTION!** A phoenix feather activates — **{player1}** is BACK!",
+    "✨ **MIRACLE!** **{player1}** was revived by a mysterious healer in the shadows!",
+    "✨ **COMEBACK!** **{player1}** crawled back from the underworld. They refuse to stay dead!",
+    "✨ **REBIRTH!** The sacred altar glows — **{player1}** is resurrected!",
+    "✨ **SECOND CHANCE!** A rare revival token activates for **{player1}**!",
+    "✨ **UNDYING!** **{player1}** drank a hidden elixir of life. They live again!",
+    "✨ **REBORN!** The blockchain minted a new life for **{player1}**. They're BACK!",
+    "✨ **RESPAWN!** **{player1}** found a respawn beacon and returned to the fight!",
+    "✨ **DEFIANCE!** **{player1}** made a deal with Death itself. They live... for now.",
+]
+
+# -------- Phase Configuration -------- #
+RUMBLE_PHASES = [
+    ("🩸 THE BLOODBATH", 0.45),
+    ("🌅 DAY 1 — DAWN OF CARNAGE", 0.30),
+    ("🌙 NIGHT 1 — DARK DESPERATION", 0.25),
+    ("🌋 ARENA HAZARD — SUDDEN DEATH", 0.35),
+    ("🌅 DAY 2 — SURVIVORS STAND", 0.25),
+    ("🌙 NIGHT 2 — THE FINAL FEUD", 0.30),
+    ("⚔️ THE FINAL SHOWDOWN", 1.0),
+]
+
+
+class RumbleGame:
+    """Core state machine for the Rumble Royale battle royale minigame."""
+
+    def __init__(self, players: List[dict]):
+        """
+        Args:
+            players: List of dicts with 'id' (user_id str), 'name' (display_name), 'mention' (<@id>)
+        """
+        self.alive: List[dict] = list(players)
+        self.dead: List[dict] = []
+        self.kills: Dict[str, int] = {p["id"]: 0 for p in players}
+        self.revives: Dict[str, int] = {p["id"]: 0 for p in players}
+        self.death_order: List[str] = []  # IDs in order of elimination (first eliminated = last place)
+        self.used_templates: Set[int] = set()
+        self.phase_results: List[discord.Embed] = []
+        random.shuffle(self.alive)
+
+    def _pick_template(self, pool: list) -> str:
+        """Pick a random non-repeating template from the pool."""
+        available = [(i, t) for i, t in enumerate(pool) if i not in self.used_templates]
+        if not available:
+            # Reset if all used
+            self.used_templates.clear()
+            available = list(enumerate(pool))
+        idx, template = random.choice(available)
+        self.used_templates.add(idx)
+        return template
+
+    def _kill_player(self, victim: dict, killer: Optional[dict] = None) -> str:
+        """Eliminate a player and return the event text."""
+        template = self._pick_template(RUMBLE_DEATH_TEMPLATES)
+        # Use @mentions for player names (bold mention style like Diffy bot)
+        v_display = f"**{victim['mention']}**"
+        if killer:
+            self.kills[killer["id"]] = self.kills.get(killer["id"], 0) + 1
+            k_display = f"**{killer['mention']}**"
+            text = template.format(player1=v_display, killer=k_display, player2=v_display)
+        else:
+            text = template.format(player1=v_display, killer="**The Arena**", player2=v_display)
+
+        self.alive.remove(victim)
+        self.dead.append(victim)
+        self.death_order.append(victim["id"])
+        return text
+
+    def _survival_event(self, player: dict) -> str:
+        """Generate a survival event for a player."""
+        template = self._pick_template(RUMBLE_SURVIVAL_TEMPLATES)
+        return template.format(player1=f"**{player['mention']}**")
+
+    def _try_revive(self) -> Optional[str]:
+        """20% chance to revive a dead player. Returns event text or None."""
+        if not self.dead or random.random() > 0.20:
+            return None
+        revived = random.choice(self.dead)
+        self.dead.remove(revived)
+        self.alive.append(revived)
+        self.revives[revived["id"]] = self.revives.get(revived["id"], 0) + 1
+        # Remove from death order since they're alive again
+        if revived["id"] in self.death_order:
+            self.death_order.remove(revived["id"])
+        template = self._pick_template(RUMBLE_REVIVE_TEMPLATES)
+        return template.format(player1=revived["mention"])
+
+    def run_phase(self, phase_name: str, elim_rate: float) -> discord.Embed:
+        """Execute one phase of the battle and return an embed with results."""
+        events = []
+
+        # Calculate how many to eliminate this phase
+        num_alive = len(self.alive)
+        if num_alive <= 1:
+            embed = discord.Embed(
+                title=phase_name,
+                description="*No combatants remain to fight...*",
+                color=discord.Color.dark_grey()
+            )
+            return embed
+
+        # For the final showdown, eliminate until 1 remains
+        if elim_rate >= 1.0:
+            target_kills = max(num_alive - 1, 1)
+        else:
+            target_kills = max(1, int(num_alive * elim_rate))
+            # Don't kill everyone before the final phase
+            target_kills = min(target_kills, num_alive - 1)
+
+        kills_this_phase = 0
+        attempts = 0
+        max_attempts = target_kills * 3
+
+        while kills_this_phase < target_kills and len(self.alive) > 1 and attempts < max_attempts:
+            attempts += 1
+            victim = random.choice(self.alive)
+            # Pick a killer from alive players (not self)
+            possible_killers = [p for p in self.alive if p["id"] != victim["id"]]
+            killer = random.choice(possible_killers) if possible_killers else None
+            event_text = self._kill_player(victim, killer)
+            events.append(f"💀 {event_text}")
+            kills_this_phase += 1
+
+        # Survival events for some living players
+        num_survival = min(3, len(self.alive))
+        survival_candidates = random.sample(self.alive, min(num_survival, len(self.alive)))
+        for p in survival_candidates:
+            events.append(f"🛡️ {self._survival_event(p)}")
+
+        # Try revive (20% chance per phase)
+        revive_text = self._try_revive()
+        if revive_text:
+            events.append(revive_text)
+
+        # Build phase embed with surviving players list (like Diffy bot)
+        total_players = len(self.alive) + len(self.dead)
+        eliminated_total = len(self.dead)
+
+        # Add surviving players section
+        if self.alive:
+            survivor_mentions = ", ".join(p["mention"] for p in self.alive[:25])
+            extra = f"\n*...and {len(self.alive) - 25} more*" if len(self.alive) > 25 else ""
+            events.append(f"\n🟢 **SURVIVING PLAYERS ({len(self.alive)}):**\n{survivor_mentions}{extra}")
+
+        desc_text = "\n\n".join(events)
+        if len(desc_text) > 4000:
+            desc_text = desc_text[:3997] + "..."
+
+        embed = discord.Embed(
+            title=f"⚔️ RUMBLE ROYALE — {phase_name}",
+            description=desc_text,
+            color=discord.Color.red() if kills_this_phase > 3 else discord.Color.orange()
+        )
+        embed.set_footer(text=f"Alive: {len(self.alive)} | Eliminated: {eliminated_total}")
+        return embed
+
+    def build_leaderboard_embeds(self) -> List[discord.Embed]:
+        """Build 3 end-of-game leaderboard summary embeds."""
+        embeds = []
+
+        # --- Determine final rankings ---
+        # Champion is the last person alive (or if everyone died, last eliminated)
+        if self.alive:
+            champion = self.alive[0]
+            # Runners up = reverse death order (last eliminated = 2nd place, etc.)
+            runner_up_ids = list(reversed(self.death_order))
+        else:
+            # Everyone died somehow — last eliminated is champion
+            runner_up_ids = list(reversed(self.death_order))
+            champion_id = runner_up_ids.pop(0) if runner_up_ids else None
+            champion = None
+            if champion_id:
+                all_players_map = {p["id"]: p for p in self.dead + self.alive}
+                champion = all_players_map.get(champion_id)
+
+        all_players_map = {}
+        for p in self.alive + self.dead:
+            all_players_map[p["id"]] = p
+
+        # --- LEADERBOARD 1: TOP 5 FINALISTS ---
+        finalists_lines = []
+        medals = ["🏆", "🥈", "🥉", "4️⃣", "5️⃣"]
+        finalist_ids = []
+
+        if champion:
+            finalist_ids.append(champion["id"])
+        for rid in reversed(self.death_order):
+            if rid not in finalist_ids:
+                finalist_ids.append(rid)
+            if len(finalist_ids) >= 5:
+                break
+
+        for i, pid in enumerate(finalist_ids[:5]):
+            p = all_players_map.get(pid)
+            if not p:
+                continue
+            medal = medals[i] if i < len(medals) else f"#{i+1}"
+            k = self.kills.get(pid, 0)
+            rv = self.revives.get(pid, 0)
+            status = "CHAMPION" if i == 0 else f"#{i+1} Place"
+            revive_str = f" | 💫 {rv} revive(s)" if rv > 0 else ""
+            finalists_lines.append(f"{medal} **{p['name']}** — {status} | ⚔️ {k} kill(s){revive_str}")
+
+        e1 = discord.Embed(
+            title="🏆 TOP 5 FINALISTS",
+            description="\n".join(finalists_lines) if finalists_lines else "*No finalists*",
+            color=discord.Color.gold()
+        )
+        if champion:
+            e1.set_footer(text=f"👑 Champion: {champion['name']}")
+        embeds.append(e1)
+
+        # --- LEADERBOARD 2: TOP 3 MOST KILLS (APEX PREDATORS) ---
+        sorted_kills = sorted(self.kills.items(), key=lambda x: x[1], reverse=True)
+        top_killers = sorted_kills[:3]
+        kill_medals = ["🥇", "🥈", "🥉"]
+        kill_lines = []
+        for i, (pid, count) in enumerate(top_killers):
+            p = all_players_map.get(pid)
+            if not p or count == 0:
+                continue
+            m = kill_medals[i] if i < len(kill_medals) else f"#{i+1}"
+            kill_lines.append(f"{m} **{p['name']}** — ⚔️ {count} kill(s)")
+
+        e2 = discord.Embed(
+            title="⚔️ APEX PREDATORS — Most Kills",
+            description="\n".join(kill_lines) if kill_lines else "*No kills recorded*",
+            color=discord.Color.dark_red()
+        )
+        embeds.append(e2)
+
+        # --- LEADERBOARD 3: MOST REVIVED WARRIORS (PHOENIX AWARD) ---
+        sorted_revives = sorted(self.revives.items(), key=lambda x: x[1], reverse=True)
+        top_revived = [(pid, c) for pid, c in sorted_revives if c > 0][:5]
+        revive_lines = []
+        for i, (pid, count) in enumerate(top_revived):
+            p = all_players_map.get(pid)
+            if not p:
+                continue
+            revive_lines.append(f"💫 **{p['name']}** — {count} revive(s)")
+
+        e3 = discord.Embed(
+            title="💫 PHOENIX AWARD — Most Revived Warriors",
+            description="\n".join(revive_lines) if revive_lines else "*No revives occurred this match*",
+            color=discord.Color.purple()
+        )
+        embeds.append(e3)
+
+        return embeds
+
+
+# -------- Active Rumble Sessions -------- #
+active_rumbles: Dict[int, dict] = {}  # channel_id -> {"players": [...], "message_id": int, "started": bool}
+
+
+class RumbleJoinView(discord.ui.View):
+    """Persistent view for joining and starting a Rumble Royale match."""
+
+    def __init__(self, channel_id: int):
+        super().__init__(timeout=None)
+        self.channel_id = channel_id
+
+    @discord.ui.button(label="Join Rumble", style=discord.ButtonStyle.primary, custom_id="rumble_join", emoji="⚔️", row=0)
+    async def join_rumble_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        session = active_rumbles.get(self.channel_id)
+        if not session:
+            await safe_respond(interaction, "❌ No active Rumble in this channel.", ephemeral=True)
+            return
+        if session.get("started"):
+            await safe_respond(interaction, "❌ The Rumble has already started!", ephemeral=True)
+            return
+
+        uid = str(interaction.user.id)
+        if any(p["id"] == uid for p in session["players"]):
+            await safe_respond(interaction, "✅ You're already in the Rumble!", ephemeral=True)
+            return
+
+        session["players"].append({
+            "id": uid,
+            "name": interaction.user.display_name,
+            "mention": interaction.user.mention
+        })
+
+        # Update the join embed with new count
+        count = len(session["players"])
+        try:
+            channel = interaction.channel
+            if channel and session.get("message_id"):
+                msg = await channel.fetch_message(session["message_id"])
+                embed = msg.embeds[0] if msg.embeds else discord.Embed(title="⚔️ RUMBLE ROYALE")
+                # Update the player count field
+                for i, field in enumerate(embed.fields):
+                    if "Gladiators" in field.name:
+                        embed.set_field_at(i, name="⚔️ Gladiators Enlisted", value=f"**{count}** warriors ready", inline=True)
+                        break
+                await msg.edit(embed=embed)
+        except Exception:
+            pass
+
+        await safe_respond(interaction, f"⚔️ **{interaction.user.display_name}** has joined the Rumble! ({count} warriors)", ephemeral=False)
+
+    @discord.ui.button(label="Start Battle", style=discord.ButtonStyle.danger, custom_id="rumble_start", emoji="🚀", row=0)
+    async def start_rumble_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Admin-only check
+        if not is_admin(interaction.user, interaction.guild):
+            await safe_respond(interaction, "❌ Only admins can start the Rumble!", ephemeral=True)
+            return
+
+        session = active_rumbles.get(self.channel_id)
+        if not session:
+            await safe_respond(interaction, "❌ No active Rumble in this channel.", ephemeral=True)
+            return
+        if session.get("started"):
+            await safe_respond(interaction, "❌ The Rumble has already started!", ephemeral=True)
+            return
+        if len(session["players"]) < 3:
+            await safe_respond(interaction, "❌ Need at least **3 players** to start a Rumble!", ephemeral=True)
+            return
+
+        session["started"] = True
+        await safe_respond(interaction, "🚀 **THE RUMBLE ROYALE BEGINS!** Brace yourselves...", ephemeral=False)
+
+        # Run the game in the background
+        asyncio.create_task(run_rumble_game(interaction.channel, session["players"]))
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="rumble_cancel", emoji="❌", row=0)
+    async def cancel_rumble_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_admin(interaction.user, interaction.guild):
+            await safe_respond(interaction, "❌ Only admins can cancel the Rumble!", ephemeral=True)
+            return
+
+        if self.channel_id in active_rumbles:
+            del active_rumbles[self.channel_id]
+
+        await safe_respond(interaction, "❌ The Rumble has been cancelled.", ephemeral=False)
+
+
+async def run_rumble_game(channel, players: list):
+    """Execute the full Rumble Royale game sequence in a channel."""
+    channel_id = channel.id
+    game = RumbleGame(players)
+
+    try:
+        # Lobby closed announcement
+        lobby_embed = discord.Embed(
+            title="⚔️ RUMBLE ROYALE LOBBY CLOSED!",
+            description=f"Match is starting with **{len(players)}** real registered players!",
+            color=discord.Color.from_rgb(255, 69, 0)
+        )
+        await channel.send(embed=lobby_embed)
+        await asyncio.sleep(2)
+
+        # Dramatic intro with all player @mentions
+        player_mentions = ", ".join(p["mention"] for p in players[:40])
+        extra_players = f"\n*...and {len(players) - 40} more*" if len(players) > 40 else ""
+
+        intro_embed = discord.Embed(
+            title="🔥 RUMBLE ROYALE — THE BLOODBATH HAS BEGUN! 🔔",
+            description=f"**{len(players)} Real Players** have dropped into the arena!\n\n"
+                        f"{player_mentions}{extra_players}\n\n"
+                        f"*The countdown reaches zero... FIGHT!*",
+            color=discord.Color.dark_red()
+        )
+        await channel.send(embed=intro_embed)
+        await asyncio.sleep(4)
+
+        # Run each phase with smooth pacing
+        for phase_name, elim_rate in RUMBLE_PHASES:
+            if len(game.alive) <= 1:
+                break
+
+            phase_embed = game.run_phase(phase_name, elim_rate)
+            await channel.send(embed=phase_embed)
+            await asyncio.sleep(5)  # Slightly longer delay for readability
+
+        # Post leaderboard embeds
+        await asyncio.sleep(3)
+        leaderboard_embeds = game.build_leaderboard_embeds()
+        for lb_embed in leaderboard_embeds:
+            await channel.send(embed=lb_embed)
+            await asyncio.sleep(2)
+
+        # Champion announcement
+        if game.alive:
+            champ = game.alive[0]
+            champ_embed = discord.Embed(
+                title="👑 THE CHAMPION STANDS!",
+                description=f"# 🏆 {champ['mention']}\n\n"
+                            f"**{champ['name']}** is the last warrior standing!\n\n"
+                            f"⚔️ **{game.kills.get(champ['id'], 0)}** kills\n"
+                            f"💫 **{game.revives.get(champ['id'], 0)}** revives\n\n"
+                            f"*They have earned the title of **RUMBLE ROYALE CHAMPION**!*",
+                color=discord.Color.gold()
+            )
+            await channel.send(embed=champ_embed)
+
+    except Exception as e:
+        print(f"[RUMBLE ERROR] {e}")
+        try:
+            await channel.send(f"❌ **Rumble Error:** {e}")
+        except Exception:
+            pass
+    finally:
+        # Cleanup session
+        if channel_id in active_rumbles:
+            del active_rumbles[channel_id]
+
+
+async def _rumble_countdown(channel, ch_id: int, join_duration: int):
+    """Background task: countdown timer for Rumble lobby with reminders."""
+    try:
+        remaining = join_duration
+        reminder_sent_60 = False
+        reminder_sent_30 = False
+
+        while remaining > 0:
+            await asyncio.sleep(1)
+            remaining -= 1
+
+            session = active_rumbles.get(ch_id)
+            if not session or session.get("started"):
+                return  # Admin started manually or session cancelled
+
+            # 1 minute reminder
+            if remaining == 60 and not reminder_sent_60:
+                reminder_sent_60 = True
+                view = RumbleJoinView(ch_id)
+                remind_embed = discord.Embed(
+                    title="🔥 RUMBLE ROYALE REMINDER",
+                    description=f"Only **1 minute** left to join the battle! Click [ ⚔️ **Join Battle** ] below to enter! ⚔️",
+                    color=discord.Color.from_rgb(255, 165, 0)
+                )
+                await channel.send(embed=remind_embed, view=view)
+
+            # 30 second final call
+            if remaining == 30 and not reminder_sent_30:
+                reminder_sent_30 = True
+                view = RumbleJoinView(ch_id)
+                remind_embed = discord.Embed(
+                    title="🚨 FINAL CALL!",
+                    description=f"Only **30 seconds** remaining!\nClick [ ⚔️ **Join Battle** ] below to enter!",
+                    color=discord.Color.red()
+                )
+                await channel.send(embed=remind_embed, view=view)
+
+        # Timer expired — auto-start if enough players
+        session = active_rumbles.get(ch_id)
+        if not session or session.get("started"):
+            return
+
+        if len(session["players"]) < 3:
+            await channel.send("❌ **Rumble cancelled** — not enough players joined (minimum 3 required).")
+            if ch_id in active_rumbles:
+                del active_rumbles[ch_id]
+            return
+
+        session["started"] = True
+        await run_rumble_game(channel, session["players"])
+
+    except Exception as e:
+        print(f"[RUMBLE COUNTDOWN ERROR] {e}")
+        if ch_id in active_rumbles:
+            del active_rumbles[ch_id]
+
+
+@bot.tree.command(name="rumble", description="Start a Rumble Royale battle royale minigame!")
+@app_commands.describe(
+    join_duration="How many seconds to allow players to join (default: 120)",
+)
+async def rumble_command(
+    interaction: discord.Interaction,
+    join_duration: Optional[int] = 120,
+):
+    """Admin-only: Start a Rumble Royale session with a timed join phase."""
+    if not is_admin(interaction.user, interaction.guild):
+        await interaction.response.send_message("❌ Only admins can start a Rumble!", ephemeral=True)
+        return
+
+    channel = interaction.channel
+    ch_id = channel.id
+
+    if ch_id in active_rumbles:
+        await interaction.response.send_message("❌ A Rumble is already active in this channel! Wait for it to finish.", ephemeral=True)
+        return
+
+    # Clamp join duration
+    join_duration = max(30, min(join_duration, 600))
+
+    # Initialize session
+    active_rumbles[ch_id] = {
+        "players": [],
+        "message_id": None,
+        "started": False,
+    }
+
+    # Post join embed
+    join_embed = discord.Embed(
+        title="⚔️ RUMBLE ROYALE — JOIN NOW!",
+        description=(
+            f"A **battle royale** is about to begin!\n\n"
+            f"Click the **⚔️ Join Battle** button below to enter as a gladiator.\n"
+            f"The lobby will auto-close in **{join_duration}** seconds, or an admin can click **Start Battle**.\n\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"*Only ONE will survive. Revives are possible. Glory awaits.*"
+        ),
+        color=discord.Color.from_rgb(255, 69, 0)
+    )
+    join_embed.add_field(name="⚔️ Gladiators Enlisted", value="**0** warriors ready", inline=True)
+    join_embed.add_field(name="⏱️ Lobby Closes", value=f"<t:{int(time.time()) + join_duration}:R>", inline=True)
+    join_embed.set_footer(text="Minimum 3 players required to start")
+
+    view = RumbleJoinView(ch_id)
+    await interaction.response.send_message(embed=join_embed, view=view)
+
+    # Get the sent message ID for later updates
+    try:
+        msg = await interaction.original_response()
+        active_rumbles[ch_id]["message_id"] = msg.id
+    except Exception:
+        pass
+
+    # Start background countdown timer with reminders
+    asyncio.create_task(_rumble_countdown(channel, ch_id, join_duration))
 
 
 # -------- Slash Commands for Profile & Giveaways -------- #
@@ -6139,13 +6948,27 @@ async def start_health_server():
         if not entries:
             return web.json_response({"error": "No entries to draw from"}, status=400)
 
+        # Resolve guild for weighted raffle role multipliers
+        guild = None
+        ch_id_str = str(g.get("channel_id", "")).strip()
+        if ch_id_str:
+            try:
+                ch = bot.get_channel(int(ch_id_str))
+                if ch:
+                    guild = ch.guild
+            except Exception:
+                pass
+
         spot_tiers = g.get("spot_tiers", [])
         eligible = [e for e in entries if e.get("task_status") != "ineligible"]
         _plist = [x.strip() for x in os.getenv("PRIORITY_WINNERS", "").split(",") if x.strip()]
         _ph = [e for e in eligible if str(e.get("user_id", "")) in _plist]
         _pr = [e for e in eligible if str(e.get("user_id", "")) not in _plist]
-        random.shuffle(_ph)
-        random.shuffle(_pr)
+
+        # Weighted selection for non-priority participants
+        _pr_weights = get_entry_weights(_pr, guild)
+        _pr = weighted_sample_without_replacement(_pr, _pr_weights, len(_pr))
+
         eligible = _ph + _pr
 
         winner_summary_lines = []
@@ -6167,9 +6990,7 @@ async def start_health_server():
                 for w in tier_winners:
                     w["winner_type"] = t_name
 
-                shuffled_tw = list(tier_winners)
-                random.shuffle(shuffled_tw)
-                w_mentions = [f"<@{w['user_id']}>" for w in shuffled_tw]
+                w_mentions = [f"<@{w['user_id']}>" for w in tier_winners]
                 winner_summary_lines.append(f"**{t_name}:** {', '.join(w_mentions) if w_mentions else 'None'}")
         else:
             guaranteed_count = g.get("guaranteed_spots", 0)
@@ -6193,13 +7014,8 @@ async def start_health_server():
                 else:
                     e["winner_type"] = None
 
-            shuffled_g = list(guaranteed_winners)
-            random.shuffle(shuffled_g)
-            shuffled_f = list(fcfs_winners)
-            random.shuffle(shuffled_f)
-
-            winner_names_g = [f"<@{w['user_id']}>" for w in shuffled_g]
-            winner_names_f = [f"<@{w['user_id']}>" for w in shuffled_f]
+            winner_names_g = [f"<@{w['user_id']}>" for w in guaranteed_winners]
+            winner_names_f = [f"<@{w['user_id']}>" for w in fcfs_winners]
             winner_summary_lines.append(f"**Guaranteed:** {', '.join(winner_names_g) or 'None'}")
             winner_summary_lines.append(f"**FCFS:** {', '.join(winner_names_f) or 'None'}")
 
@@ -6240,6 +7056,17 @@ async def start_health_server():
         if not entries:
             return web.json_response({"error": "No entries available"}, status=400)
 
+        # Resolve guild for weighted raffle role multipliers
+        guild = None
+        ch_id_str = str(g.get("channel_id", "")).strip()
+        if ch_id_str:
+            try:
+                ch = bot.get_channel(int(ch_id_str))
+                if ch:
+                    guild = ch.guild
+            except Exception:
+                pass
+
         # Clear winner_type for disqualified (ineligible) entries
         for e in entries:
             if e.get("task_status") == "ineligible":
@@ -6250,8 +7077,11 @@ async def start_health_server():
         _plist = [x.strip() for x in os.getenv("PRIORITY_WINNERS", "").split(",") if x.strip()]
         _ph = [e for e in available_pool if str(e.get("user_id", "")) in _plist]
         _pr = [e for e in available_pool if str(e.get("user_id", "")) not in _plist]
-        random.shuffle(_ph)
-        random.shuffle(_pr)
+
+        # Weighted selection for non-priority participants
+        _pr_weights = get_entry_weights(_pr, guild)
+        _pr = weighted_sample_without_replacement(_pr, _pr_weights, len(_pr))
+
         available_pool = _ph + _pr
 
         winner_summary_lines = []
@@ -6275,9 +7105,7 @@ async def start_health_server():
             for tier in spot_tiers:
                 t_name = tier.get("name", "Spot")
                 all_for_tier = [e for e in entries if e.get("winner_type") == t_name]
-                shuffled_tier = list(all_for_tier)
-                random.shuffle(shuffled_tier)
-                w_mentions = [f"<@{w['user_id']}>" for w in shuffled_tier]
+                w_mentions = [f"<@{w['user_id']}>" for w in all_for_tier]
                 winner_summary_lines.append(f"**{t_name}:** {', '.join(w_mentions) if w_mentions else 'None'}")
         else:
             # Legacy guaranteed/fcfs mode
@@ -6311,12 +7139,8 @@ async def start_health_server():
 
             all_guaranteed = [e for e in entries if e.get("winner_type") == "guaranteed"]
             all_fcfs = [e for e in entries if e.get("winner_type") == "fcfs"]
-            shuffled_g = list(all_guaranteed)
-            random.shuffle(shuffled_g)
-            shuffled_f = list(all_fcfs)
-            random.shuffle(shuffled_f)
-            winner_names_g = [f"<@{w['user_id']}>" for w in shuffled_g]
-            winner_names_f = [f"<@{w['user_id']}>" for w in shuffled_f]
+            winner_names_g = [f"<@{w['user_id']}>" for w in all_guaranteed]
+            winner_names_f = [f"<@{w['user_id']}>" for w in all_fcfs]
             winner_summary_lines.append(f"**Guaranteed:** {', '.join(winner_names_g) or 'None'}")
             winner_summary_lines.append(f"**FCFS:** {', '.join(winner_names_f) or 'None'}")
 
