@@ -3664,14 +3664,14 @@ def get_required_task_list(g_data: dict) -> list:
         if not rt_url.startswith(("http://", "https://")):
             rt_url = ""
     if "twitter_retweet" in lookup or "twitter_like" in lookup:
-        required.append(("like_retweet", "🔄 Like & Retweet", rt_url))
+        required.append(("like_retweet", "Like & Retweet", rt_url))
 
     # Comment
     cm_url = (lookup.get("twitter_comment") or slinks.get("comment_link") or "").strip()
     if cm_url and not cm_url.startswith(("http://", "https://")):
         cm_url = ""
     if "twitter_comment" in lookup:
-        required.append(("comment", "💬 Comment on Tweet", cm_url))
+        required.append(("comment", "Comment on Tweet", cm_url))
 
     # Follow Twitter
     fw_val = lookup.get("twitter_follow", "")
@@ -3680,27 +3680,27 @@ def get_required_task_list(g_data: dict) -> list:
             fw_url = fw_val
         else:
             fw_url = f"https://x.com/{fw_val.lstrip('@')}"
-        required.append(("follow_twitter", "🐦 Follow Twitter", fw_url))
+        required.append(("follow_twitter", "Follow Twitter", fw_url))
     elif slinks.get("twitter_link"):
-        required.append(("follow_twitter", "🐦 Follow Twitter", slinks["twitter_link"].strip()))
+        required.append(("follow_twitter", "Follow Twitter", slinks["twitter_link"].strip()))
 
     # Discord Join Task
     if "discord_join" in lookup or "discord_server" in lookup:
         dc_val = (lookup.get("discord_join") or lookup.get("discord_server") or "").strip()
         dc_url = dc_val if dc_val.startswith(("http://", "https://")) else (slinks.get("discord_link", "").strip() or dc_val)
-        required.append(("join_discord", "💬 Join Discord Server", dc_url))
+        required.append(("join_discord", "Join Discord Server", dc_url))
 
     # TikTok
     if "tiktok_follow" in lookup:
         tk_val = lookup["tiktok_follow"]
         tk_url = tk_val if tk_val.startswith(("http://","https://")) else f"https://www.tiktok.com/@{tk_val.lstrip('@')}"
-        required.append(("follow_tiktok", "🎵 Follow TikTok", tk_url))
+        required.append(("follow_tiktok", "Follow TikTok", tk_url))
 
     # YouTube
     if "youtube_follow" in lookup:
         yt_val = lookup["youtube_follow"]
         yt_url = yt_val if yt_val.startswith(("http://","https://")) else ""
-        required.append(("follow_youtube", "▶️ Subscribe YouTube", yt_url))
+        required.append(("follow_youtube", "Subscribe YouTube", yt_url))
 
     # Custom Tasks (Feature 2: arbitrary task requirements)
     tasks = g_data.get("tasks") or {}
@@ -3715,7 +3715,7 @@ def get_required_task_list(g_data: dict) -> list:
                 c_url = t.get("value", "").strip()
                 if c_url and not c_url.startswith(("http://", "https://")):
                     c_url = ""
-                required.append((f"custom_{custom_idx}", f"📌 {c_label}", c_url))
+                required.append((f"custom_{custom_idx}", c_label, c_url))
 
     return required
 
@@ -3730,7 +3730,6 @@ class GiveawayView(discord.ui.View):
             label="Join Giveaway",
             style=discord.ButtonStyle.primary,
             custom_id=f"join_giveaway_{giveaway_id}",
-            emoji="🎉",
             row=0
         )
         join_btn.callback = self.join_giveaway_callback
@@ -3740,7 +3739,6 @@ class GiveawayView(discord.ui.View):
             label="View Your Entry",
             style=discord.ButtonStyle.secondary,
             custom_id=f"view_entry_{giveaway_id}",
-            emoji="👁️",
             row=0
         )
         view_btn.callback = self.view_entry_callback
@@ -3752,10 +3750,9 @@ class GiveawayView(discord.ui.View):
             required_tasks = get_required_task_list(g_obj)
             for task_type, label, url in required_tasks:
                 btn = discord.ui.Button(
-                    label=label.split(" ", 1)[1] if " " in label else label,
+                    label=label,
                     style=discord.ButtonStyle.secondary,
                     custom_id=f"gtask_{task_type}_{giveaway_id}",
-                    emoji=label.split(" ")[0] if label else "📌",
                     row=1
                 )
                 btn.callback = self._make_task_callback(task_type, url, label)
@@ -3765,13 +3762,13 @@ class GiveawayView(discord.ui.View):
             slinks = g_obj.get("social_links") or {}
             discord_url = (slinks.get("discord_link") or "").strip()
             if discord_url and discord_url.startswith(("http://", "https://")):
-                self.add_item(discord.ui.Button(label="Join Discord", style=discord.ButtonStyle.link, url=discord_url, emoji="💬", row=2))
+                self.add_item(discord.ui.Button(label="Join Discord", style=discord.ButtonStyle.link, url=discord_url, row=2))
             telegram_url = (slinks.get("telegram_link") or "").strip()
             if telegram_url and telegram_url.startswith(("http://", "https://")):
-                self.add_item(discord.ui.Button(label="Telegram", style=discord.ButtonStyle.link, url=telegram_url, emoji="✈️", row=2))
+                self.add_item(discord.ui.Button(label="Telegram", style=discord.ButtonStyle.link, url=telegram_url, row=2))
             website_url = (slinks.get("website_link") or "").strip()
             if website_url and website_url.startswith(("http://", "https://")):
-                self.add_item(discord.ui.Button(label="Website", style=discord.ButtonStyle.link, url=website_url, emoji="🌐", row=2))
+                self.add_item(discord.ui.Button(label="Website", style=discord.ButtonStyle.link, url=website_url, row=2))
 
     def _make_task_callback(self, task_type: str, url: str, label: str):
         giveaway_id = self.giveaway_id
@@ -3786,21 +3783,21 @@ class GiveawayView(discord.ui.View):
 
             # Show the link to the user
             if url:
-                await safe_respond(interaction, f"✅ **{label}** — marked as done!\n\n👉 **Complete the task here:** {url}", ephemeral=True)
+                await safe_respond(interaction, f"**{label}** — marked as done!\n\n**Complete the task here:** {url}", ephemeral=True)
             else:
-                await safe_respond(interaction, f"✅ **{label}** — marked as done!", ephemeral=True)
+                await safe_respond(interaction, f"**{label}** — marked as done!", ephemeral=True)
         return task_callback
 
     async def join_giveaway_callback(self, interaction: discord.Interaction):
         g_id = self.giveaway_id
         g = giveaways.get(g_id)
         if not g:
-            await safe_respond(interaction, "❌ Giveaway not found or has been removed.", ephemeral=True)
+            await safe_respond(interaction, "Giveaway not found or has been removed.", ephemeral=True)
             return
 
         now = int(time.time())
         if not g.get("is_active", True) or g.get("ends_at", 0) <= now:
-            await safe_respond(interaction, "🔒 This giveaway has already ended!", ephemeral=True)
+            await safe_respond(interaction, "This giveaway has already ended!", ephemeral=True)
             return
 
         uid = str(interaction.user.id)
@@ -3827,7 +3824,7 @@ class GiveawayView(discord.ui.View):
                     roles_text = "\n".join(f"  • {rm}" for rm in role_mentions)
                     await safe_respond(
                         interaction,
-                        f"❌ **Role Required!**\n\n"
+                        f"**Role Required!**\n\n"
                         f"You must have **at least ONE** of the following roles to enter:\n{roles_text}\n\n"
                         f"*Check the server's role-gating channels to earn a qualifying role.*",
                         ephemeral=True
@@ -3838,7 +3835,7 @@ class GiveawayView(discord.ui.View):
         entries = giveaway_entries.get(g_id, [])
         existing = next((e for e in entries if isinstance(e, dict) and e.get("user_id") == uid), None)
         if existing:
-            await safe_respond(interaction, f"✅ You are already registered for **{g.get('title', 'Giveaway')}**!", ephemeral=True)
+            await safe_respond(interaction, f"You are already registered for **{g.get('title', 'Giveaway')}**!", ephemeral=True)
             return
 
         # 2. FIRST CLICK: Always show task list and do NOT join yet
@@ -3856,12 +3853,12 @@ class GiveawayView(discord.ui.View):
                 lines = []
                 for task_type, label, url in required_tasks:
                     is_done = task_type in user_completed
-                    status_icon = "✅" if is_done else "❌"
+                    status_text = "[Done]" if is_done else "[ ]"
                     if url:
                         # Wrap in <> to disable Discord link preview embeds
-                        lines.append(f"  {status_icon} **{label}** — <{url}>")
+                        lines.append(f"  {status_text} **{label}** — <{url}>")
                     else:
-                        lines.append(f"  {status_icon} **{label}**")
+                        lines.append(f"  {status_text} **{label}**")
                 tasks_text = "\n".join(lines)
 
                 completed_count = sum(1 for tt, _, _ in required_tasks if tt in user_completed)
@@ -3869,16 +3866,15 @@ class GiveawayView(discord.ui.View):
 
                 await safe_respond(
                     interaction,
-                    f"📋 **Complete the following tasks to participate:**\n\n"
+                    f"**Complete the following tasks to participate:**\n\n"
                     f"**Required Tasks ({completed_count}/{total_count} done):**\n{tasks_text}\n\n"
-                    f"**If you have already done the tasks, ignore this and click on [Join Giveaway] button again!**\n\n"
-                    f"👉 *Once done, click **[Join Giveaway]** again to enter!*",
+                    f"**If you have already done the tasks, click [Join Giveaway] again to confirm your entry!**",
                     ephemeral=True
                 )
             else:
                 await safe_respond(
                     interaction,
-                    f"👉 *Click **[Join Giveaway]** one more time to confirm your entry!*",
+                    f"Click **[Join Giveaway]** one more time to confirm your entry!",
                     ephemeral=True
                 )
             return
@@ -5648,7 +5644,7 @@ def format_task_link(ttype: str, val: str) -> str:
 
     elif ttype in ("discord_join", "discord_server"):
         if is_url:
-            return f"• Join [Discord Server 💬]({clean})"
+            return f"• Join [Discord Server]({clean})"
         else:
             return f"• Join Discord Server: {clean}"
 
@@ -5670,25 +5666,25 @@ def format_task_link(ttype: str, val: str) -> str:
 def format_embed_description(raw_desc: str, social_links: Optional[dict] = None) -> str:
     if not raw_desc:
         raw_desc = ""
-    # Convert plain raw URLs into [Click Here 🔗](url) if not already formatted as [label](url)
+    # Convert plain raw URLs into [Click Here](url) if not already formatted as [label](url)
     def url_replacer(match):
         prefix = match.group(1) or ""
         url = match.group(2)
         clean_url = url.rstrip(")")
-        return f"{prefix}[Click Here 🔗]({clean_url})"
+        return f"{prefix}[Click Here]({clean_url})"
 
     formatted = re.sub(r'(?<!\]\()((https?://[^\s\)]+))', url_replacer, raw_desc)
 
     # Append Official Links section at the bottom of description
     if social_links and isinstance(social_links, dict):
         link_bullets = []
-        if social_links.get("twitter_link"): link_bullets.append(f"[Twitter / X 🐦]({social_links['twitter_link'].strip()})")
-        if social_links.get("discord_link"): link_bullets.append(f"[Discord Server 💬]({social_links['discord_link'].strip()})")
-        if social_links.get("telegram_link"): link_bullets.append(f"[Telegram ✈️]({social_links['telegram_link'].strip()})")
-        if social_links.get("website_link"): link_bullets.append(f"[Website 🌐]({social_links['website_link'].strip()})")
+        if social_links.get("twitter_link"): link_bullets.append(f"[Twitter / X]({social_links['twitter_link'].strip()})")
+        if social_links.get("discord_link"): link_bullets.append(f"[Discord Server]({social_links['discord_link'].strip()})")
+        if social_links.get("telegram_link"): link_bullets.append(f"[Telegram]({social_links['telegram_link'].strip()})")
+        if social_links.get("website_link"): link_bullets.append(f"[Website]({social_links['website_link'].strip()})")
 
         if link_bullets:
-            formatted += f"\n\n🔗 **Official Links:**\n" + " • ".join(link_bullets)
+            formatted += f"\n\n**Official Links:**\n" + " • ".join(link_bullets)
 
     return formatted
 
@@ -5734,7 +5730,7 @@ def build_giveaway_embed(g_data: dict):
     embed.add_field(name="Network", value=g_data.get("network", "Ethereum"), inline=True)
     embed.add_field(name="Ends At", value=f"<t:{int(g_data.get('ends_at', time.time()))}:R>", inline=True)
 
-    # Render Tasks / Requirements Field with Bold Formatting & Distinct Emojis
+    # Render Tasks / Requirements Field with Clean Formatting (No Emojis)
     tasks = g_data.get("tasks", {})
     task_lines = []
     if isinstance(tasks, dict):
@@ -5746,47 +5742,47 @@ def build_giveaway_embed(g_data: dict):
                 formatted = format_task_link(ttype, val)
                 if formatted:
                     clean_txt = formatted.lstrip("• ").strip()
-                    task_lines.append(f"📌 **{clean_txt}**")
+                    task_lines.append(f"• **{clean_txt}**")
 
         if not task_lines:
             if tasks.get("twitter_follow"):
                 link_str = format_task_link("twitter_follow", tasks['twitter_follow']).replace("• ", "").strip()
-                task_lines.append(f"🔹 **Follow Twitter:** {link_str}")
+                task_lines.append(f"• **Follow Twitter:** {link_str}")
             if tasks.get("twitter_like"):
                 link_str = format_task_link("twitter_like", tasks['twitter_like']).replace("• ", "").strip()
-                task_lines.append(f"🔹 **Like Tweet:** {link_str}")
+                task_lines.append(f"• **Like Tweet:** {link_str}")
             if tasks.get("twitter_retweet"):
                 link_str = format_task_link("twitter_retweet", tasks['twitter_retweet']).replace("• ", "").strip()
-                task_lines.append(f"🔹 **Retweet:** {link_str}")
+                task_lines.append(f"• **Retweet:** {link_str}")
             if tasks.get("twitter_comment"):
                 link_str = format_task_link("twitter_comment", tasks['twitter_comment']).replace("• ", "").strip()
-                task_lines.append(f"💬 **Comment on Tweet:** {link_str}")
+                task_lines.append(f"• **Comment on Tweet:** {link_str}")
             if tasks.get("discord_join") or tasks.get("discord_server"):
                 val = tasks.get("discord_join") or tasks.get("discord_server")
                 link_str = format_task_link("discord_join", str(val)).replace("• ", "").strip()
-                task_lines.append(f"💬 **Join Discord:** {link_str}")
+                task_lines.append(f"• **Join Discord:** {link_str}")
             if tasks.get("tiktok_follow"):
                 link_str = format_task_link("tiktok_follow", tasks['tiktok_follow']).replace("• ", "").strip()
-                task_lines.append(f"🔹 **Follow TikTok:** {link_str}")
+                task_lines.append(f"• **Follow TikTok:** {link_str}")
             if tasks.get("youtube_follow"):
                 link_str = format_task_link("youtube_follow", tasks['youtube_follow']).replace("• ", "").strip()
-                task_lines.append(f"🔹 **Subscribe YouTube:** {link_str}")
+                task_lines.append(f"• **Subscribe YouTube:** {link_str}")
             if tasks.get("manual_task"):
                 link_str = format_task_link("manual_task", tasks['manual_task']).replace("• ", "").strip()
-                task_lines.append(f"🔹 **Custom Task:** {link_str}")
+                task_lines.append(f"• **Custom Task:** {link_str}")
             if tasks.get("roles"):
                 roles_formatted = ", ".join([f"**{r}**" for r in tasks['roles']])
-                task_lines.append(f"🏷️ **Required Roles:** {roles_formatted}")
+                task_lines.append(f"• **Required Roles:** {roles_formatted}")
 
         if tasks.get("require_evm"):
-            task_lines.append("💳 **Submit EVM Wallet (0x...)**")
+            task_lines.append("• **Submit EVM Wallet (0x...)**")
         if tasks.get("require_solana"):
-            task_lines.append("💳 **Submit Solana Wallet**")
+            task_lines.append("• **Submit Solana Wallet**")
 
     if task_lines:
         task_block = "\n".join([f"> {tl}" for tl in task_lines if tl])
         embed.add_field(
-            name="⚡ ENTRY REQUIREMENTS & TASKS",
+            name="ENTRY REQUIREMENTS & TASKS",
             value=f"\n{task_block}\n",
             inline=False
         )

@@ -207,6 +207,22 @@ async function loadGuildRoles() {
     if (editRole && editRole.tagName === 'SELECT') {
       editRole.innerHTML = baseOptions + (roleOpts ? `<optgroup label="Server Roles">${roleOpts}</optgroup>` : '');
     }
+
+    // Dedicated Required Roles Multi-select options
+    const reqRoleOpts = uniqueRoles
+      .filter(r => r.id !== '@everyone')
+      .map(r => `<option value="${r.id}">@${escapeHtml(r.name)} (${escapeHtml(r.guild_name || 'Server')})</option>`)
+      .join('');
+
+    const gReqRole = document.getElementById('gRequiredRoles');
+    if (gReqRole && gReqRole.tagName === 'SELECT') {
+      gReqRole.innerHTML = reqRoleOpts;
+    }
+
+    const editReqRole = document.getElementById('editGRequiredRoles');
+    if (editReqRole && editReqRole.tagName === 'SELECT') {
+      editReqRole.innerHTML = reqRoleOpts;
+    }
   } catch (err) {
     console.error('Failed to load roles:', err);
   }
@@ -770,6 +786,9 @@ async function submitCreateGiveaway() {
     if (duration_unit === 'hours') durationInSeconds = duration_val * 3600;
     if (duration_unit === 'days') durationInSeconds = duration_val * 86400;
 
+    const reqRolesSel = document.getElementById('gRequiredRoles');
+    const selectedRoles = reqRolesSel ? Array.from(reqRolesSel.selectedOptions).map(o => o.value).filter(Boolean) : [];
+
     const giveawayObj = {
       id: giveawayId,
       title,
@@ -796,7 +815,8 @@ async function submitCreateGiveaway() {
       tasks: {
         dynamic_tasks,
         require_evm,
-        require_solana
+        require_solana,
+        roles: selectedRoles
       }
     };
 
@@ -995,6 +1015,15 @@ function openEditModal(giveawayId) {
     if (g.tasks.manual_task) addEditDynamicTask('manual_task', g.tasks.manual_task);
   }
 
+  // Populate required roles multi-select
+  const editReqRoleSel = document.getElementById('editGRequiredRoles');
+  if (editReqRoleSel) {
+    const activeRoles = (g.tasks && g.tasks.roles) ? (Array.isArray(g.tasks.roles) ? g.tasks.roles.map(String) : [String(g.tasks.roles)]) : [];
+    Array.from(editReqRoleSel.options).forEach(opt => {
+      opt.selected = activeRoles.includes(opt.value) || activeRoles.includes(opt.text);
+    });
+  }
+
   document.getElementById('editReqEvm').checked = !!g.tasks?.require_evm;
   document.getElementById('editReqSolana').checked = !!g.tasks?.require_solana;
 
@@ -1065,6 +1094,9 @@ async function submitEditGiveaway() {
     g.channel_id = channel_id;
     g.social_links = social_links;
 
+    const editReqRolesSel = document.getElementById('editGRequiredRoles');
+    const editSelectedRoles = editReqRolesSel ? Array.from(editReqRolesSel.selectedOptions).map(o => o.value).filter(Boolean) : [];
+
     g.min_per_user = min_per_user;
     g.max_per_user = max_per_user;
     g.duration_val = duration_val;
@@ -1074,7 +1106,8 @@ async function submitEditGiveaway() {
     g.tasks = {
       dynamic_tasks,
       require_evm,
-      require_solana
+      require_solana,
+      roles: editSelectedRoles
     };
 
     try {
