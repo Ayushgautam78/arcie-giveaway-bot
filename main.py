@@ -4645,6 +4645,7 @@ class RumbleGame:
         self.dead: List[dict] = []
         self.kills: Dict[str, int] = {p["id"]: 0 for p in players}
         self.revives: Dict[str, int] = {p["id"]: 0 for p in players}
+        self.eliminated_by: Dict[str, str] = {}  # victim_id -> killer_username or "The Arena"
         self.death_order: List[str] = []  # IDs in order of elimination (first eliminated = last place)
         self.used_templates: Set[int] = set()
         self.phase_results: List[discord.Embed] = []
@@ -4666,12 +4667,16 @@ class RumbleGame:
     def _kill_player(self, victim: dict, killer: Optional[dict] = None) -> str:
         """Eliminate a player and return the event text using bold username (e.g. ayx5hhh)."""
         template = self._pick_template("deaths")
-        v_display = f"**{victim.get('username', victim.get('name', 'Warrior'))}**"
+        v_uname = victim.get("username", victim.get("name", "Warrior"))
+        v_display = f"**{v_uname}**"
         if killer:
             self.kills[killer["id"]] = self.kills.get(killer["id"], 0) + 1
-            k_display = f"**{killer.get('username', killer.get('name', 'Warrior'))}**"
+            k_uname = killer.get("username", killer.get("name", "Warrior"))
+            k_display = f"**{k_uname}**"
+            self.eliminated_by[victim["id"]] = k_uname
             text = template.format(player1=v_display, killer=k_display, player2=v_display)
         else:
+            self.eliminated_by[victim["id"]] = "The Arena"
             text = template.format(player1=v_display, killer="**The Arena**", player2=v_display)
 
         self.alive.remove(victim)
@@ -4693,9 +4698,11 @@ class RumbleGame:
         self.dead.remove(revived)
         self.alive.append(revived)
         self.revives[revived["id"]] = self.revives.get(revived["id"], 0) + 1
-        # Remove from death order since they're alive again
+        # Remove from death order and eliminators since they're alive again
         if revived["id"] in self.death_order:
             self.death_order.remove(revived["id"])
+        if revived["id"] in self.eliminated_by:
+            del self.eliminated_by[revived["id"]]
         template = self._pick_template("revives")
         r_display = f"**{revived.get('username', revived.get('name', 'Warrior'))}**"
         return template.format(player1=r_display)
@@ -4769,11 +4776,9 @@ class RumbleGame:
         embed.set_footer(text=f"Alive: {len(self.alive)} | Eliminated: {eliminated_total} | Theme: {self.theme_info['name']}")
         return embed
 
-    def build_leaderboard_embeds(self) -> List[discord.Embed]:
-        """Build 3 end-of-game leaderboard summary embeds using usernames."""
-        embeds = []
-
-        # --- Determine final rankings ---
+    def build_results_embed(self) -> discord.Embed:
+        """Build a single consolidated end-of-game match results embed matching Diffy bot style."""
+        # Determine final rankings
         if self.alive:
             champion = self.alive[0]
             runner_up_ids = list(reversed(self.death_order))
@@ -4789,11 +4794,14 @@ class RumbleGame:
         for p in self.alive + self.dead:
             all_players_map[p["id"]] = p
 
-        # --- LEADERBOARD 1: TOP 5 FINALISTS ---
-        finalists_lines = []
-        medals = ["🏆", "🥈", "🥉", "4️⃣", "5️⃣"]
-        finalist_ids = []
+        champ_uname = champion.get("username", champion.get("name", "Warrior")) if champion else "Unknown"
 
+        desc_parts = [
+            f"🎉 **{champ_uname}**\nSURVIVED THE ENTIRE ARENA AND CLAIMS THE VICTORY!"
+        ]
+
+        # --- SECTION 1: TOP 5 FINALISTS ---
+        finalist_ids = []
         if champion:
             finalist_ids.append(champion["id"])
         for rid in reversed(self.death_order):
@@ -4802,69 +4810,67 @@ class RumbleGame:
             if len(finalist_ids) >= 5:
                 break
 
+        finalist_lines = ["🏆 **TOP 5 FINALISTS:**"]
+        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
         for i, pid in enumerate(finalist_ids[:5]):
             p = all_players_map.get(pid)
             if not p:
                 continue
-            medal = medals[i] if i < len(medals) else f"#{i+1}"
+            p_uname = p.get("username", p.get("name", "Warrior"))
             k = self.kills.get(pid, 0)
             rv = self.revives.get(pid, 0)
-            status = "CHAMPION" if i == 0 else f"#{i+1} Place"
-            p_uname = p.get("username", p.get("name", "warrior"))
-            revive_str = f" | 💫 {rv} revive(s)" if rv > 0 else ""
-            finalists_lines.append(f"{medal} **{p_uname}** — {status} | ⚔️ {k} kill(s){revive_str}")
+            revive_part = f" • `{rv} revives`" if rv > 0 else ""
+            kill_part = f"`{k} kills`"
 
-        e1 = discord.Embed(
-            title="🏆 TOP 5 FINALISTS",
-            description="\n".join(finalists_lines) if finalists_lines else "*No finalists*",
+            if i == 0:
+                medal = medals[0]
+                finalist_lines.append(f"{medal} **#1 CHAMPION:** {p_uname} — {kill_part}{revive_part} *(WINNER)*")
+            else:
+                medal = medals[i] if i < len(medals) else f"#{i+1}"
+                elim_by = self.eliminated_by.get(pid, "The Arena")
+                finalist_lines.append(f"{medal} **#{i+1} Place:** {p_uname} — {kill_part}{revive_part} *(Eliminated by {elim_by})*")
+
+        desc_parts.append("\n".join(finalist_lines) if len(finalist_lines) > 1 else "*No finalists recorded*")
+
+        # --- SECTION 2: TOP 3 MOST KILLS (APEX PREDATORS) ---
+        sorted_kills = sorted(self.kills.items(), key=lambda x: x[1], reverse=True)
+        top_killers = [(pid, c) for pid, c in sorted_kills if c > 0][:3]
+        kill_lines = ["⚔️ **TOP 3 MOST KILLS (APEX PREDATORS):**"]
+        kill_medals = ["🥇", "🥈", "🥉"]
+        if top_killers:
+            for i, (pid, count) in enumerate(top_killers):
+                p = all_players_map.get(pid)
+                if not p:
+                    continue
+                p_uname = p.get("username", p.get("name", "Warrior"))
+                m = kill_medals[i] if i < len(kill_medals) else f"#{i+1}"
+                kill_lines.append(f"{m} **#{i+1} Killer:** {p_uname} — `{count} Kills`")
+        else:
+            kill_lines.append("*No kills recorded*")
+        desc_parts.append("\n".join(kill_lines))
+
+        # --- SECTION 3: MOST REVIVED WARRIORS (PHOENIX AWARD) ---
+        sorted_revives = sorted(self.revives.items(), key=lambda x: x[1], reverse=True)
+        top_revived = [(pid, c) for pid, c in sorted_revives if c > 0][:3]
+        revive_lines = ["💫 **MOST REVIVED WARRIORS (PHOENIX AWARD):**"]
+        if top_revived:
+            for i, (pid, count) in enumerate(top_revived):
+                p = all_players_map.get(pid)
+                if not p:
+                    continue
+                p_uname = p.get("username", p.get("name", "Warrior"))
+                revive_lines.append(f"✨ **#{i+1} Resurrected:** {p_uname} — `{count} Revives`")
+        else:
+            revive_lines.append("*No revives occurred this match*")
+        desc_parts.append("\n".join(revive_lines))
+
+        embed = discord.Embed(
+            title="🏆 RUMBLE ROYALE MATCH RESULTS! 🏆",
+            description="\n\n".join(desc_parts),
             color=discord.Color.gold()
         )
-        if champion:
-            champ_uname = champion.get("username", champion.get("name", "warrior"))
-            e1.set_footer(text=f"👑 Champion: {champ_uname} | Theme: {self.theme_info['name']}")
-        embeds.append(e1)
-
-        # --- LEADERBOARD 2: TOP 3 MOST KILLS (APEX PREDATORS) ---
-        sorted_kills = sorted(self.kills.items(), key=lambda x: x[1], reverse=True)
-        top_killers = sorted_kills[:3]
-        kill_medals = ["🥇", "🥈", "🥉"]
-        kill_lines = []
-        for i, (pid, count) in enumerate(top_killers):
-            p = all_players_map.get(pid)
-            if not p or count == 0:
-                continue
-            m = kill_medals[i] if i < len(kill_medals) else f"#{i+1}"
-            p_uname = p.get("username", p.get("name", "warrior"))
-            kill_lines.append(f"{m} **{p_uname}** — ⚔️ {count} kill(s)")
-
-        e2 = discord.Embed(
-            title="⚔️ APEX PREDATORS — Most Kills",
-            description="\n".join(kill_lines) if kill_lines else "*No kills recorded*",
-            color=discord.Color.dark_red()
-        )
-        e2.set_footer(text=f"Theme: {self.theme_info['name']}")
-        embeds.append(e2)
-
-        # --- LEADERBOARD 3: MOST REVIVED WARRIORS (PHOENIX AWARD) ---
-        sorted_revives = sorted(self.revives.items(), key=lambda x: x[1], reverse=True)
-        top_revived = [(pid, c) for pid, c in sorted_revives if c > 0][:5]
-        revive_lines = []
-        for i, (pid, count) in enumerate(top_revived):
-            p = all_players_map.get(pid)
-            if not p:
-                continue
-            p_uname = p.get("username", p.get("name", "warrior"))
-            revive_lines.append(f"💫 **{p_uname}** — {count} revive(s)")
-
-        e3 = discord.Embed(
-            title="💫 PHOENIX AWARD — Most Revived Warriors",
-            description="\n".join(revive_lines) if revive_lines else "*No revives occurred this match*",
-            color=discord.Color.purple()
-        )
-        e3.set_footer(text=f"Theme: {self.theme_info['name']}")
-        embeds.append(e3)
-
-        return embeds
+        embed.set_footer(text=f"Theme: {self.theme_info['name']} • Rumble Royale")
+        return embed
 
 
 def build_rumble_lobby_embed(
@@ -5079,27 +5085,30 @@ async def run_rumble_game(channel, players: list, theme: str = "modern"):
             await channel.send(embed=phase_embed)
             await asyncio.sleep(15)  # 15-second gap between each phase
 
-        # Post leaderboard embeds
-        await asyncio.sleep(3)
-        leaderboard_embeds = game.build_leaderboard_embeds()
-        for lb_embed in leaderboard_embeds:
-            await channel.send(embed=lb_embed)
-            await asyncio.sleep(2)
+        # Post consolidated Match Results embed with winner tagged outside
+        await asyncio.sleep(2)
+        results_embed = game.build_results_embed()
 
-        # Champion announcement (clean username display, no @tags)
+        champ = None
         if game.alive:
             champ = game.alive[0]
-            champ_uname = champ.get('username', champ.get('name', 'Warrior'))
-            champ_embed = discord.Embed(
-                title="👑 THE CHAMPION STANDS!",
-                description=f"# 🏆 **{champ_uname}**\n\n"
-                            f"**{champ_uname}** is the last warrior standing in **{theme_info['name']}**!\n\n"
-                            f"⚔️ **{game.kills.get(champ['id'], 0)}** kills\n"
-                            f"💫 **{game.revives.get(champ['id'], 0)}** revives\n\n"
-                            f"*They have earned the title of **RUMBLE ROYALE CHAMPION**!*",
-                color=discord.Color.gold()
-            )
-            await channel.send(embed=champ_embed)
+        elif game.death_order:
+            all_players_map = {p["id"]: p for p in players}
+            champ = all_players_map.get(game.death_order[-1])
+
+        content = None
+        if champ:
+            content = f"🏆 {champ['mention']} **SURVIVED THE ENTIRE ARENA AND CLAIMS THE VICTORY!** 🎉"
+            try:
+                # Set winner avatar thumbnail on embed
+                if hasattr(channel, "guild") and channel.guild:
+                    champ_member = channel.guild.get_member(int(champ["id"]))
+                    if champ_member and champ_member.display_avatar:
+                        results_embed.set_thumbnail(url=champ_member.display_avatar.url)
+            except Exception as thumb_err:
+                print(f"[RUMBLE THUMBNAIL ERROR] {thumb_err}")
+
+        await channel.send(content=content, embed=results_embed)
 
     except Exception as e:
         print(f"[RUMBLE ERROR] {e}")
