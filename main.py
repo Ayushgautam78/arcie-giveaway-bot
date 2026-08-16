@@ -10,6 +10,7 @@ import io
 import base64
 import urllib.parse
 import unicodedata
+import traceback
 from typing import Optional, List, Dict, Set, Union
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -813,6 +814,48 @@ def is_mod_or_admin(target) -> bool:
         perms = author.guild_permissions
         if perms.administrator or perms.manage_messages or perms.manage_roles or perms.moderate_members or perms.kick_members or perms.ban_members:
             return True
+    return False
+
+def is_admin(user=None, guild=None) -> bool:
+    """Check if a user is an admin or mod with permissions to manage the bot or server."""
+    if not user:
+        return False
+    # If passed an Interaction or Context object
+    if hasattr(user, 'user') or hasattr(user, 'author'):
+        target_user = getattr(user, 'user', None) or getattr(user, 'author', None)
+        target_guild = getattr(user, 'guild', None) or guild
+    else:
+        target_user = user
+        target_guild = guild
+
+    if not target_user:
+        return False
+
+    uid = str(target_user.id)
+    if uid in bot_admins or uid == "1066987338204459049":
+        return True
+
+    if target_guild and hasattr(target_guild, 'owner_id') and target_guild.owner_id == target_user.id:
+        return True
+
+    if isinstance(target_user, discord.Member):
+        perms = target_user.guild_permissions
+        if perms.administrator or perms.manage_guild or perms.manage_channels or perms.manage_messages:
+            return True
+        for r in getattr(target_user, 'roles', []):
+            r_name = r.name.lower()
+            if any(k in r_name for k in ["admin", "mod", "staff", "owner", "host"]):
+                return True
+    elif target_guild and hasattr(target_guild, 'get_member'):
+        member = target_guild.get_member(target_user.id)
+        if member:
+            perms = member.guild_permissions
+            if perms.administrator or perms.manage_guild or perms.manage_channels or perms.manage_messages:
+                return True
+            for r in getattr(member, 'roles', []):
+                r_name = r.name.lower()
+                if any(k in r_name for k in ["admin", "mod", "staff", "owner", "host"]):
+                    return True
     return False
 
 # -------- Discord Bot Setup -------- #
@@ -4729,55 +4772,70 @@ async def rumble_command(
     join_duration: Optional[int] = 120,
 ):
     """Admin-only: Start a Rumble Royale session with a timed join phase."""
-    if not is_admin(interaction.user, interaction.guild):
-        await interaction.response.send_message("❌ Only admins can start a Rumble!", ephemeral=True)
-        return
-
-    channel = interaction.channel
-    ch_id = channel.id
-
-    if ch_id in active_rumbles:
-        await interaction.response.send_message("❌ A Rumble is already active in this channel! Wait for it to finish.", ephemeral=True)
-        return
-
-    # Clamp join duration
-    join_duration = max(30, min(join_duration, 600))
-
-    # Initialize session
-    active_rumbles[ch_id] = {
-        "players": [],
-        "message_id": None,
-        "started": False,
-    }
-
-    # Post join embed
-    join_embed = discord.Embed(
-        title="⚔️ RUMBLE ROYALE — JOIN NOW!",
-        description=(
-            f"A **battle royale** is about to begin!\n\n"
-            f"Click the **⚔️ Join Battle** button below to enter as a gladiator.\n"
-            f"The lobby will auto-close in **{join_duration}** seconds, or an admin can click **Start Battle**.\n\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"*Only ONE will survive. Revives are possible. Glory awaits.*"
-        ),
-        color=discord.Color.from_rgb(255, 69, 0)
-    )
-    join_embed.add_field(name="⚔️ Gladiators Enlisted", value="**0** warriors ready", inline=True)
-    join_embed.add_field(name="⏱️ Lobby Closes", value=f"<t:{int(time.time()) + join_duration}:R>", inline=True)
-    join_embed.set_footer(text="Minimum 3 players required to start")
-
-    view = RumbleJoinView(ch_id)
-    await interaction.response.send_message(embed=join_embed, view=view)
-
-    # Get the sent message ID for later updates
     try:
-        msg = await interaction.original_response()
-        active_rumbles[ch_id]["message_id"] = msg.id
-    except Exception:
-        pass
+        if not is_admin(interaction.user, interaction.guild):
+            await safe_respond(interaction, "❌ Only admins can start a Rumble!", ephemeral=True)
+            return
 
-    # Start background countdown timer with reminders
-    asyncio.create_task(_rumble_countdown(channel, ch_id, join_duration))
+        channel = interaction.channel
+        if not channel:
+            await safe_respond(interaction, "❌ Cannot start Rumble in this channel.", ephemeral=True)
+            return
+        ch_id = channel.id
+
+        if ch_id in active_rumbles:
+            await safe_respond(interaction, "❌ A Rumble is already active in this channel! Wait for it to finish.", ephemeral=True)
+            return
+
+        # Clamp join duration
+        join_duration = max(30, min(join_duration or 120, 600))
+
+        # Initialize session
+        active_rumbles[ch_id] = {
+            "players": [],
+            "message_id": None,
+            "started": False,
+        }
+
+        # Post join embed
+        join_embed = discord.Embed(
+            title="⚔️ RUMBLE ROYALE — JOIN NOW!",
+            description=(
+                f"A **battle royale** is about to begin!\n\n"
+                f"Click the **⚔️ Join Battle** button below to enter as a gladiator.\n"
+                f"The lobby will auto-close in **{join_duration}** seconds, or an admin can click **Start Battle**.\n\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"*Only ONE will survive. Revives are possible. Glory awaits.*"
+            ),
+            color=discord.Color.from_rgb(255, 69, 0)
+        )
+        join_embed.add_field(name="⚔️ Gladiators Enlisted", value="**0** warriors ready", inline=True)
+        join_embed.add_field(name="⏱️ Lobby Closes", value=f"<t:{int(time.time()) + join_duration}:R>", inline=True)
+        join_embed.set_footer(text="Minimum 3 players required to start")
+
+        view = RumbleJoinView(ch_id)
+        if not interaction.response.is_done():
+            await interaction.response.send_message(embed=join_embed, view=view)
+        else:
+            await interaction.followup.send(embed=join_embed, view=view)
+
+        # Get the sent message ID for later updates
+        try:
+            msg = await interaction.original_response()
+            active_rumbles[ch_id]["message_id"] = msg.id
+        except Exception:
+            pass
+
+        # Start background countdown timer with reminders
+        asyncio.create_task(_rumble_countdown(channel, ch_id, join_duration))
+
+    except Exception as e:
+        print(f"[RUMBLE COMMAND ERROR] {e}")
+        traceback.print_exc()
+        try:
+            await safe_respond(interaction, f"❌ Failed to start Rumble: {e}", ephemeral=True)
+        except Exception:
+            pass
 
 
 # -------- Slash Commands for Profile & Giveaways -------- #
