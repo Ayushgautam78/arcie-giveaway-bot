@@ -3872,8 +3872,10 @@ class GiveawayView(discord.ui.View):
 
         # ---- FEATURE 3: Role Requirement Verification (OR Logic) ----
         required_roles = g.get("tasks", {}).get("roles", [])
-        if required_roles and isinstance(required_roles, list):
+        if required_roles and isinstance(required_roles, list) and len(required_roles) > 0:
             member = interaction.user
+            if not isinstance(member, discord.Member) and interaction.guild:
+                member = interaction.guild.get_member(interaction.user.id)
             if isinstance(member, discord.Member) and hasattr(member, 'roles'):
                 member_role_ids = {str(r.id) for r in member.roles}
                 member_role_names = {r.name.lower() for r in member.roles}
@@ -4334,16 +4336,94 @@ RUMBLE_REVIVE_TEMPLATES = [
     "✨ **DEFIANCE!** **{player1}** made a deal with Death itself. They live... for now.",
 ]
 
-# -------- Phase Configuration -------- #
-RUMBLE_PHASES = [
-    ("🩸 THE BLOODBATH", 0.45),
-    ("🌅 DAY 1 — DAWN OF CARNAGE", 0.30),
-    ("🌙 NIGHT 1 — DARK DESPERATION", 0.25),
-    ("🌋 ARENA HAZARD — SUDDEN DEATH", 0.35),
-    ("🌅 DAY 2 — SURVIVORS STAND", 0.25),
-    ("🌙 NIGHT 2 — THE FINAL FEUD", 0.30),
-    ("⚔️ THE FINAL SHOWDOWN", 1.0),
+# -------- Dynamic Phase Pool & Generator -------- #
+RUMBLE_PHASE_NAMES = [
+    "🩸 THE BLOODBATH — THE CORNUCOPIA",
+    "🌅 DAY 1 — DAWN OF CARNAGE",
+    "🌙 NIGHT 1 — DARK DESPERATION",
+    "🌅 DAY 2 — HUNT FOR SURVIVAL",
+    "🌙 NIGHT 2 — COLD BLOODED",
+    "🌋 ARENA HAZARD — LAVA SURGE",
+    "🌅 DAY 3 — RISE OF THE PREDATORS",
+    "🌙 NIGHT 3 — SHADOWS & STALKERS",
+    "🍖 THE FEAST — SUPPLY CRATE DROP",
+    "🌅 DAY 4 — BRUTAL CROSSROADS",
+    "🌙 NIGHT 4 — SCREAMS IN THE DARK",
+    "⚡ ARENA HAZARD — ACID THUNDERSTORM",
+    "🌅 DAY 5 — THE NO MERCY ZONE",
+    "🌙 NIGHT 5 — WHISPERS OF THE FALLEN",
+    "🩸 BLOOD MOON — UNLEASHED RAMPAGE",
+    "🌅 DAY 6 — ASHES & EMBER",
+    "🌙 NIGHT 6 — SILENT ASSASSINS",
+    "❄️ ARENA HAZARD — CRYOGENIC BLIZZARD",
+    "🌅 DAY 7 — DESPERATE CLASH",
+    "🌙 NIGHT 7 — MIDNIGHT MAYHEM",
+    "🌪️ ARENA HAZARD — TORNADO FRENZY",
+    "🌅 DAY 8 — THE PENULTIMATE DAWN",
+    "🌙 NIGHT 8 — EVE OF RECKONING",
+    "☣️ ARENA HAZARD — TOXIC FALLOUT",
+    "🌅 DAY 9 — THE GAUNTLET",
+    "🌙 NIGHT 9 — THE LAST SHADOWS",
+    "☠️ SUDDEN DEATH — THE COLLAPSING RING",
+    "🌅 DAY 10 — THE FINAL DAWN",
+    "🌙 NIGHT 10 — TWILIGHT OF GLORY",
+    "🔥 ARENA HAZARD — METEOR SHOWER",
 ]
+
+def get_dynamic_rumble_phases(total_players: int) -> List[Tuple[str, bool]]:
+    """
+    Generate dynamic story phases scaled according to total registered player count.
+    - 3-8 players: 4-5 phases
+    - 9-18 players: 7-9 phases
+    - 19-28 players: 10-11 phases
+    - 30-40 players: 12-13 phases (user requested: 12-13 for 30-40)
+    - 41-60 players: 17-19 phases
+    - 70-80 players: 25-26 phases (user requested: 25-26 for 70-80)
+    - 80+ players: 28-30 phases
+    Returns list of (phase_name, is_final_phase).
+    """
+    if total_players <= 4:
+        target_count = 3
+    elif total_players <= 8:
+        target_count = 5
+    elif total_players <= 18:
+        target_count = 8
+    elif total_players <= 28:
+        target_count = 10
+    elif total_players <= 40:
+        target_count = 12 if total_players <= 35 else 13
+    elif total_players <= 55:
+        target_count = 17
+    elif total_players <= 69:
+        target_count = 21
+    elif total_players <= 80:
+        target_count = 25 if total_players <= 75 else 26
+    else:
+        target_count = min(30, max(26, int(total_players * 0.33)))
+
+    phases = []
+    # 1. Opening phase: Bloodbath
+    phases.append((RUMBLE_PHASE_NAMES[0], False))
+    
+    # 2. Intermediate phases
+    mid_count = target_count - 2
+    if mid_count > 0:
+        names_pool = RUMBLE_PHASE_NAMES[1:]
+        if mid_count <= len(names_pool):
+            step_names = names_pool[:mid_count]
+        else:
+            step_names = list(names_pool)
+            while len(step_names) < mid_count:
+                day_num = len(step_names) // 2 + 10
+                step_names.append(f"🌅 DAY {day_num} — SURVIVAL CLASH")
+                if len(step_names) < mid_count:
+                    step_names.append(f"🌙 NIGHT {day_num} — SHADOW WAR")
+        for p_name in step_names:
+            phases.append((p_name, False))
+            
+    # 3. Final Showdown
+    phases.append(("⚔️ THE FINAL SHOWDOWN — DUEL TO THE DEATH", True))
+    return phases
 
 
 class RumbleGame:
@@ -4410,36 +4490,35 @@ class RumbleGame:
         template = self._pick_template(RUMBLE_REVIVE_TEMPLATES)
         return template.format(player1=revived["mention"])
 
-    def run_phase(self, phase_name: str, elim_rate: float) -> discord.Embed:
+    def run_phase(self, phase_name: str, is_final: bool = False, phases_remaining: int = 1) -> discord.Embed:
         """Execute one phase of the battle and return an embed with results."""
         events = []
 
-        # Calculate how many to eliminate this phase
         num_alive = len(self.alive)
         if num_alive <= 1:
             embed = discord.Embed(
-                title=phase_name,
-                description="*No combatants remain to fight...*",
+                title=f"⚔️ RUMBLE ROYALE — {phase_name}",
+                description="*No further combatants remain to fight...*",
                 color=discord.Color.dark_grey()
             )
             return embed
 
-        # For the final showdown, eliminate until 1 remains
-        if elim_rate >= 1.0:
+        # Calculate kills for this phase to smoothly distribute eliminations across all phases
+        if is_final or phases_remaining <= 1:
             target_kills = max(num_alive - 1, 1)
         else:
-            target_kills = max(1, int(num_alive * elim_rate))
-            # Don't kill everyone before the final phase
-            target_kills = min(target_kills, num_alive - 1)
+            # Leave at least 2 alive before the final showdown
+            kills_needed_total = max(1, num_alive - 2)
+            base_kills = max(1, int(kills_needed_total / max(1, phases_remaining - 1)))
+            target_kills = max(1, min(base_kills + random.choice([-1, 0, 1]), num_alive - 2))
 
         kills_this_phase = 0
         attempts = 0
-        max_attempts = target_kills * 3
+        max_attempts = target_kills * 4
 
-        while kills_this_phase < target_kills and len(self.alive) > 1 and attempts < max_attempts:
+        while kills_this_phase < target_kills and len(self.alive) > (1 if is_final else 2) and attempts < max_attempts:
             attempts += 1
             victim = random.choice(self.alive)
-            # Pick a killer from alive players (not self)
             possible_killers = [p for p in self.alive if p["id"] != victim["id"]]
             killer = random.choice(possible_killers) if possible_killers else None
             event_text = self._kill_player(victim, killer)
@@ -4447,15 +4526,16 @@ class RumbleGame:
             kills_this_phase += 1
 
         # Survival events for some living players
-        num_survival = min(3, len(self.alive))
+        num_survival = min(2, len(self.alive))
         survival_candidates = random.sample(self.alive, min(num_survival, len(self.alive)))
         for p in survival_candidates:
             events.append(f"🛡️ {self._survival_event(p)}")
 
-        # Try revive (20% chance per phase)
-        revive_text = self._try_revive()
-        if revive_text:
-            events.append(revive_text)
+        # Try revive (20% chance per phase if not final phase)
+        if not is_final:
+            revive_text = self._try_revive()
+            if revive_text:
+                events.append(revive_text)
 
         # Build phase embed with surviving players list (like Diffy bot)
         total_players = len(self.alive) + len(self.dead)
@@ -4689,14 +4769,19 @@ async def run_rumble_game(channel, players: list):
         await channel.send(embed=intro_embed)
         await asyncio.sleep(4)
 
+        # Generate dynamic phases based on total registered players
+        phases = get_dynamic_rumble_phases(len(players))
+        total_phases = len(phases)
+
         # Run each phase with smooth pacing
-        for phase_name, elim_rate in RUMBLE_PHASES:
+        for idx, (phase_name, is_final) in enumerate(phases):
             if len(game.alive) <= 1:
                 break
 
-            phase_embed = game.run_phase(phase_name, elim_rate)
+            phases_remaining = total_phases - idx
+            phase_embed = game.run_phase(phase_name, is_final=is_final, phases_remaining=phases_remaining)
             await channel.send(embed=phase_embed)
-            await asyncio.sleep(5)  # Slightly longer delay for readability
+            await asyncio.sleep(4)  # Pacing between phases
 
         # Post leaderboard embeds
         await asyncio.sleep(3)
@@ -5895,8 +5980,15 @@ def build_giveaway_embed(g_data: dict):
                 link_str = format_task_link("manual_task", tasks['manual_task']).replace("• ", "").strip()
                 task_lines.append(f"• **Custom Task:** {link_str}")
             if tasks.get("roles"):
-                roles_formatted = ", ".join([f"**{r}**" for r in tasks['roles']])
-                task_lines.append(f"• **Required Roles:** {roles_formatted}")
+                role_fmt = []
+                for r in tasks["roles"]:
+                    r_str = str(r).strip()
+                    if r_str.isdigit():
+                        role_fmt.append(f"<@&{r_str}>")
+                    else:
+                        role_fmt.append(f"@{r_str.lstrip('@')}")
+                roles_formatted = " or ".join(role_fmt)
+                task_lines.append(f"• **Required Role (Any 1):** {roles_formatted}")
 
         if tasks.get("require_evm"):
             task_lines.append("• **Submit EVM Wallet (0x...)**")

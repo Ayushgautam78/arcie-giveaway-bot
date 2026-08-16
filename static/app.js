@@ -129,6 +129,8 @@ function setupEventListeners() {
   const createBtn = document.getElementById('createGiveawayBtn');
   if (createBtn) {
     createBtn.addEventListener('click', () => {
+      createRequiredRoles = [];
+      renderCreateRequiredRoles();
       loadGuildChannels();
       openModal('createModal');
     });
@@ -208,18 +210,18 @@ async function loadGuildRoles() {
       editRole.innerHTML = baseOptions + (roleOpts ? `<optgroup label="Server Roles">${roleOpts}</optgroup>` : '');
     }
 
-    // Dedicated Required Roles Multi-select options
-    const reqRoleOpts = uniqueRoles
-      .filter(r => r.id !== '@everyone')
-      .map(r => `<option value="${r.id}">@${escapeHtml(r.name)} (${escapeHtml(r.guild_name || 'Server')})</option>`)
+    // Dedicated Required Roles Dropdown options
+    cachedServerRoles = uniqueRoles.filter(r => r.id !== '@everyone');
+    const reqRoleOpts = '<option value="">Select Discord Server Role...</option>' + cachedServerRoles
+      .map(r => `<option value="${r.id}" data-name="${escapeHtml(r.name)}">@${escapeHtml(r.name)} (${escapeHtml(r.guild_name || 'Server')})</option>`)
       .join('');
 
-    const gReqRole = document.getElementById('gRequiredRoles');
+    const gReqRole = document.getElementById('gReqRoleSelect');
     if (gReqRole && gReqRole.tagName === 'SELECT') {
       gReqRole.innerHTML = reqRoleOpts;
     }
 
-    const editReqRole = document.getElementById('editGRequiredRoles');
+    const editReqRole = document.getElementById('editGReqRoleSelect');
     if (editReqRole && editReqRole.tagName === 'SELECT') {
       editReqRole.innerHTML = reqRoleOpts;
     }
@@ -227,6 +229,104 @@ async function loadGuildRoles() {
     console.error('Failed to load roles:', err);
   }
 }
+
+// -------- Required Role Chip Management (OR Logic) -------- //
+let cachedServerRoles = [];
+let createRequiredRoles = [];
+let editRequiredRoles = [];
+
+function renderCreateRequiredRoles() {
+  const container = document.getElementById('gReqRolesList');
+  if (!container) return;
+  if (!createRequiredRoles.length) {
+    container.innerHTML = `<span style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">No required roles selected (Open to everyone)</span>`;
+    return;
+  }
+  container.innerHTML = createRequiredRoles.map((role, idx) => `
+    <span class="role-badge-chip">
+      🏷️ @${escapeHtml(role.name || role.id)}
+      <span class="remove-btn" onclick="removeRequiredRole(${idx})" title="Remove role">×</span>
+    </span>
+  `).join('');
+}
+
+function addSelectedRequiredRole() {
+  const sel = document.getElementById('gReqRoleSelect');
+  if (!sel || !sel.value) return;
+  const opt = sel.options[sel.selectedIndex];
+  const roleId = sel.value;
+  const roleName = opt.getAttribute('data-name') || opt.text.replace(/^@/, '').split(' (')[0];
+  if (!createRequiredRoles.some(r => r.id === roleId)) {
+    createRequiredRoles.push({ id: roleId, name: roleName });
+    renderCreateRequiredRoles();
+  }
+  sel.value = '';
+}
+
+function addManualRequiredRole() {
+  const inp = document.getElementById('gReqRoleManual');
+  if (!inp || !inp.value.trim()) return;
+  const val = inp.value.trim();
+  if (!createRequiredRoles.some(r => r.id === val || r.name.toLowerCase() === val.toLowerCase())) {
+    createRequiredRoles.push({ id: val, name: val });
+    renderCreateRequiredRoles();
+  }
+  inp.value = '';
+}
+
+function removeRequiredRole(index) {
+  if (index >= 0 && index < createRequiredRoles.length) {
+    createRequiredRoles.splice(index, 1);
+    renderCreateRequiredRoles();
+  }
+}
+
+function renderEditRequiredRoles() {
+  const container = document.getElementById('editGReqRolesList');
+  if (!container) return;
+  if (!editRequiredRoles.length) {
+    container.innerHTML = `<span style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">No required roles selected (Open to everyone)</span>`;
+    return;
+  }
+  container.innerHTML = editRequiredRoles.map((role, idx) => `
+    <span class="role-badge-chip">
+      🏷️ @${escapeHtml(role.name || role.id)}
+      <span class="remove-btn" onclick="removeEditRequiredRole(${idx})" title="Remove role">×</span>
+    </span>
+  `).join('');
+}
+
+function addEditSelectedRequiredRole() {
+  const sel = document.getElementById('editGReqRoleSelect');
+  if (!sel || !sel.value) return;
+  const opt = sel.options[sel.selectedIndex];
+  const roleId = sel.value;
+  const roleName = opt.getAttribute('data-name') || opt.text.replace(/^@/, '').split(' (')[0];
+  if (!editRequiredRoles.some(r => r.id === roleId)) {
+    editRequiredRoles.push({ id: roleId, name: roleName });
+    renderEditRequiredRoles();
+  }
+  sel.value = '';
+}
+
+function addEditManualRequiredRole() {
+  const inp = document.getElementById('editGReqRoleManual');
+  if (!inp || !inp.value.trim()) return;
+  const val = inp.value.trim();
+  if (!editRequiredRoles.some(r => r.id === val || r.name.toLowerCase() === val.toLowerCase())) {
+    editRequiredRoles.push({ id: val, name: val });
+    renderEditRequiredRoles();
+  }
+  inp.value = '';
+}
+
+function removeEditRequiredRole(index) {
+  if (index >= 0 && index < editRequiredRoles.length) {
+    editRequiredRoles.splice(index, 1);
+    renderEditRequiredRoles();
+  }
+}
+
 
 
 // Check Authentication (localStorage-based)
@@ -786,8 +886,7 @@ async function submitCreateGiveaway() {
     if (duration_unit === 'hours') durationInSeconds = duration_val * 3600;
     if (duration_unit === 'days') durationInSeconds = duration_val * 86400;
 
-    const reqRolesSel = document.getElementById('gRequiredRoles');
-    const selectedRoles = reqRolesSel ? Array.from(reqRolesSel.selectedOptions).map(o => o.value).filter(Boolean) : [];
+    const selectedRoles = createRequiredRoles.map(r => r.id);
 
     const giveawayObj = {
       id: giveawayId,
@@ -843,6 +942,8 @@ async function submitCreateGiveaway() {
       showToast('🚀 Giveaway created!', 'success');
     }
 
+    createRequiredRoles = [];
+    renderCreateRequiredRoles();
     closeModal('createModal');
     await loadGiveaways();
   } finally {
@@ -1015,14 +1116,17 @@ function openEditModal(giveawayId) {
     if (g.tasks.manual_task) addEditDynamicTask('manual_task', g.tasks.manual_task);
   }
 
-  // Populate required roles multi-select
-  const editReqRoleSel = document.getElementById('editGRequiredRoles');
-  if (editReqRoleSel) {
-    const activeRoles = (g.tasks && g.tasks.roles) ? (Array.isArray(g.tasks.roles) ? g.tasks.roles.map(String) : [String(g.tasks.roles)]) : [];
-    Array.from(editReqRoleSel.options).forEach(opt => {
-      opt.selected = activeRoles.includes(opt.value) || activeRoles.includes(opt.text);
-    });
-  }
+  // Populate required roles badge chips
+  const rawRoles = (g.tasks && g.tasks.roles) ? (Array.isArray(g.tasks.roles) ? g.tasks.roles : [g.tasks.roles]) : [];
+  editRequiredRoles = rawRoles.map(rid => {
+    const strId = String(rid).trim();
+    const found = (cachedServerRoles || []).find(r => String(r.id) === strId || r.name.toLowerCase() === strId.toLowerCase());
+    return {
+      id: strId,
+      name: found ? found.name : strId
+    };
+  });
+  renderEditRequiredRoles();
 
   document.getElementById('editReqEvm').checked = !!g.tasks?.require_evm;
   document.getElementById('editReqSolana').checked = !!g.tasks?.require_solana;
@@ -1094,8 +1198,7 @@ async function submitEditGiveaway() {
     g.channel_id = channel_id;
     g.social_links = social_links;
 
-    const editReqRolesSel = document.getElementById('editGRequiredRoles');
-    const editSelectedRoles = editReqRolesSel ? Array.from(editReqRolesSel.selectedOptions).map(o => o.value).filter(Boolean) : [];
+    const editSelectedRoles = editRequiredRoles.map(r => r.id);
 
     g.min_per_user = min_per_user;
     g.max_per_user = max_per_user;
