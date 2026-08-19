@@ -2818,10 +2818,20 @@ async def on_message(message: discord.Message):
             await message.reply("❌ **Access Denied!** Only bot admins can sync commands!")
             return
         synced = await bot.tree.sync()
+        guild_count = 0
         if message.guild:
             bot.tree.copy_global_to(guild=message.guild)
-            await bot.tree.sync(guild=message.guild)
-        await message.reply(f"✅ Synced **{len(synced)}** slash commands instantly to your server!")
+            guild_synced = await bot.tree.sync(guild=message.guild)
+            guild_count = len(guild_synced)
+        else:
+            for g in bot.guilds:
+                try:
+                    bot.tree.copy_global_to(guild=g)
+                    await bot.tree.sync(guild=g)
+                    guild_count += 1
+                except Exception:
+                    pass
+        await message.reply(f"✅ Synced **{len(synced)}** slash commands globally + **{guild_count}** guild commands instantly!")
         return
 
     # -------- Prefix Command: .setwelcome -------- #
@@ -6887,6 +6897,14 @@ async def on_ready():
     try:
         synced = await bot.tree.sync()
         print(f"[BOOT] Synced {len(synced)} global slash commands.")
+        # Also sync to each guild for INSTANT visibility (global sync can take up to 1 hour)
+        for guild in bot.guilds:
+            try:
+                bot.tree.copy_global_to(guild=guild)
+                await bot.tree.sync(guild=guild)
+                print(f"[BOOT] Synced slash commands to guild '{guild.name}' ({guild.id})")
+            except Exception as ge:
+                print(f"[BOOT] Guild sync failed for '{guild.name}': {ge}")
     except Exception as e:
         print(f"[BOOT] Slash command sync failed: {e}")
 
