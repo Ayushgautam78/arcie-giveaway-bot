@@ -2153,49 +2153,52 @@ async def handle_component_interactions(interaction: discord.Interaction):
                 return
 
         # ---- Fallback handling for Giveaway buttons (join_giveaway_, view_entry_, gtask_) ----
+        # Only fires if the persistent GiveawayView callback did NOT already handle it.
         if custom_id and (custom_id.startswith("join_giveaway_") or custom_id.startswith("view_entry_") or custom_id.startswith("gtask_")):
-            # Brief pause to allow persistent view callback to execute if present
-            await asyncio.sleep(0.15)
-            if not interaction.response.is_done():
-                try:
-                    if custom_id.startswith("join_giveaway_"):
-                        g_id = custom_id.replace("join_giveaway_", "")
-                        port = os.getenv("PORT", "3000")
-                        web_url = os.getenv("APP_URL", f"http://localhost:{port}")
-                        v = GiveawayView(g_id, web_url)
-                        await v.join_giveaway_callback(interaction)
-                    elif custom_id.startswith("view_entry_"):
-                        g_id = custom_id.replace("view_entry_", "")
-                        port = os.getenv("PORT", "3000")
-                        web_url = os.getenv("APP_URL", f"http://localhost:{port}")
-                        v = GiveawayView(g_id, web_url)
-                        await v.view_entry_callback(interaction)
-                    elif custom_id.startswith("gtask_"):
-                        parts = custom_id.replace("gtask_", "").rsplit("_", 1)
-                        if len(parts) == 2:
-                            task_type, g_id = parts[0], parts[1]
-                            uid = str(interaction.user.id)
-                            if g_id not in giveaway_task_progress:
-                                giveaway_task_progress[g_id] = {}
-                            if uid not in giveaway_task_progress[g_id]:
-                                giveaway_task_progress[g_id][uid] = set()
-                            giveaway_task_progress[g_id][uid].add(task_type)
-                            g_obj = giveaways.get(g_id)
-                            req_tasks = get_required_task_list(g_obj) if g_obj else []
-                            lbl = "Task"
-                            url = ""
-                            for t_type, t_lbl, t_url in req_tasks:
-                                if t_type == task_type:
-                                    lbl, url = t_lbl, t_url
-                                    break
-                            if url:
-                                await safe_respond(interaction, f"✅ **{lbl}** — marked as done!\n\n👉 **Complete the task here:** {url}", ephemeral=True)
-                            else:
-                                await safe_respond(interaction, f"✅ **{lbl}** — marked as done!", ephemeral=True)
-                except Exception as g_err:
-                    print(f"[GIVEAWAY FALLBACK INTERACTION ERROR] {g_err}")
-                    if not interaction.response.is_done():
-                        await safe_respond(interaction, f"❌ Error processing interaction: {g_err}", ephemeral=True)
+            # Wait for persistent view callback to execute first (it's dispatched in parallel)
+            await asyncio.sleep(1.5)
+            # If the persistent view already responded, do nothing — avoid duplicate messages
+            if interaction.response.is_done():
+                return
+            try:
+                if custom_id.startswith("join_giveaway_"):
+                    g_id = custom_id.replace("join_giveaway_", "")
+                    port = os.getenv("PORT", "3000")
+                    web_url = os.getenv("APP_URL", f"http://localhost:{port}")
+                    v = GiveawayView(g_id, web_url)
+                    await v.join_giveaway_callback(interaction)
+                elif custom_id.startswith("view_entry_"):
+                    g_id = custom_id.replace("view_entry_", "")
+                    port = os.getenv("PORT", "3000")
+                    web_url = os.getenv("APP_URL", f"http://localhost:{port}")
+                    v = GiveawayView(g_id, web_url)
+                    await v.view_entry_callback(interaction)
+                elif custom_id.startswith("gtask_"):
+                    parts = custom_id.replace("gtask_", "").rsplit("_", 1)
+                    if len(parts) == 2:
+                        task_type, g_id = parts[0], parts[1]
+                        uid = str(interaction.user.id)
+                        if g_id not in giveaway_task_progress:
+                            giveaway_task_progress[g_id] = {}
+                        if uid not in giveaway_task_progress[g_id]:
+                            giveaway_task_progress[g_id][uid] = set()
+                        giveaway_task_progress[g_id][uid].add(task_type)
+                        g_obj = giveaways.get(g_id)
+                        req_tasks = get_required_task_list(g_obj) if g_obj else []
+                        lbl = "Task"
+                        url = ""
+                        for t_type, t_lbl, t_url in req_tasks:
+                            if t_type == task_type:
+                                lbl, url = t_lbl, t_url
+                                break
+                        if url:
+                            await safe_respond(interaction, f"✅ **{lbl}** — marked as done!\n\n👉 **Complete the task here:** {url}", ephemeral=True)
+                        else:
+                            await safe_respond(interaction, f"✅ **{lbl}** — marked as done!", ephemeral=True)
+            except Exception as g_err:
+                print(f"[GIVEAWAY FALLBACK INTERACTION ERROR] {g_err}")
+                if not interaction.response.is_done():
+                    await safe_respond(interaction, f"❌ Error processing interaction: {g_err}", ephemeral=True)
 
 @bot.event
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
