@@ -215,6 +215,25 @@ if os.path.exists(USER_PROFILES_FILE):
     except Exception as e:
         print(f"[PROFILES ERROR] Failed to load user profiles: {e}")
 
+def sync_firebase_background(path: str, data):
+    """Safely and asynchronously sync data to Firebase Cloud DB without blocking the event loop."""
+    if not FIREBASE_URL or data is None:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+        if loop.is_running():
+            loop.create_task(firebase_put(path, data))
+            return
+    except (RuntimeError, AttributeError):
+        pass
+
+    # Fallback to non-blocking daemon thread if called outside running asyncio loop
+    try:
+        import threading
+        threading.Thread(target=firebase_put_sync, args=(path, data), daemon=True).start()
+    except Exception as e:
+        print(f"[FIREBASE BACKGROUND SYNC ERROR] {path}: {e}")
+
 def save_user_profiles():
     try:
         with open(USER_PROFILES_FILE, "w", encoding="utf-8") as f:
@@ -222,14 +241,7 @@ def save_user_profiles():
     except Exception as e:
         print(f"[PROFILES ERROR] Failed to save user profiles: {e}")
     if FIREBASE_URL and user_profiles:
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(firebase_put("user_profiles", user_profiles))
-            else:
-                firebase_put_sync("user_profiles", user_profiles)
-        except Exception:
-            firebase_put_sync("user_profiles", user_profiles)
+        sync_firebase_background("user_profiles", user_profiles)
 
 # Load persistent giveaways
 if os.path.exists(GIVEAWAYS_FILE):
@@ -274,6 +286,28 @@ def save_banner_image_if_data_url(g_data: dict) -> str:
         print(f"[BANNER SAVE ERROR] {e}")
         return banner
 
+DELETED_GIVEAWAYS_FILE = "deleted_giveaways.json"
+deleted_giveaways: set = set()
+
+if os.path.exists(DELETED_GIVEAWAYS_FILE):
+    try:
+        with open(DELETED_GIVEAWAYS_FILE, "r", encoding="utf-8") as f:
+            d_data = json.load(f)
+            if isinstance(d_data, list):
+                deleted_giveaways = set(str(x) for x in d_data)
+            elif isinstance(d_data, dict):
+                deleted_giveaways = set(str(x) for x in d_data.keys())
+        print(f"[DELETED GIVEAWAYS] Loaded {len(deleted_giveaways)} deleted giveaway records.")
+    except Exception as e:
+        print(f"[DELETED GIVEAWAYS ERROR] Failed to load: {e}")
+
+def save_deleted_giveaways():
+    try:
+        with open(DELETED_GIVEAWAYS_FILE, "w", encoding="utf-8") as f:
+            json.dump(list(deleted_giveaways), f, indent=2)
+    except Exception as e:
+        print(f"[DELETED GIVEAWAYS ERROR] Failed to save: {e}")
+
 def save_giveaways():
     try:
         for g_id, g in list(giveaways.items()):
@@ -283,15 +317,8 @@ def save_giveaways():
             json.dump(giveaways, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"[GIVEAWAYS ERROR] Failed to save giveaways: {e}")
-    if FIREBASE_URL and giveaways:
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(firebase_put("giveaways", giveaways))
-            else:
-                firebase_put_sync("giveaways", giveaways)
-        except Exception:
-            firebase_put_sync("giveaways", giveaways)
+    if FIREBASE_URL:
+        sync_firebase_background("giveaways", giveaways)
 
 # Load persistent giveaway entries
 if os.path.exists(GIVEAWAY_ENTRIES_FILE):
@@ -308,15 +335,42 @@ def save_giveaway_entries():
             json.dump(giveaway_entries, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"[GIVEAWAY ENTRIES ERROR] Failed to save giveaway entries: {e}")
-    if FIREBASE_URL and giveaway_entries:
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(firebase_put("giveaway_entries", giveaway_entries))
-            else:
-                firebase_put_sync("giveaway_entries", giveaway_entries)
-        except Exception:
-            firebase_put_sync("giveaway_entries", giveaway_entries)
+    if FIREBASE_URL:
+        sync_firebase_background("giveaway_entries", giveaway_entries)
+
+def get_user_profile_fast(uid: str, usr: Optional[discord.User] = None) -> dict:
+    """Fast non-blocking profile retrieval with in-memory cache lookup."""
+    uid_str = str(uid)
+    prof = user_profiles.get(uid_str)
+    if prof and isinstance(prof, dict):
+        return prof
+
+    # Check local in-memory giveaway_entries for previously entered data
+    for g_id, entries in giveaway_entries.items():
+        if isinstance(entries, list):
+            for e in entries:
+                if isinstance(e, dict) and str(e.get("user_id")) == uid_str:
+                    if e.get("evm_wallet") or e.get("solana_wallet") or e.get("twitter") or e.get("telegram"):
+                        display_name = getattr(usr, 'display_name', None) or e.get("display_name") or uid_str
+                        username = getattr(usr, 'name', None) or e.get("username") or uid_str
+                        prof = {
+                            "display_name": display_name,
+                            "username": username,
+                            "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            "evm_wallet": e.get("evm_wallet", ""),
+                            "solana_wallet": e.get("solana_wallet", ""),
+                            "twitter": e.get("twitter", ""),
+                            "telegram": e.get("telegram", "")
+                        }
+                        user_profiles[uid_str] = prof
+                        save_user_profiles()
+                        return prof
+
+    return {}
+
+async def get_or_fetch_user_profile(uid: str, usr: Optional[discord.User] = None) -> dict:
+    """Fast profile retrieval without slow blocking Firebase tree downloads."""
+    return get_user_profile_fast(uid, usr)
 
 # Track task button clicks per user per giveaway: {g_id: {user_id: set(task_types_completed)}}
 giveaway_task_progress = {}
@@ -413,14 +467,7 @@ def save_tickets():
     except Exception as e:
         print(f"[TICKETS ERROR] Failed to save tickets: {e}")
     if FIREBASE_URL and tickets_data:
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(firebase_put("tickets", tickets_data))
-            else:
-                firebase_put_sync("tickets", tickets_data)
-        except Exception:
-            firebase_put_sync("tickets", tickets_data)
+        sync_firebase_background("tickets", tickets_data)
 
 
 def is_ticket_staff(member: discord.Member) -> bool:
@@ -3951,7 +3998,7 @@ class GiveawayView(discord.ui.View):
 
         # 3. SECOND CLICK: Join the giveaway directly
         # Profile & Wallet setup modal (if missing profile info or required wallets)
-        prof = user_profiles.get(uid, {})
+        prof = get_user_profile_fast(uid, interaction.user)
         tasks = g.get("tasks", {})
         req_evm = tasks.get("require_evm", False)
         req_solana = tasks.get("require_solana", False)
@@ -4051,6 +4098,97 @@ async def register_giveaway_entry(interaction: discord.Interaction, giveaway_id:
     asyncio.create_task(update_giveaway_discord_message(giveaway_id))
 
 
+async def delete_giveaway_permanently(g_id: str) -> bool:
+    """Permanently delete a giveaway from memory, disk, Firebase Cloud DB, and Discord."""
+    if not g_id:
+        return False
+    g_id_str = str(g_id).strip()
+    
+    # 1. Resolve giveaway if passed as message ID, link, or alias
+    resolved = await resolve_giveaway_by_identifier(g_id_str)
+    resolved_id = resolved.get("id") if (resolved and isinstance(resolved, dict)) else g_id_str
+
+    # 2. Pop from in-memory dictionary
+    g = giveaways.pop(resolved_id, None)
+    if not g and resolved_id != g_id_str:
+        g = giveaways.pop(g_id_str, None)
+    if not g:
+        for k, v in list(giveaways.items()):
+            if isinstance(v, dict) and (v.get("id") == resolved_id or str(v.get("message_id")) == g_id_str):
+                g = giveaways.pop(k, None)
+                resolved_id = k
+                break
+
+    # 3. Pop entries
+    giveaway_entries.pop(resolved_id, None)
+    giveaway_entries.pop(g_id_str, None)
+
+    # 4. Mark permanently in deleted_giveaways set & save locally
+    deleted_giveaways.add(str(resolved_id))
+    if g_id_str != resolved_id:
+        deleted_giveaways.add(str(g_id_str))
+    save_deleted_giveaways()
+    save_giveaways()
+    save_giveaway_entries()
+
+    # 5. Delete from Firebase Cloud DB
+    if FIREBASE_URL:
+        try:
+            await firebase_put(f"giveaways/{resolved_id}", None)
+            await firebase_put(f"giveaway_entries/{resolved_id}", None)
+            if g_id_str != resolved_id:
+                await firebase_put(f"giveaways/{g_id_str}", None)
+                await firebase_put(f"giveaway_entries/{g_id_str}", None)
+        except Exception as fe:
+            print(f"[FIREBASE DELETE ERROR] {fe}")
+
+    # 6. Delete Discord Message from channel
+    if g and isinstance(g, dict) and g.get("channel_id") and g.get("message_id"):
+        try:
+            ch_id_clean = re.sub(r'[^0-9]', '', str(g.get("channel_id", "")))
+            msg_id_clean = re.sub(r'[^0-9]', '', str(g.get("message_id", "")))
+            if ch_id_clean and msg_id_clean:
+                ch = bot.get_channel(int(ch_id_clean))
+                if not ch:
+                    ch = await bot.fetch_channel(int(ch_id_clean))
+                if ch:
+                    msg = await ch.fetch_message(int(msg_id_clean))
+                    if msg:
+                        await msg.delete()
+                        print(f"[DELETE DISCORD MSG] Deleted giveaway message {msg_id_clean} in channel {ch_id_clean}")
+        except Exception as de:
+            print(f"[DELETE DISCORD MSG ERROR] {de}")
+
+    print(f"[PERMANENT DELETE] Giveaway '{resolved_id}' permanently deleted from memory, disk, Firebase & Discord.")
+    return True
+
+
+async def cleanup_expired_giveaways_40_days():
+    """Automatically delete giveaways older than 40 days (40 * 86400s) from database, disk & Firebase."""
+    now = int(time.time())
+    cutoff_age_seconds = 40 * 86400  # 40 days (3,456,000 seconds)
+    to_delete = []
+
+    for gid, g in list(giveaways.items()):
+        if not isinstance(g, dict):
+            continue
+        created_at = int(g.get("created_at") or 0)
+        ends_at = int(g.get("ends_at") or 0)
+        timestamp = created_at if created_at > 0 else ends_at
+
+        if timestamp > 0 and (now - timestamp) >= cutoff_age_seconds:
+            title = g.get("title", gid)
+            age_days = (now - timestamp) / 86400
+            to_delete.append((gid, title, age_days))
+
+    if to_delete:
+        print(f"[AUTO-PURGE 40 DAYS] Found {len(to_delete)} giveaways older than 40 days:")
+        for gid, title, age_days in to_delete:
+            print(f"  -> Auto-purging giveaway '{title}' ({gid}) - age: {age_days:.1f} days old...")
+            await delete_giveaway_permanently(gid)
+        print(f"[AUTO-PURGE 40 DAYS] Cleaned up {len(to_delete)} giveaways from DB and Website.")
+
+
 async def resolve_giveaway_by_identifier(identifier: str) -> Optional[dict]:
     """Resolve a giveaway object using Giveaway ID, Discord Message ID, or Discord Message Link."""
     if not identifier:
@@ -4063,12 +4201,18 @@ async def resolve_giveaway_by_identifier(identifier: str) -> Optional[dict]:
     url_match = re.search(r'/(\d{17,20})$', clean_str)
     search_id = url_match.group(1) if url_match else re.sub(r'[^0-9a-zA-Z_-]', '', clean_str)
 
+    # If already recorded as deleted, return None immediately
+    if search_id in deleted_giveaways:
+        return None
+
     # 1. Direct lookup by Giveaway ID in memory
-    if search_id in giveaways and isinstance(giveaways[search_id], dict):
+    if search_id in giveaways and isinstance(giveaways[search_id], dict) and search_id not in deleted_giveaways:
         return giveaways[search_id]
 
     # 2. Search by message_id or id in memory
     for g_id, g in giveaways.items():
+        if g_id in deleted_giveaways:
+            continue
         if isinstance(g, dict):
             if str(g.get("message_id", "")).strip() == search_id or str(g.get("id", "")).strip() == search_id:
                 return g
@@ -4077,13 +4221,15 @@ async def resolve_giveaway_by_identifier(identifier: str) -> Optional[dict]:
     if FIREBASE_URL:
         try:
             fb_g = await firebase_get(f"giveaways/{search_id}")
-            if fb_g and isinstance(fb_g, dict):
+            if fb_g and isinstance(fb_g, dict) and search_id not in deleted_giveaways:
                 giveaways[search_id] = fb_g
                 return fb_g
 
             fb_all = await firebase_get("giveaways")
             if fb_all and isinstance(fb_all, dict):
                 for g_id, g_data in fb_all.items():
+                    if g_id in deleted_giveaways:
+                        continue
                     if isinstance(g_data, dict):
                         giveaways[g_id] = g_data
                         if str(g_data.get("message_id", "")).strip() == search_id or str(g_data.get("id", "")).strip() == search_id:
@@ -5301,77 +5447,34 @@ class UserProfileModal(discord.ui.Modal, title="Update Web3 Socials & Wallets"):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-async def get_or_fetch_user_profile(uid: str, usr: Optional[discord.User] = None) -> dict:
-    prof = user_profiles.get(uid, {})
-
-    # 1. Fetch from Firebase user_profiles if missing
-    if FIREBASE_URL and (not prof or not (prof.get("evm_wallet") or prof.get("solana_wallet") or prof.get("twitter"))):
-        try:
-            fb_prof = await firebase_get(f"user_profiles/{uid}")
-            if fb_prof and isinstance(fb_prof, dict):
-                prof.update(fb_prof)
-                user_profiles[uid] = prof
-        except Exception:
-            pass
-
-    # 2. Search giveaway_entries for this user's wallets & socials if still missing
-    if not (prof.get("evm_wallet") or prof.get("solana_wallet") or prof.get("twitter")):
-        found_entry = None
-        for g_id, entries in giveaway_entries.items():
-            if isinstance(entries, list):
-                for e in entries:
-                    if isinstance(e, dict) and e.get("user_id") == uid:
-                        if e.get("evm_wallet") or e.get("solana_wallet") or e.get("twitter"):
-                            found_entry = e
-                            break
-            if found_entry: break
-
-        if not found_entry and FIREBASE_URL:
-            try:
-                fb_all_entries = await firebase_get("giveaway_entries")
-                if fb_all_entries and isinstance(fb_all_entries, dict):
-                    for g_id, e_data in fb_all_entries.items():
-                        e_list = list(e_data.values()) if isinstance(e_data, dict) else e_data
-                        if isinstance(e_list, list):
-                            for e in e_list:
-                                if isinstance(e, dict) and e.get("user_id") == uid:
-                                    if e.get("evm_wallet") or e.get("solana_wallet") or e.get("twitter"):
-                                        found_entry = e
-                                        break
-                        if found_entry: break
-            except Exception:
-                pass
-
-        if found_entry:
-            if not prof:
-                display_name = usr.display_name if usr else str(uid)
-                username = usr.name if usr else str(uid)
-                prof = {
-                    "display_name": display_name,
-                    "username": username,
-                    "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-                }
-            if found_entry.get("evm_wallet"): prof["evm_wallet"] = found_entry["evm_wallet"]
-            if found_entry.get("solana_wallet"): prof["solana_wallet"] = found_entry["solana_wallet"]
-            if found_entry.get("twitter"): prof["twitter"] = found_entry["twitter"]
-            if found_entry.get("telegram"): prof["telegram"] = found_entry["telegram"]
-            
-            user_profiles[uid] = prof
-            save_user_profiles()
-
-    return prof
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    """Global handler for slash command errors to ensure clean feedback."""
+    print(f"[SLASH COMMAND ERROR] in /{interaction.command.name if interaction.command else 'unknown'}: {error}")
+    msg = f"❌ An error occurred: {error}"
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.send_message(msg, ephemeral=True)
+        else:
+            await interaction.followup.send(msg, ephemeral=True)
+    except Exception:
+        pass
 
 
 @bot.tree.command(name="profile", description="Manage your Web3 wallets & social handles for giveaways!")
 async def profile_cmd(interaction: discord.Interaction):
-    uid = str(interaction.user.id)
-    prof = await get_or_fetch_user_profile(uid, interaction.user)
-    modal = UserProfileModal()
-    if prof.get("twitter"): modal.twitter.default = prof.get("twitter")
-    if prof.get("telegram"): modal.telegram.default = prof.get("telegram")
-    if prof.get("evm_wallet"): modal.evm.default = prof.get("evm_wallet")
-    if prof.get("solana_wallet"): modal.solana.default = prof.get("solana_wallet")
-    await interaction.response.send_modal(modal)
+    try:
+        uid = str(interaction.user.id)
+        prof = get_user_profile_fast(uid, interaction.user)
+        modal = UserProfileModal()
+        if prof.get("twitter"): modal.twitter.default = prof.get("twitter")
+        if prof.get("telegram"): modal.telegram.default = prof.get("telegram")
+        if prof.get("evm_wallet"): modal.evm.default = prof.get("evm_wallet")
+        if prof.get("solana_wallet"): modal.solana.default = prof.get("solana_wallet")
+        await interaction.response.send_modal(modal)
+    except Exception as e:
+        print(f"[PROFILE CMD ERROR] {e}")
+        await safe_respond(interaction, f"❌ Failed to open profile: {e}", ephemeral=True)
 
 
 @bot.tree.command(name="set-evm-wallet", description="Set your EVM (Ethereum) wallet address.")
@@ -6432,6 +6535,17 @@ async def announce_winners_in_discord(g_id: str, winner_summary_lines: list):
             description=f"🎉 **Congratulations to all selected winners!**",
             color=discord.Color.gold()
         )
+
+        # Add separate fields for each spot category (e.g. Guaranteed, FCFS, Tier 1, etc.)
+        for line in winner_summary_lines:
+            if ":" in line:
+                spot_part, winners_part = line.split(":", 1)
+                clean_spot_name = re.sub(r'[*_`]', '', spot_part).strip()
+                embed.add_field(
+                    name=f"🎖️ {clean_spot_name}",
+                    value=winners_part.strip() or "None",
+                    inline=False
+                )
         banner_url = str(g.get("banner_url", "")).strip()
         file_to_send = None
         if banner_url:
@@ -6472,22 +6586,26 @@ async def sync_and_post_giveaways():
     port = os.getenv("PORT", "3000")
     web_url = os.getenv("APP_URL", f"http://localhost:{port}")
 
+    # 1. Automatically purge any giveaways older than 40 days
+    try:
+        await cleanup_expired_giveaways_40_days()
+    except Exception as c_err:
+        print(f"[AUTO-PURGE 40 DAYS ERROR] {c_err}")
+
     if FIREBASE_URL:
-        # 1. Sync Giveaways from Firebase & Post Missing Embeds
+        # 2. Sync Giveaways from Firebase & Post Missing Embeds
         try:
             fb_giveaways = await firebase_get("giveaways")
             if fb_giveaways and isinstance(fb_giveaways, dict):
-                # Sync local giveaways up to Firebase if missing, preventing accidental deletion
-                for memory_gid, g_obj in list(giveaways.items()):
-                    if memory_gid not in fb_giveaways:
-                        print(f"[FIREBASE SYNC] Local giveaway '{memory_gid}' missing in Firebase. Syncing up to Firebase DB...")
-                        await firebase_put(f"giveaways/{memory_gid}", g_obj)
-                        if memory_gid in giveaway_entries:
-                            await firebase_put(f"giveaway_entries/{memory_gid}", giveaway_entries[memory_gid])
-                        fb_giveaways[memory_gid] = g_obj
+                # Clean up any deleted giveaways from Firebase payload
+                for del_id in list(deleted_giveaways):
+                    if del_id in fb_giveaways:
+                        del fb_giveaways[del_id]
+                        asyncio.create_task(firebase_put(f"giveaways/{del_id}", None))
+                        asyncio.create_task(firebase_put(f"giveaway_entries/{del_id}", None))
 
                 for g_id, g_data in fb_giveaways.items():
-                    if not isinstance(g_data, dict):
+                    if not isinstance(g_data, dict) or g_id in deleted_giveaways:
                         continue
                     # Preserve local banner_url if Firebase has empty banner_url
                     if not g_data.get("banner_url") and giveaways.get(g_id, {}).get("banner_url"):
@@ -6516,10 +6634,10 @@ async def sync_and_post_giveaways():
         except Exception as ge:
             print(f"[GIVEAWAY SYNC ERROR] {ge}")
 
-    # 2. LOCAL expiry check — catch ALL expired giveaways in memory (even if Firebase fetch failed)
+    # 3. LOCAL expiry check — catch ALL expired giveaways in memory (even if Firebase fetch failed)
     now = int(time.time())
     for g_id, g_data in list(giveaways.items()):
-        if not isinstance(g_data, dict):
+        if g_id in deleted_giveaways or not isinstance(g_data, dict):
             continue
         ends_at = int(g_data.get("ends_at", 0))
         if g_data.get("is_active") and ends_at > 0 and now >= ends_at:
@@ -6673,19 +6791,30 @@ async def on_ready():
 
             fb_giveaways = await firebase_get("giveaways")
             if fb_giveaways and isinstance(fb_giveaways, dict):
+                for del_id in list(deleted_giveaways):
+                    fb_giveaways.pop(del_id, None)
                 giveaways.update(fb_giveaways)
+                for del_id in list(deleted_giveaways):
+                    giveaways.pop(del_id, None)
                 save_giveaways()
-                print(f"[FIREBASE] Synced {len(fb_giveaways)} giveaways from Cloud DB.")
+                print(f"[FIREBASE] Synced {len(giveaways)} giveaways from Cloud DB.")
 
             fb_entries = await firebase_get("giveaway_entries")
             if fb_entries and isinstance(fb_entries, dict):
+                for del_id in list(deleted_giveaways):
+                    fb_entries.pop(del_id, None)
                 for g_id, e_list in fb_entries.items():
+                    if g_id in deleted_giveaways:
+                        continue
                     if isinstance(e_list, dict):
                         giveaway_entries[g_id] = list(e_list.values())
                     elif isinstance(e_list, list):
                         giveaway_entries[g_id] = e_list
                 save_giveaway_entries()
                 print(f"[FIREBASE] Synced entries for {len(giveaway_entries)} giveaways from Cloud DB.")
+
+            # Auto-purge any 40+ day old giveaways immediately
+            await cleanup_expired_giveaways_40_days()
 
             fb_rr = await firebase_get("reaction_roles")
             if fb_rr and isinstance(fb_rr, dict):
@@ -6758,14 +6887,6 @@ async def on_ready():
     try:
         synced = await bot.tree.sync()
         print(f"[BOOT] Synced {len(synced)} global slash commands.")
-        for guild in bot.guilds:
-            try:
-                bot.tree.clear_commands(guild=guild)
-                bot.tree.copy_global_to(guild=guild)
-                await bot.tree.sync(guild=guild)
-                print(f"[BOOT] Synced active slash commands for '{guild.name}'")
-            except Exception as ge:
-                print(f"[BOOT ERROR] Guild command sync failed for '{guild.name}': {ge}")
     except Exception as e:
         print(f"[BOOT] Slash command sync failed: {e}")
 
@@ -7045,15 +7166,26 @@ async def start_health_server():
 
 
     async def get_giveaways_handler(request):
+        try:
+            await cleanup_expired_giveaways_40_days()
+        except Exception as e:
+            print(f"[AUTO PURGE ERROR IN HANDLER] {e}")
+
         if FIREBASE_URL:
             try:
                 fb_g = await firebase_get("giveaways")
                 if fb_g and isinstance(fb_g, dict):
+                    for del_id in list(deleted_giveaways):
+                        fb_g.pop(del_id, None)
                     giveaways.update(fb_g)
 
                 fb_e = await firebase_get("giveaway_entries")
                 if fb_e and isinstance(fb_e, dict):
+                    for del_id in list(deleted_giveaways):
+                        fb_e.pop(del_id, None)
                     for gid, elist in fb_e.items():
+                        if gid in deleted_giveaways:
+                            continue
                         if isinstance(elist, dict):
                             giveaway_entries[gid] = list(elist.values())
                         elif isinstance(elist, list):
@@ -7061,12 +7193,17 @@ async def start_health_server():
             except Exception as e:
                 print(f"[GET GIVEAWAYS SYNC ERROR] {e}")
 
-        for gid, g_obj in giveaways.items():
+        valid_giveaways = []
+        for gid, g_obj in list(giveaways.items()):
+            if gid in deleted_giveaways:
+                giveaways.pop(gid, None)
+                continue
             if isinstance(g_obj, dict):
                 e_list = giveaway_entries.get(gid, [])
                 g_obj["entries_count"] = len(e_list)
+                valid_giveaways.append(g_obj)
 
-        return web.json_response(list(giveaways.values()))
+        return web.json_response(valid_giveaways)
 
     async def get_giveaway_detail_handler(request):
         g_id = request.match_info.get("id")
@@ -7366,29 +7503,12 @@ async def start_health_server():
         if not user or not user.get("is_admin"):
             return web.json_response({"error": "Admin permission required"}, status=403)
         g_id = request.match_info.get("id")
-        g = giveaways.pop(g_id, None)
-        if not g:
+        
+        success = await delete_giveaway_permanently(g_id)
+        if not success:
             return web.json_response({"error": "Giveaway not found"}, status=404)
 
-        giveaway_entries.pop(g_id, None)
-        save_giveaways()
-        save_giveaway_entries()
-        await firebase_put(f"giveaways/{g_id}", None)
-        await firebase_put(f"giveaway_entries/{g_id}", None)
-
-        try:
-            if g.get("channel_id") and g.get("message_id"):
-                ch = bot.get_channel(int(g["channel_id"]))
-                if not ch:
-                    ch = await bot.fetch_channel(int(g["channel_id"]))
-                if ch:
-                    msg = await ch.fetch_message(int(g["message_id"]))
-                    if msg:
-                        await msg.delete()
-        except Exception as e:
-            print(f"[DELETE DISCORD MSG ERROR] {e}")
-
-        return web.json_response({"success": True, "message": "Giveaway deleted successfully"})
+        return web.json_response({"success": True, "message": "Giveaway permanently deleted"})
 
     uploads_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "uploads")
     os.makedirs(uploads_dir, exist_ok=True)

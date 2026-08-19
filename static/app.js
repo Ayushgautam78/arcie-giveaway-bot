@@ -574,18 +574,7 @@ async function loadGiveaways() {
 }
 
 function updateHeroStats() {
-  const activeCount = currentGiveaways.filter(g => g.is_active).length;
-  let totalSpots = 0;
-  let totalEntries = 0;
-
-  currentGiveaways.forEach(g => {
-    totalSpots += (g.guaranteed_spots || 0) + (g.fcfs_spots || 0);
-    totalEntries += (g.entries_count || 0);
-  });
-
-  document.getElementById('statActive').innerText = activeCount;
-  document.getElementById('statTotalSpots').innerText = totalSpots;
-  document.getElementById('statEntries').innerText = totalEntries;
+  // Public hero stats and spots counters removed per UI design
 }
 
 // Render Giveaway Cards
@@ -644,8 +633,6 @@ function renderGiveaways() {
           <div class="g-desc">${formatMarkdownDescription(g.description)}</div>
 
           <div class="g-badge-container">
-            ${isAdmin && g.guaranteed_spots ? `<span class="g-badge g-badge-guaranteed">💎 ${g.guaranteed_spots} Guaranteed</span>` : ''}
-            ${isAdmin && g.fcfs_spots ? `<span class="g-badge g-badge-fcfs">⚡ ${g.fcfs_spots} FCFS</span>` : ''}
             ${isEnded ? '<span class="g-badge g-badge-ended">🔒 Ended</span>' : `<span class="g-badge g-badge-timer">⏳ ${timeLeft}</span>`}
           </div>
 
@@ -1240,21 +1227,28 @@ async function submitEditGiveaway() {
 }
 
 async function deleteGiveaway(giveawayId) {
-  if (!confirm('Are you sure you want to delete this giveaway? This will remove it from the dashboard and Discord.')) return;
+  if (!confirm('Are you sure you want to delete this giveaway? This will permanently delete it from the database, website, and Discord.')) return;
 
   try {
     await fetch(apiUrl(`/api/giveaways/${giveawayId}/delete`), {
       method: 'POST',
       credentials: 'include'
     });
-    await firebasePut(`giveaways/${giveawayId}`, null);
-    await firebasePut(`giveaway_entries/${giveawayId}`, null);
-    showToast('🗑️ Giveaway deleted successfully!', 'success');
   } catch (err) {
+    console.warn('Delete API call error:', err);
+  }
+
+  try {
     await firebasePut(`giveaways/${giveawayId}`, null);
     await firebasePut(`giveaway_entries/${giveawayId}`, null);
-    showToast('🗑️ Giveaway deleted from DB', 'success');
+  } catch (fe) {
+    console.warn('Firebase client delete error:', fe);
   }
+
+  // Immediately remove from currentGiveaways in local memory
+  currentGiveaways = currentGiveaways.filter(x => x.id !== giveawayId);
+  renderGiveaways();
+  showToast('🗑️ Giveaway permanently deleted!', 'success');
 
   closeModal('detailModal');
   closeModal('editModal');
@@ -1295,8 +1289,6 @@ async function openDetailModal(giveawayId) {
       <div style="font-size: 0.98rem; color: var(--text-main); line-height: 1.6; background: rgba(0,0,0,0.25); padding: 1rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">${formatMarkdownDescription(g.description)} ${renderSocialButtonsHTML(g.social_links)}</div>
       
       <div class="g-badge-container">
-        ${isAdmin && g.guaranteed_spots ? `<span class="g-badge g-badge-guaranteed">💎 ${g.guaranteed_spots} Guaranteed</span>` : ''}
-        ${isAdmin && g.fcfs_spots ? `<span class="g-badge g-badge-fcfs">⚡ ${g.fcfs_spots} FCFS</span>` : ''}
         <span class="g-badge g-badge-timer">🌐 Network: ${escapeHtml(g.network || 'Ethereum')}</span>
         ${isEnded ? '<span class="g-badge g-badge-ended">Ended</span>' : `<span class="g-badge g-badge-timer">Ends ${getTimeLeftString(g.ends_at)}</span>`}
       </div>

@@ -7,11 +7,13 @@ __pycache__/
 *.pyo
 
 # Zip packages
+*.zip
 bot-upload.zip
 vercel-deploy.zip
 
-# Temp files
+# Temp & Scratch files
 _vercel_temp/
+scratch/
 *.tmp
 
 # IDE
