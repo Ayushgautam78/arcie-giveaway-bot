@@ -4,11 +4,13 @@
 const FIREBASE_DB = 'https://arcie-bot-default-rtdb.asia-southeast1.firebasedatabase.app';
 const ADMIN_PASSWORD = 'innercirclefcfs78@1';
 
-// Helper: API URL resolver (prevents ReferenceError)
+// Helper: API URL resolver (prepends window.ARCIE_API_BASE if hosted remotely/Vercel)
 function apiUrl(path) {
   if (!path) return '';
   if (path.startsWith('http://') || path.startsWith('https://')) return path;
-  return path.startsWith('/') ? path : '/' + path;
+  const base = (typeof window !== 'undefined' && window.ARCIE_API_BASE) ? window.ARCIE_API_BASE.replace(/\/+$/, '') : '';
+  const cleanPath = path.startsWith('/') ? path : '/' + path;
+  return base ? `${base}${cleanPath}` : cleanPath;
 }
 
 let currentUser = null;

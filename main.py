@@ -2163,14 +2163,14 @@ async def handle_component_interactions(interaction: discord.Interaction):
             try:
                 if custom_id.startswith("join_giveaway_"):
                     g_id = custom_id.replace("join_giveaway_", "")
-                    port = os.getenv("PORT", "3000")
-                    web_url = os.getenv("APP_URL", f"http://localhost:{port}")
+                    port = os.getenv("PORT", "2025")
+                    web_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
                     v = GiveawayView(g_id, web_url)
                     await v.join_giveaway_callback(interaction)
                 elif custom_id.startswith("view_entry_"):
                     g_id = custom_id.replace("view_entry_", "")
-                    port = os.getenv("PORT", "3000")
-                    web_url = os.getenv("APP_URL", f"http://localhost:{port}")
+                    port = os.getenv("PORT", "2025")
+                    web_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
                     v = GiveawayView(g_id, web_url)
                     await v.view_entry_callback(interaction)
                 elif custom_id.startswith("gtask_"):
@@ -4281,8 +4281,8 @@ async def update_giveaway_discord_message(giveaway_id: str):
         print(f"[UPDATE EMBED FAIL] Could not find valid channel for giveaway '{giveaway_id}'")
         return
 
-    port = os.getenv("PORT", "3000")
-    domain = os.getenv("APP_URL", f"http://localhost:{port}")
+    port = os.getenv("PORT", "2025")
+    domain = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
     embed, file_to_send = build_giveaway_embed(g)
     view = GiveawayView(giveaway_id, domain)
     mention_text = format_role_mention(g.get("mention_role"))
@@ -6027,8 +6027,8 @@ async def set_socials_cmd(interaction: discord.Interaction, twitter: Optional[st
 
 @bot.tree.command(name="giveaways", description="List active giveaways and access the Web Dashboard.")
 async def giveaways_cmd(interaction: discord.Interaction):
-    port = os.getenv("PORT", "3000")
-    domain = os.getenv("APP_URL", f"http://localhost:{port}")
+    port = os.getenv("PORT", "2025")
+    domain = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
     active_g = [g for g in giveaways.values() if g.get("is_active") and g.get("ends_at", 0) > time.time()]
 
     embed = discord.Embed(
@@ -6596,8 +6596,8 @@ async def announce_winners_in_discord(g_id: str, winner_summary_lines: list):
 
 async def sync_and_post_giveaways():
     """Sync Discord active giveaways & check for expired giveaways."""
-    port = os.getenv("PORT", "3000")
-    web_url = os.getenv("APP_URL", f"http://localhost:{port}")
+    port = os.getenv("PORT", "2025")
+    web_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
 
     # 1. Automatically purge any giveaways older than 40 days
     try:
@@ -6865,8 +6865,8 @@ async def on_ready():
         print(f"[RR RESTORE] Registered persistent views for {rr_restored} reaction role message(s).")
 
     # 3. Register persistent giveaway views across restarts (with message_id binding!)
-    port = os.getenv("PORT", "3000")
-    web_url = os.getenv("APP_URL", f"http://localhost:{port}")
+    port = os.getenv("PORT", "2025")
+    web_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
     ga_restored = 0
     for g_id, g in giveaways.items():
         try:
@@ -6950,6 +6950,10 @@ async def start_health_server():
 
     def get_session_user(request: web.Request) -> Optional[dict]:
         token = request.cookies.get("session_token")
+        if not token:
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:].strip()
         if not token or token not in active_sessions:
             return None
         s = active_sessions[token]
@@ -7009,8 +7013,8 @@ async def start_health_server():
     # OAuth Routes
     async def auth_login_handler(request):
         client_id = os.getenv("DISCORD_CLIENT_ID")
-        port = os.getenv("PORT", "3000")
-        redirect_uri = os.getenv("DISCORD_REDIRECT_URI", f"http://localhost:{port}/api/auth/callback")
+        port = os.getenv("PORT", "2025")
+        redirect_uri = os.getenv("DISCORD_REDIRECT_URI", f"http://n5.nexcloud.in:{port}/api/auth/callback")
 
         if not client_id:
             # Fallback dev mode admin session
@@ -7034,8 +7038,8 @@ async def start_health_server():
         if not code: return web.HTTPFound("/?error=no_code")
         client_id = os.getenv("DISCORD_CLIENT_ID")
         client_secret = os.getenv("DISCORD_CLIENT_SECRET")
-        port = os.getenv("PORT", "3000")
-        redirect_uri = os.getenv("DISCORD_REDIRECT_URI", f"http://localhost:{port}/api/auth/callback")
+        port = os.getenv("PORT", "2025")
+        redirect_uri = os.getenv("DISCORD_REDIRECT_URI", f"http://n5.nexcloud.in:{port}/api/auth/callback")
 
         data = {
             "client_id": client_id,
@@ -7412,8 +7416,8 @@ async def start_health_server():
         if channel:
             try:
                 embed, file_to_send = build_giveaway_embed(g_data)
-                port = os.getenv("PORT", "3000")
-                web_url = os.getenv("APP_URL", f"http://localhost:{port}")
+                port = os.getenv("PORT", "2025")
+                web_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
                 view = GiveawayView(g_id, web_url)
                 mention_text = format_role_mention(g_data.get("mention_role"))
                 if file_to_send:
@@ -7566,8 +7570,8 @@ async def start_health_server():
                         break
                     f.write(chunk)
 
-            port = os.getenv("PORT", "3000")
-            app_url = os.getenv("APP_URL", f"http://localhost:{port}").rstrip("/")
+            port = os.getenv("PORT", "2025")
+            app_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}").rstrip("/")
             image_url = f"{app_url}/static/uploads/{safe_name}"
             return web.json_response({"success": True, "url": image_url})
         except Exception as e:
@@ -8188,7 +8192,7 @@ async def start_health_server():
     app.router.add_get("/api/admin/backup", download_backup_handler)
     app.router.add_post("/api/admin/restore", restore_backup_handler)
 
-    port_env = os.getenv("PORT") or os.getenv("SERVER_PORT") or "3000"
+    port_env = os.getenv("PORT") or os.getenv("SERVER_PORT") or "2025"
     port = int(port_env)
     runner = web.AppRunner(app)
     await runner.setup()
@@ -8210,7 +8214,7 @@ async def start_health_server():
         except Exception:
             pass
     if not app_url:
-        app_url = f"http://localhost:{port}"
+        app_url = f"http://n5.nexcloud.in:{port}"
 
     print(f"\n" + "="*60)
     print(f"🌐 WEB DASHBOARD IS LIVE AT: {app_url}")

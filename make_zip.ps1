@@ -26,4 +26,9 @@ if (Test-Path $staticDir) {
 }
 
 $zip.Dispose()
-Write-Host "Done! Zip created at: $zipPath Size:" ([math]::Round((Get-Item $zipPath).Length / 1KB, 2)) "KB"
+
+# Also copy to bot.zip
+$botZipPath = Join-Path $srcDir "bot.zip"
+Copy-Item $zipPath $botZipPath -Force
+
+Write-Host "Done! Zip created at: $zipPath and $botZipPath Size:" ([math]::Round((Get-Item $zipPath).Length / 1KB, 2)) "KB"
