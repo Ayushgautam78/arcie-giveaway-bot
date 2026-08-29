@@ -124,6 +124,315 @@ def get_entry_weights(entries: list, guild) -> list:
     return weights
 
 
+def get_priority_lists() -> Tuple[List[str], List[str]]:
+    """Retrieve Priority 1 and Priority 2 user ID lists from environment variables.
+    
+    Priority 1 (Higher slot / fewer spots first):
+        Configured via PRIORITY_WINNERS_1, PRIORITY_1, or PRIORITY_WINNERS (comma-separated Discord user IDs).
+    Priority 2 (Lower slot / more spots first):
+        Configured via PRIORITY_WINNERS_2 or PRIORITY_2 (comma-separated Discord user IDs).
+    """
+    raw_p1 = os.getenv("PRIORITY_WINNERS_1") or os.getenv("PRIORITY_1") or os.getenv("PRIORITY_WINNERS", "")
+    p1 = [x.strip() for x in raw_p1.split(",") if x.strip()]
+
+    raw_p2 = os.getenv("PRIORITY_WINNERS_2") or os.getenv("PRIORITY_2", "")
+    p2 = [x.strip() for x in raw_p2.split(",") if x.strip()]
+
+    p1_set = set(p1)
+    p2 = [x for x in p2 if x not in p1_set]
+    return p1, p2
+
+
+def select_giveaway_winners(entries: list, g: dict, guild=None) -> Tuple[List[dict], List[str]]:
+    """Assigns giveaway winners across tiers honoring Priority 1 (higher slot / fewer spots),
+    Priority 2 (lower slot / more spots), and weighted raffle role multipliers for regular entries.
+    
+    Returns:
+        (updated_entries, winner_summary_lines)
+    """
+    p1_ids, p2_ids = get_priority_lists()
+    p1_set = set(p1_ids)
+    p2_set = set(p2_ids)
+
+    # Filter out ineligible entries and reset winner_type
+    eligible = []
+    for e in entries:
+        if e.get("task_status") == "ineligible":
+            e["winner_type"] = None
+        else:
+            e["winner_type"] = None
+            eligible.append(e)
+
+    if not eligible:
+        return entries, ["No participants joined."]
+
+    # Separate eligible entries into P1, P2, and Regular pools
+    p1_pool = [e for e in eligible if str(e.get("user_id", "")) in p1_set]
+    p2_pool = [e for e in eligible if str(e.get("user_id", "")) in p2_set]
+    reg_pool = [e for e in eligible if str(e.get("user_id", "")) not in p1_set and str(e.get("user_id", "")) not in p2_set]
+
+    random.shuffle(p1_pool)
+    random.shuffle(p2_pool)
+
+    # Weighted sampling for regular participants based on Discord role multipliers
+    if guild:
+        reg_weights = get_entry_weights(reg_pool, guild)
+        reg_pool = weighted_sample_without_replacement(reg_pool, reg_weights, len(reg_pool))
+    else:
+        random.shuffle(reg_pool)
+
+    spot_tiers = g.get("spot_tiers", [])
+    winner_summary_lines = []
+
+    if spot_tiers:
+        tier_specs = []
+        for idx, t in enumerate(spot_tiers):
+            tier_specs.append({
+                "idx": idx,
+                "name": t.get("name", "Spot"),
+                "count": max(0, int(t.get("count", 1))),
+                "winners": []
+            })
+
+        # Priority 1: targets higher slot (tiers with FEWEST spots first)
+        # If counts are equal, shuffle/randomize order among tied tiers
+        tiers_p1 = list(tier_specs)
+        random.shuffle(tiers_p1)
+        tiers_p1.sort(key=lambda t: t["count"])
+        for t in tiers_p1:
+            while p1_pool and len(t["winners"]) < t["count"]:
+                t["winners"].append(p1_pool.pop(0))
+
+        # Priority 2: targets lower slot (tiers with MORE spots first)
+        # If counts are equal, shuffle/randomize order among tied tiers
+        tiers_p2 = list(tier_specs)
+        random.shuffle(tiers_p2)
+        tiers_p2.sort(key=lambda t: t["count"], reverse=True)
+        for t in tiers_p2:
+            while p2_pool and len(t["winners"]) < t["count"]:
+                t["winners"].append(p2_pool.pop(0))
+
+        # Regular pool: fills remaining empty spots across all tiers
+        for t in tier_specs:
+            while reg_pool and len(t["winners"]) < t["count"]:
+                t["winners"].append(reg_pool.pop(0))
+
+        # Assign winner_type and format display
+        for t in tier_specs:
+            t_name = t["name"]
+            for w in t["winners"]:
+                w["winner_type"] = t_name
+
+            shuffled_tw = list(t["winners"])
+            random.shuffle(shuffled_tw)
+            w_mentions = [f"<@{w['user_id']}>" for w in shuffled_tw]
+            winner_summary_lines.append(f"**{t_name}:** {', '.join(w_mentions) if w_mentions else 'None'}")
+
+    else:
+        # Legacy guaranteed / fcfs mode
+        guaranteed_count = max(0, int(g.get("guaranteed_spots", 0)))
+        fcfs_count = max(0, int(g.get("fcfs_spots", 0)))
+
+        cat_gtd = {"name": "guaranteed", "display": "Guaranteed", "count": guaranteed_count, "winners": []}
+        cat_fcfs = {"name": "fcfs", "display": "FCFS", "count": fcfs_count, "winners": []}
+
+        # Determine higher slot (fewer spots) and lower slot (more spots)
+        if guaranteed_count == fcfs_count:
+            # If both have equal spots, randomize order for P1 and P2
+            cats_p1 = [cat_gtd, cat_fcfs]
+            random.shuffle(cats_p1)
+            cats_p2 = list(reversed(cats_p1))
+        elif guaranteed_count < fcfs_count:
+            cats_p1 = [cat_gtd, cat_fcfs] if guaranteed_count > 0 else [cat_fcfs]
+            cats_p2 = [cat_fcfs, cat_gtd] if guaranteed_count > 0 else [cat_fcfs]
+        else:
+            cats_p1 = [cat_fcfs, cat_gtd] if fcfs_count > 0 else [cat_gtd]
+            cats_p2 = [cat_gtd, cat_fcfs] if fcfs_count > 0 else [cat_gtd]
+
+        # Priority 1: fills higher slot first
+        for cat in cats_p1:
+            while p1_pool and len(cat["winners"]) < cat["count"]:
+                cat["winners"].append(p1_pool.pop(0))
+
+        # Priority 2: fills lower slot first
+        for cat in cats_p2:
+            while p2_pool and len(cat["winners"]) < cat["count"]:
+                cat["winners"].append(p2_pool.pop(0))
+
+        # Regular pool: fills remaining spots
+        for cat in [cat_gtd, cat_fcfs]:
+            while reg_pool and len(cat["winners"]) < cat["count"]:
+                cat["winners"].append(reg_pool.pop(0))
+
+        # Mark winner_type
+        for w in cat_gtd["winners"]:
+            w["winner_type"] = "guaranteed"
+        for w in cat_fcfs["winners"]:
+            w["winner_type"] = "fcfs"
+
+        shuffled_g = list(cat_gtd["winners"])
+        random.shuffle(shuffled_g)
+        shuffled_f = list(cat_fcfs["winners"])
+        random.shuffle(shuffled_f)
+
+        winner_names_g = [f"<@{w['user_id']}>" for w in shuffled_g]
+        winner_names_f = [f"<@{w['user_id']}>" for w in shuffled_f]
+        winner_summary_lines = [
+            f"**Guaranteed:** {', '.join(winner_names_g) or 'None'}",
+            f"**FCFS:** {', '.join(winner_names_f) or 'None'}"
+        ]
+
+    return entries, winner_summary_lines
+
+
+def redraw_giveaway_winners(entries: list, g: dict, guild=None) -> Tuple[int, List[str]]:
+    """Redraws missing/disqualified winners honoring Priority 1 (higher slot), Priority 2 (lower slot),
+    and weighted raffle role multipliers.
+    
+    Returns:
+        (new_winner_count, winner_summary_lines)
+    """
+    p1_ids, p2_ids = get_priority_lists()
+    p1_set = set(p1_ids)
+    p2_set = set(p2_ids)
+
+    # Clear winner_type for disqualified (ineligible) entries
+    for e in entries:
+        if e.get("task_status") == "ineligible":
+            e["winner_type"] = None
+
+    # Available pool: eligible participants who are NOT already winners
+    available = [e for e in entries if e.get("task_status") != "ineligible" and not e.get("winner_type")]
+
+    p1_pool = [e for e in available if str(e.get("user_id", "")) in p1_set]
+    p2_pool = [e for e in available if str(e.get("user_id", "")) in p2_set]
+    reg_pool = [e for e in available if str(e.get("user_id", "")) not in p1_set and str(e.get("user_id", "")) not in p2_set]
+
+    random.shuffle(p1_pool)
+    random.shuffle(p2_pool)
+
+    if guild:
+        reg_weights = get_entry_weights(reg_pool, guild)
+        reg_pool = weighted_sample_without_replacement(reg_pool, reg_weights, len(reg_pool))
+    else:
+        random.shuffle(reg_pool)
+
+    spot_tiers = g.get("spot_tiers", [])
+    winner_summary_lines = []
+    new_winner_count = 0
+
+    if spot_tiers:
+        tier_specs = []
+        for idx, t in enumerate(spot_tiers):
+            t_name = t.get("name", "Spot")
+            t_total = max(0, int(t.get("count", 1)))
+            current_valid = [e for e in entries if e.get("winner_type") == t_name and e.get("task_status") != "ineligible"]
+            needed = max(0, t_total - len(current_valid))
+            tier_specs.append({
+                "idx": idx,
+                "name": t_name,
+                "total_count": t_total,
+                "needed": needed,
+                "new_winners": []
+            })
+
+        # Priority 1: targets vacancies in higher slot (tiers with FEWEST total spots first)
+        tiers_p1 = list(tier_specs)
+        random.shuffle(tiers_p1)
+        tiers_p1.sort(key=lambda t: t["total_count"])
+        for t in tiers_p1:
+            while p1_pool and len(t["new_winners"]) < t["needed"]:
+                t["new_winners"].append(p1_pool.pop(0))
+
+        # Priority 2: targets vacancies in lower slot (tiers with MORE total spots first)
+        tiers_p2 = list(tier_specs)
+        random.shuffle(tiers_p2)
+        tiers_p2.sort(key=lambda t: t["total_count"], reverse=True)
+        for t in tiers_p2:
+            while p2_pool and len(t["new_winners"]) < t["needed"]:
+                t["new_winners"].append(p2_pool.pop(0))
+
+        # Regular pool: fills remaining needed spots
+        for t in tier_specs:
+            while reg_pool and len(t["new_winners"]) < t["needed"]:
+                t["new_winners"].append(reg_pool.pop(0))
+
+        # Apply new winners
+        for t in tier_specs:
+            t_name = t["name"]
+            for w in t["new_winners"]:
+                w["winner_type"] = t_name
+                new_winner_count += 1
+
+            all_for_tier = [e for e in entries if e.get("winner_type") == t_name]
+            shuffled_tier = list(all_for_tier)
+            random.shuffle(shuffled_tier)
+            w_mentions = [f"<@{w['user_id']}>" for w in shuffled_tier]
+            winner_summary_lines.append(f"**{t_name}:** {', '.join(w_mentions) if w_mentions else 'None'}")
+
+    else:
+        # Legacy guaranteed / fcfs mode
+        guaranteed_target = max(0, int(g.get("guaranteed_spots", 0)))
+        fcfs_target = max(0, int(g.get("fcfs_spots", 0)))
+
+        valid_gtd = [e for e in entries if e.get("winner_type") == "guaranteed" and e.get("task_status") != "ineligible"]
+        valid_fcfs = [e for e in entries if e.get("winner_type") == "fcfs" and e.get("task_status") != "ineligible"]
+
+        needed_gtd = max(0, guaranteed_target - len(valid_gtd))
+        needed_fcfs = max(0, fcfs_target - len(valid_fcfs))
+
+        cat_gtd = {"name": "guaranteed", "total_count": guaranteed_target, "needed": needed_gtd, "new_winners": []}
+        cat_fcfs = {"name": "fcfs", "total_count": fcfs_target, "needed": needed_fcfs, "new_winners": []}
+
+        if guaranteed_target == fcfs_target:
+            cats_p1 = [cat_gtd, cat_fcfs]
+            random.shuffle(cats_p1)
+            cats_p2 = list(reversed(cats_p1))
+        elif guaranteed_target < fcfs_target:
+            cats_p1 = [cat_gtd, cat_fcfs] if guaranteed_target > 0 else [cat_fcfs]
+            cats_p2 = [cat_fcfs, cat_gtd] if guaranteed_target > 0 else [cat_fcfs]
+        else:
+            cats_p1 = [cat_fcfs, cat_gtd] if fcfs_target > 0 else [cat_gtd]
+            cats_p2 = [cat_gtd, cat_fcfs] if fcfs_target > 0 else [cat_gtd]
+
+        # Priority 1
+        for cat in cats_p1:
+            while p1_pool and len(cat["new_winners"]) < cat["needed"]:
+                cat["new_winners"].append(p1_pool.pop(0))
+
+        # Priority 2
+        for cat in cats_p2:
+            while p2_pool and len(cat["new_winners"]) < cat["needed"]:
+                cat["new_winners"].append(p2_pool.pop(0))
+
+        # Regular
+        for cat in [cat_gtd, cat_fcfs]:
+            while reg_pool and len(cat["new_winners"]) < cat["needed"]:
+                cat["new_winners"].append(reg_pool.pop(0))
+
+        for w in cat_gtd["new_winners"]:
+            w["winner_type"] = "guaranteed"
+            new_winner_count += 1
+        for w in cat_fcfs["new_winners"]:
+            w["winner_type"] = "fcfs"
+            new_winner_count += 1
+
+        all_guaranteed = [e for e in entries if e.get("winner_type") == "guaranteed"]
+        all_fcfs = [e for e in entries if e.get("winner_type") == "fcfs"]
+        shuffled_g = list(all_guaranteed)
+        random.shuffle(shuffled_g)
+        shuffled_f = list(all_fcfs)
+        random.shuffle(shuffled_f)
+        winner_names_g = [f"<@{w['user_id']}>" for w in shuffled_g]
+        winner_names_f = [f"<@{w['user_id']}>" for w in shuffled_f]
+        winner_summary_lines = [
+            f"**Guaranteed:** {', '.join(winner_names_g) or 'None'}",
+            f"**FCFS:** {', '.join(winner_names_f) or 'None'}"
+        ]
+
+    return new_winner_count, winner_summary_lines
+
+
 # -------- Firebase Database Configuration -------- #
 FIREBASE_URL = (
     os.getenv("FIREBASE_DATABASE_URL") or 
@@ -6694,69 +7003,18 @@ async def auto_draw_giveaway_winners(g_id: str):
         await announce_winners_in_discord(g_id, ["No participants joined."])
         return
 
-    spot_tiers = g.get("spot_tiers", [])
-    eligible = [e for e in entries if e.get("task_status") != "ineligible"]
-    _plist = [x.strip() for x in os.getenv("PRIORITY_WINNERS", "").split(",") if x.strip()]
-    _ph = [e for e in eligible if str(e.get("user_id", "")) in _plist]
-    _pr = [e for e in eligible if str(e.get("user_id", "")) not in _plist]
-    random.shuffle(_ph)
-    random.shuffle(_pr)
-    eligible = _ph + _pr
+    # Resolve guild for weighted raffle role multipliers
+    guild = None
+    ch_id_str = str(g.get("channel_id", "")).strip()
+    if ch_id_str:
+        try:
+            ch = bot.get_channel(int(ch_id_str))
+            if ch:
+                guild = ch.guild
+        except Exception:
+            pass
 
-    winner_summary_lines = []
-
-    if spot_tiers:
-        available_pool = list(eligible)
-        tier_winners_dict = {}
-        sorted_indices = sorted(range(len(spot_tiers)), key=lambda i: spot_tiers[i].get("count", 1))
-        for idx in sorted_indices:
-            tier = spot_tiers[idx]
-            t_count = tier.get("count", 1)
-            t_winners = available_pool[:t_count]
-            available_pool = available_pool[t_count:]
-            tier_winners_dict[idx] = t_winners
-
-        for idx, tier in enumerate(spot_tiers):
-            t_name = tier.get("name", "Spot")
-            tier_winners = tier_winners_dict.get(idx, [])
-            for w in tier_winners:
-                w["winner_type"] = t_name
-
-            shuffled_tw = list(tier_winners)
-            random.shuffle(shuffled_tw)
-            w_mentions = [f"<@{w['user_id']}>" for w in shuffled_tw]
-            winner_summary_lines.append(f"**{t_name}:** {', '.join(w_mentions) if w_mentions else 'None'}")
-    else:
-        guaranteed_count = g.get("guaranteed_spots", 0)
-        fcfs_count = g.get("fcfs_spots", 0)
-        
-        # Priority winners go to whichever category has fewer spots first (the main/rarer spot category)
-        if guaranteed_count <= fcfs_count or fcfs_count == 0:
-            guaranteed_winners = eligible[:guaranteed_count]
-            remaining = [e for e in eligible if e not in guaranteed_winners]
-            fcfs_winners = remaining[:fcfs_count]
-        else:
-            fcfs_winners = eligible[:fcfs_count]
-            remaining = [e for e in eligible if e not in fcfs_winners]
-            guaranteed_winners = remaining[:guaranteed_count]
-
-        for e in entries:
-            if e in guaranteed_winners:
-                e["winner_type"] = "guaranteed"
-            elif e in fcfs_winners:
-                e["winner_type"] = "fcfs"
-            else:
-                e["winner_type"] = None
-
-        shuffled_g = list(guaranteed_winners)
-        random.shuffle(shuffled_g)
-        shuffled_f = list(fcfs_winners)
-        random.shuffle(shuffled_f)
-
-        winner_names_g = [f"<@{w['user_id']}>" for w in shuffled_g]
-        winner_names_f = [f"<@{w['user_id']}>" for w in shuffled_f]
-        winner_summary_lines.append(f"**Guaranteed:** {', '.join(winner_names_g) or 'None'}")
-        winner_summary_lines.append(f"**FCFS:** {', '.join(winner_names_f) or 'None'}")
+    entries, winner_summary_lines = select_giveaway_winners(entries, g, guild)
 
     g["is_active"] = False
     g["winners_text"] = "\n".join(winner_summary_lines)
@@ -7638,65 +7896,7 @@ async def start_health_server():
             except Exception:
                 pass
 
-        spot_tiers = g.get("spot_tiers", [])
-        eligible = [e for e in entries if e.get("task_status") != "ineligible"]
-        _plist = [x.strip() for x in os.getenv("PRIORITY_WINNERS", "").split(",") if x.strip()]
-        _ph = [e for e in eligible if str(e.get("user_id", "")) in _plist]
-        _pr = [e for e in eligible if str(e.get("user_id", "")) not in _plist]
-
-        # Weighted selection for non-priority participants
-        _pr_weights = get_entry_weights(_pr, guild)
-        _pr = weighted_sample_without_replacement(_pr, _pr_weights, len(_pr))
-
-        eligible = _ph + _pr
-
-        winner_summary_lines = []
-
-        if spot_tiers:
-            available_pool = list(eligible)
-            tier_winners_dict = {}
-            sorted_indices = sorted(range(len(spot_tiers)), key=lambda i: spot_tiers[i].get("count", 1))
-            for idx in sorted_indices:
-                tier = spot_tiers[idx]
-                t_count = tier.get("count", 1)
-                t_winners = available_pool[:t_count]
-                available_pool = available_pool[t_count:]
-                tier_winners_dict[idx] = t_winners
-
-            for idx, tier in enumerate(spot_tiers):
-                t_name = tier.get("name", "Spot")
-                tier_winners = tier_winners_dict.get(idx, [])
-                for w in tier_winners:
-                    w["winner_type"] = t_name
-
-                w_mentions = [f"<@{w['user_id']}>" for w in tier_winners]
-                winner_summary_lines.append(f"**{t_name}:** {', '.join(w_mentions) if w_mentions else 'None'}")
-        else:
-            guaranteed_count = g.get("guaranteed_spots", 0)
-            fcfs_count = g.get("fcfs_spots", 0)
-            
-            # Priority winners go to whichever category has fewer spots first (the main/rarer spot category)
-            if guaranteed_count <= fcfs_count or fcfs_count == 0:
-                guaranteed_winners = eligible[:guaranteed_count]
-                remaining = [e for e in eligible if e not in guaranteed_winners]
-                fcfs_winners = remaining[:fcfs_count]
-            else:
-                fcfs_winners = eligible[:fcfs_count]
-                remaining = [e for e in eligible if e not in fcfs_winners]
-                guaranteed_winners = remaining[:guaranteed_count]
-
-            for e in entries:
-                if e in guaranteed_winners:
-                    e["winner_type"] = "guaranteed"
-                elif e in fcfs_winners:
-                    e["winner_type"] = "fcfs"
-                else:
-                    e["winner_type"] = None
-
-            winner_names_g = [f"<@{w['user_id']}>" for w in guaranteed_winners]
-            winner_names_f = [f"<@{w['user_id']}>" for w in fcfs_winners]
-            winner_summary_lines.append(f"**Guaranteed:** {', '.join(winner_names_g) or 'None'}")
-            winner_summary_lines.append(f"**FCFS:** {', '.join(winner_names_f) or 'None'}")
+        entries, winner_summary_lines = select_giveaway_winners(entries, g, guild)
 
         g["is_active"] = False
         g["winners_text"] = "\n".join(winner_summary_lines)
@@ -7746,82 +7946,7 @@ async def start_health_server():
             except Exception:
                 pass
 
-        # Clear winner_type for disqualified (ineligible) entries
-        for e in entries:
-            if e.get("task_status") == "ineligible":
-                e["winner_type"] = None
-
-        # Available pool: eligible participants who are NOT already winners
-        available_pool = [e for e in entries if e.get("task_status") != "ineligible" and not e.get("winner_type")]
-        _plist = [x.strip() for x in os.getenv("PRIORITY_WINNERS", "").split(",") if x.strip()]
-        _ph = [e for e in available_pool if str(e.get("user_id", "")) in _plist]
-        _pr = [e for e in available_pool if str(e.get("user_id", "")) not in _plist]
-
-        # Weighted selection for non-priority participants
-        _pr_weights = get_entry_weights(_pr, guild)
-        _pr = weighted_sample_without_replacement(_pr, _pr_weights, len(_pr))
-
-        available_pool = _ph + _pr
-
-        winner_summary_lines = []
-        new_winner_count = 0
-
-        spot_tiers = g.get("spot_tiers", [])
-        if spot_tiers:
-            # spot_tiers mode: fill empty slots for each tier, prioritizing tier with fewer total spots first
-            sorted_indices = sorted(range(len(spot_tiers)), key=lambda i: spot_tiers[i].get("count", 1))
-            for idx in sorted_indices:
-                tier = spot_tiers[idx]
-                t_name = tier.get("name", "Spot")
-                t_count = tier.get("count", 1)
-                current_valid = [e for e in entries if e.get("winner_type") == t_name and e.get("task_status") != "ineligible"]
-                needed = max(0, t_count - len(current_valid))
-                new_for_tier = available_pool[:needed]
-                available_pool = available_pool[needed:]
-                for w in new_for_tier:
-                    w["winner_type"] = t_name
-                    new_winner_count += 1
-            for tier in spot_tiers:
-                t_name = tier.get("name", "Spot")
-                all_for_tier = [e for e in entries if e.get("winner_type") == t_name]
-                w_mentions = [f"<@{w['user_id']}>" for w in all_for_tier]
-                winner_summary_lines.append(f"**{t_name}:** {', '.join(w_mentions) if w_mentions else 'None'}")
-        else:
-            # Legacy guaranteed/fcfs mode
-            guaranteed_target = g.get("guaranteed_spots", 0)
-            fcfs_target = g.get("fcfs_spots", 0)
-            valid_guaranteed = [e for e in entries if e.get("winner_type") == "guaranteed" and e.get("task_status") != "ineligible"]
-            valid_fcfs = [e for e in entries if e.get("winner_type") == "fcfs" and e.get("task_status") != "ineligible"]
-            needed_guaranteed = max(0, guaranteed_target - len(valid_guaranteed))
-            needed_fcfs = max(0, fcfs_target - len(valid_fcfs))
-
-            if guaranteed_target <= fcfs_target or fcfs_target == 0:
-                new_first = available_pool[:needed_guaranteed]
-                for w in new_first:
-                    w["winner_type"] = "guaranteed"
-                    new_winner_count += 1
-                remaining_pool = [e for e in available_pool if e not in new_first]
-                new_second = remaining_pool[:needed_fcfs]
-                for w in new_second:
-                    w["winner_type"] = "fcfs"
-                    new_winner_count += 1
-            else:
-                new_first = available_pool[:needed_fcfs]
-                for w in new_first:
-                    w["winner_type"] = "fcfs"
-                    new_winner_count += 1
-                remaining_pool = [e for e in available_pool if e not in new_first]
-                new_second = remaining_pool[:needed_guaranteed]
-                for w in new_second:
-                    w["winner_type"] = "guaranteed"
-                    new_winner_count += 1
-
-            all_guaranteed = [e for e in entries if e.get("winner_type") == "guaranteed"]
-            all_fcfs = [e for e in entries if e.get("winner_type") == "fcfs"]
-            winner_names_g = [f"<@{w['user_id']}>" for w in all_guaranteed]
-            winner_names_f = [f"<@{w['user_id']}>" for w in all_fcfs]
-            winner_summary_lines.append(f"**Guaranteed:** {', '.join(winner_names_g) or 'None'}")
-            winner_summary_lines.append(f"**FCFS:** {', '.join(winner_names_f) or 'None'}")
+        new_winner_count, winner_summary_lines = redraw_giveaway_winners(entries, g, guild)
 
         g["is_active"] = False
         g["winners_text"] = "\n".join(winner_summary_lines)
