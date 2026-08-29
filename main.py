@@ -5032,6 +5032,102 @@ RUMBLE_THEMES = {
             "🌙 NIGHT 10 — CHAMPION'S PANTHEON",
         ],
         "final_phase": "⚔️ THE TITAN DUEL — FINAL 1V1 SHOWDOWN"
+    },
+    "superhero": {
+        "name": "Superhero & Comic Multiverse",
+        "emoji": "🦸",
+        "deaths": [
+            "{killer} snapped their fingers with the Infinity Gauntlet, instantly turning {player1} into a cloud of cosmic dust.",
+            "{killer} pulled a Homelander and laser-eyed {player1} straight through a brick wall for looking at them funny.",
+            "{killer} threw {player1} into the Speed Force, causing {player1} to age 4,000 years in 2 seconds.",
+            "{killer} dropped Batman's heavily armored Batmobile directly on top of {player1} with zero prep time.",
+            "{killer} landed a vicious Hulk Smash on {player1}, embedding them 50 feet deep into the solid asphalt.",
+            "{killer} trapped {player1} inside the Doctor Strange Mirror Dimension with no magic sling ring to escape.",
+            "{killer} struck {player1} with Thor's Mjolnir hammer — {player1} wasn't worthy and got flattened into a pancake.",
+            "{killer} sprayed {player1} with Joker's laughing gas, causing {player1} to chuckle themselves into fatal cardiac arrest.",
+            "{killer} unleashed the Venom symbiote on {player1}, devouring {player1}'s head like a midnight snack.",
+            "{killer} pulled an Omni-Man subway train slam on {player1}, obliterating their entire multiverse variant.",
+            "{killer} shredded {player1} with Wolverine's adamantium claws during an enraged Berserker Barrage.",
+            "{killer} broke the 4th wall like Deadpool and erased {player1} directly from the comic book panel.",
+            "{killer} blasted {player1} with Iron Man's Unibeam chest laser at 400% maximum arc reactor power.",
+            "{killer} fed {player1} a batch of unstable, faulty Compound V, causing {player1}'s head to spontaneously pop.",
+            "{killer} trapped {player1} in Magneto's electromagnetic vortex, crushing them in their own metallic zippers.",
+            "{killer} threw a Green Goblin pumpkin bomb right between {player1}'s knees with a maniacal cackle.",
+            "{killer} hurled Captain America's vibranium shield, decapitating {player1} on the ricochet bounce.",
+            "{killer} exposed {player1} to glowing Green Kryptonite before suplexing them from low Earth orbit.",
+            "{killer} summoned Darkseid's Omega Beams that zigzagged across the entire arena to disintegrate {player1}.",
+            "{killer} bound {player1} with Wonder Woman's Lasso of Truth, forcing them to confess cringe until they perished.",
+            "{killer} kicked {player1} into a vat of Ace Chemicals acid — {player1} failed to become a supervillain and just dissolved.",
+            "{killer} webbed {player1} to the front grill of a high-speed express train like an irritated Spider-Man.",
+            "{killer} whispered in {player1}'s ear with Black Bolt's voice, leveling 4 city blocks in the shockwave.",
+            "{killer} used Professor X's telepathic mind blast to make {player1} completely forget how to breathe.",
+            "{killer} summoned the planet-eating Galactus to take a single crunchy bite out of {player1}'s zip code.",
+            "{killer} fed {player1} to King Shark after whispering *'Nom Nom, fresh meat!'*.",
+            "{killer} fired Hawkeye's tactical explosive USB arrow directly into {player1}'s vital organs.",
+            "{killer} banished {player1} into the Phantom Zone with no dimensional portal device.",
+            "{killer} banished {player1} to the TVA End-of-Time Void to be instantly consumed by Alioth.",
+            "{killer} unleashed Doctor Doom's Doombot legion to laser-blast {player1} for disrespecting Latveria.",
+            "{killer} hit {player1} with Ghost Rider's Penance Stare, burning their soul for every time they ghosted a Discord DM.",
+            "{killer} shrank {player1} with Pym Particles into the subatomic Quantum Realm where they vanished forever.",
+            "{killer} threw a razor-sharp Batarang with surgical precision straight into {player1}'s solar plexus.",
+            "{killer} activated Peacemaker's sonic boom helmet directly against {player1}'s ear canal.",
+            "{killer} dropped the Daily Bugle printing press on top of {player1} for failing to deliver pictures of Spider-Man.",
+            "{killer} trapped {player1} in Scarecrow's fear toxin nightmare until their heart gave out from terror.",
+            "{killer} hit {player1} with Shazam's lightning bolt by yelling the magic word at point-blank range.",
+            "{killer} sliced {player1} in two with Deathstroke's promethium broadsword before they could draw a weapon.",
+            "{killer} fired Star-Lord's quad-blasters into {player1} while dancing to 80s pop music.",
+            "{killer} dropped a 10-ton Sentinel mutant-hunting robot right onto {player1}'s hideout.",
+        ],
+        "survival": [
+            "{player1} summoned a mystical Doctor Strange Tao Mandala mandala shield to deflect incoming fire.",
+            "{player1} took a dose of temporary Compound V and gained 24 hours of bulletproof invulnerability.",
+            "{player1} wrapped themselves in Batman's stealth cape and vanished into the Gotham shadows.",
+            "{player1} absorbed incoming kinetic energy with Black Panther's vibranium nanotech suit.",
+            "{player1} backflipped over a fatal ambush thanks to their tingling Spider-Sense warning.",
+            "{player1} flew high into the clouds using Iron Man's repulsor boots to scout enemy squads.",
+            "{player1} found an abandoned Wayne Enterprises tactical supply crate packed with smoke pellets.",
+            "{player1} injected Super Soldier Serum, enhancing their reflexes and stamina to peak limits.",
+        ],
+        "revives": [
+            "✨ **TIME STONE!** Doctor Strange rewound the timeline with the Eye of Agamotto — **{player1}** is ALIVE!",
+            "✨ **LAZARUS PIT!** Ra's al Ghul dipped **{player1}** into the mystical green waters — **{player1}** RISES!",
+            "✨ **HEALING FACTOR!** **{player1}** triggered Wolverine's mutant healing factor and fully reconstructed!",
+            "✨ **MULTIVERSE VARIANT!** A cosmic portal opened and an alternate Earth variant of **{player1}** joined the battle!",
+            "✨ **SOLAR RECHARGE!** Yellow sun rays struck **{player1}**'s body — **{player1}** returned to life at full strength!",
+        ],
+        "phases": [
+            "🦸 MULTIVERSE INCURSION — THE HEROES ASSEMBLE",
+            "🌅 DAY 1 — DAWN OF THE AVENGERS",
+            "🌙 NIGHT 1 — GOTHAM CITY SHADOWS",
+            "🌋 ARENA HAZARD — DOOMSDAY SECTOR INVASION",
+            "🌅 DAY 2 — CLASH OF THE MUTANTS",
+            "🌙 NIGHT 2 — SINISTER SIX AMBUSH",
+            "⚡ ARENA HAZARD — INFINITY STONE SURGE",
+            "🌅 DAY 3 — THE BOYS SUPE BRAWL",
+            "🌙 NIGHT 3 — ARKHAM ASYLUM BREAKOUT",
+            "🛡️ WAYNE ENTERPRISES AIRDROP",
+            "🌅 DAY 4 — SECRET INVASION",
+            "🌙 NIGHT 4 — MIDNIGHT SONS RITUAL",
+            "🩸 BLOOD MOON — SYMBIOTE OUTBREAK",
+            "🌅 DAY 5 — KRYPTONIAN SHOWDOWN",
+            "🌙 NIGHT 5 — METROPOLIS UNDER SIEGE",
+            "❄️ ARENA HAZARD — MR. FREEZE GLACIAL WAVE",
+            "🌅 DAY 6 — AGE OF ULTRON",
+            "🌙 NIGHT 6 — COURT OF OWLS PATROL",
+            "🌪️ ARENA HAZARD — SPEED FORCE TORNADO",
+            "🌅 DAY 7 — CIVIL WAR SPLIT",
+            "🌙 NIGHT 7 — TOWER OF FATE",
+            "☣️ ARENA HAZARD — JOKER TOXIN GAS CLOUD",
+            "🌅 DAY 8 — CRISIS ON INFINITE EARTHS",
+            "🌙 NIGHT 8 — DARK MULTIVERSE RECKONING",
+            "☠️ SUDDEN DEATH — COLLAPSING BATTLEWORLD",
+            "🌅 DAY 9 — APOCALYPSE HORSEMEN",
+            "🌙 NIGHT 9 — THE FINAL INVASION",
+            "🔥 ARENA HAZARD — DARKSEID OMEGA BARRAGE",
+            "🌅 DAY 10 — SECRET WARS APEX",
+            "🌙 NIGHT 10 — ENDGAME COUNTDOWN",
+        ],
+        "final_phase": "⚔️ THE ENDGAME DUEL — 1V1 MULTIVERSE SHOWDOWN"
     }
 }
 
@@ -5173,8 +5269,10 @@ class RumbleGame:
         if revived["id"] in self.eliminated_by:
             del self.eliminated_by[revived["id"]]
         template = self._pick_template("revives")
-        r_display = f"**{revived.get('username', revived.get('name', 'Warrior'))}**"
-        return template.format(player1=r_display)
+        r_uname = revived.get("username", revived.get("name", "Warrior"))
+        r_display = f"**{r_uname}**"
+        normalized_template = template.replace("**{player1}**", "{player1}")
+        return normalized_template.format(player1=r_display)
 
     def run_phase(self, phase_name: str, is_final: bool = False, phases_remaining: int = 1) -> discord.Embed:
         """Execute one phase of the battle and return an embed with results."""
@@ -5681,6 +5779,7 @@ async def _rumble_countdown(channel, ch_id: int, join_duration: int):
 @app_commands.choices(
     theme=[
         app_commands.Choice(name="🏙️ Modern / Memes & Urban (Default)", value="modern"),
+        app_commands.Choice(name="🦸 Superhero & Comic Multiverse (Marvel / DC / The Boys)", value="superhero"),
         app_commands.Choice(name="⛩️ Japanese Anime & Samurai Lore", value="japanese"),
         app_commands.Choice(name="🏰 European Medieval & Comic Knights", value="european"),
         app_commands.Choice(name="🏛️ Web3 Crypto & Ancient Colosseum", value="web3_ancient"),
