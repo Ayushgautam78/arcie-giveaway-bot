@@ -4618,7 +4618,7 @@ async def update_giveaway_discord_message(giveaway_id: str):
     domain = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
     embed, file_to_send = build_giveaway_embed(g)
     view = GiveawayView(giveaway_id, domain)
-    mention_text = format_role_mention(g.get("mention_role"))
+    mention_text = format_role_mention(g.get("mention_role")) if g.get("is_active") else None
 
     msg = None
     msg_id_clean = re.sub(r'[^0-9]', '', str(g.get("message_id", "")))
@@ -6964,14 +6964,12 @@ async def announce_winners_in_discord(g_id: str, winner_summary_lines: list):
     try:
         title_text = g.get('title', 'Giveaway')
         winner_block = "\n".join(winner_summary_lines)
-        mention_role = format_role_mention(g.get("mention_role"))
 
-        # Format winner user mentions OUTSIDE & ABOVE the embed as plain message content
-        content_parts = []
-        if mention_role:
-            content_parts.append(mention_role)
-        content_parts.append(f"🎉 **Raffle Winners Announced for {title_text}!**")
-        content_parts.append(winner_block)
+        # Format winner user mentions OUTSIDE & ABOVE the embed as plain message content (DO NOT tag any roles)
+        content_parts = [
+            f"🎉 **Raffle Winners Announced for {title_text}!**",
+            winner_block
+        ]
 
         content_text = "\n\n".join(content_parts)
 
