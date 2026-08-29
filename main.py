@@ -779,32 +779,56 @@ def save_tickets():
         sync_firebase_background("tickets", tickets_data)
 
 
-def is_ticket_staff(member: discord.Member) -> bool:
-    """Check if a Discord member is a Moderator, Admin, or Ticket Staff."""
-    if not isinstance(member, discord.Member):
+def is_ticket_staff(member: Union[discord.Member, discord.User], guild: Optional[discord.Guild] = None) -> bool:
+    """Check if a Discord member/user is a Moderator, Admin, or Ticket Staff."""
+    if not member:
         return False
     uid = str(member.id)
     # Check 1: Bot Admin ID
     if is_bot_admin_by_id(uid):
         return True
-    # Check 2: Guild Administrator / Manage Channels / Manage Messages / Kick / Ban
-    perms = member.guild_permissions
-    if perms.administrator or perms.manage_channels or perms.manage_messages or perms.kick_members or perms.ban_members:
+
+    # Resolve member object if passed as discord.User
+    actual_member = member
+    if not isinstance(actual_member, discord.Member):
+        if guild:
+            actual_member = guild.get_member(int(uid))
+        elif bot and bot.guilds:
+            for g in bot.guilds:
+                m = g.get_member(int(uid))
+                if m:
+                    actual_member = m
+                    guild = g
+                    break
+
+    if not actual_member or not isinstance(actual_member, discord.Member):
+        return False
+
+    # Check 2: Server Owner
+    if actual_member.guild and actual_member.guild.owner_id == actual_member.id:
         return True
-    # Check 3: Configured Support Role ID
+
+    # Check 3: Guild Administrator / Moderator Permissions
+    perms = actual_member.guild_permissions
+    if (perms.administrator or perms.manage_guild or perms.manage_channels or 
+        perms.manage_messages or perms.moderate_members or perms.kick_members or perms.ban_members):
+        return True
+
+    # Check 4: Configured Support Role ID
     cfg = tickets_data.get("config", {})
     supp_role_id = cfg.get("support_role_id")
-    if supp_role_id:
+    if supp_role_id and actual_member.guild:
         try:
-            role = member.guild.get_role(int(supp_role_id))
-            if role and role in member.roles:
+            role = actual_member.guild.get_role(int(supp_role_id))
+            if role and role in actual_member.roles:
                 return True
         except Exception:
             pass
-    # Check 4: Any role containing 'mod', 'admin', 'staff', 'support', 'team', or 'helper'
-    for r in member.roles:
+
+    # Check 5: Any role containing 'mod', 'admin', 'staff', 'support', 'team', 'helper', or 'owner'
+    for r in getattr(actual_member, 'roles', []):
         r_name = r.name.lower()
-        if any(keyword in r_name for keyword in ["mod", "admin", "staff", "support", "team", "helper"]):
+        if any(keyword in r_name for keyword in ["mod", "admin", "staff", "support", "team", "helper", "owner"]):
             return True
     return False
 
@@ -820,8 +844,8 @@ class TicketControlView(discord.ui.View):
 
     @discord.ui.button(label="📌 Claim Ticket", style=discord.ButtonStyle.secondary, custom_id="ticket_ctrl_claim", emoji="📌")
     async def claim_ticket_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_ticket_staff(interaction.user):
-            await interaction.response.send_message("❌ Only Moderators and Staff can claim support tickets!", ephemeral=True)
+        if not is_ticket_staff(interaction.user, interaction.guild):
+            await interaction.response.send_message("❌ Only Moderators and Admins can claim support tickets!", ephemeral=True)
             return
         await interaction.response.send_message(f"📌 Ticket claimed by {interaction.user.mention}!", ephemeral=False)
 
@@ -835,9 +859,9 @@ class TicketControlView(discord.ui.View):
             await interaction.followup.send("❌ Failed to generate transcript.", ephemeral=True)
 
     async def _close_ticket(self, interaction: discord.Interaction):
-        # SECURITY CHECK: Only Moderators & Staff can close tickets!
-        if not is_ticket_staff(interaction.user):
-            deny_msg = "❌ Only Moderators and Staff can close support tickets! The ticket creator cannot close the ticket unless they are a moderator."
+        # SECURITY CHECK: Only Moderators & Admins can close tickets!
+        if not is_ticket_staff(interaction.user, interaction.guild):
+            deny_msg = "❌ Only Moderators and Admins can close support tickets!"
             if interaction.response.is_done():
                 await interaction.followup.send(deny_msg, ephemeral=True)
             else:
@@ -5474,11 +5498,6 @@ class RumbleJoinView(discord.ui.View):
 
     @discord.ui.button(label="Start Battle Now", style=discord.ButtonStyle.danger, custom_id="rumble_start", emoji="🚀", row=1)
     async def start_rumble_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Admin-only check
-        if not is_admin(interaction.user, interaction.guild):
-            await safe_respond(interaction, "❌ Only admins can start the Rumble!", ephemeral=True)
-            return
-
         session = active_rumbles.get(self.channel_id)
         if not session:
             await safe_respond(interaction, "❌ No active Rumble in this channel.", ephemeral=True)
@@ -5486,6 +5505,20 @@ class RumbleJoinView(discord.ui.View):
         if session.get("started"):
             await safe_respond(interaction, "❌ The Rumble has already started!", ephemeral=True)
             return
+
+        # 1. Mod / Admin check
+        if not (is_admin(interaction.user, interaction.guild) or is_ticket_staff(interaction.user, interaction.guild)):
+            await safe_respond(interaction, "❌ Only Moderators and Admins can start the Rumble early!", ephemeral=True)
+            return
+
+        # 2. Host check: Only the one who started this Rumble session can start it early
+        host_id = session.get("host_id")
+        host_name = session.get("host_name", "the host")
+        user_id = str(interaction.user.id)
+        if host_id and user_id != host_id and not is_bot_admin_by_id(user_id):
+            await safe_respond(interaction, f"❌ Only the host who started this Rumble (@{host_name}) can start the battle early!", ephemeral=True)
+            return
+
         if len(session["players"]) < 2:
             await safe_respond(interaction, "❌ Need at least **2 players** to start a Rumble!", ephemeral=True)
             return
@@ -5499,8 +5532,20 @@ class RumbleJoinView(discord.ui.View):
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="rumble_cancel", emoji="❌", row=1)
     async def cancel_rumble_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_admin(interaction.user, interaction.guild):
-            await safe_respond(interaction, "❌ Only admins can cancel the Rumble!", ephemeral=True)
+        session = active_rumbles.get(self.channel_id)
+        if not session:
+            await safe_respond(interaction, "❌ No active Rumble in this channel.", ephemeral=True)
+            return
+
+        if not (is_admin(interaction.user, interaction.guild) or is_ticket_staff(interaction.user, interaction.guild)):
+            await safe_respond(interaction, "❌ Only Moderators and Admins can cancel the Rumble!", ephemeral=True)
+            return
+
+        host_id = session.get("host_id")
+        host_name = session.get("host_name", "the host")
+        user_id = str(interaction.user.id)
+        if host_id and user_id != host_id and not is_bot_admin_by_id(user_id):
+            await safe_respond(interaction, f"❌ Only the host who started this Rumble (@{host_name}) can cancel the match!", ephemeral=True)
             return
 
         if self.channel_id in active_rumbles:
@@ -5695,14 +5740,16 @@ async def rumble_command(
 
         start_time = int(time.time())
         host_name = interaction.user.name  # Use host's username
+        host_id = str(interaction.user.id)
         # Initialize session
         active_rumbles[ch_id] = {
+            "host_id": host_id,
+            "host_name": host_name,
             "players": [],
             "message_id": None,
             "started": False,
             "created_at": start_time,
             "join_duration": join_duration,
-            "host_name": host_name,
             "tag_role": tag_role,
             "theme": theme_key,
         }
