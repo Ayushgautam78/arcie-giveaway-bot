@@ -51,6 +51,21 @@
 
   <!-- Main Feed Section -->
   <main class="container">
+    <!-- Standalone Direct Giveaway View Banner (shown when accessed via direct share link) -->
+    <div id="singleGiveawayBanner" style="display: none; background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(168,85,247,0.1)); border: 1px solid rgba(168,85,247,0.3); border-radius: var(--radius-md); padding: 1rem 1.25rem; margin-bottom: 1.5rem; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span style="font-size: 1.6rem;">🎁</span>
+        <div>
+          <div style="font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">Direct Giveaway View</div>
+          <div id="singleGiveawayBannerTitle" style="font-size: 1.05rem; font-weight: 700; color: #fff;">Giveaway Title</div>
+        </div>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <button class="btn btn-primary btn-sm" id="singleGiveawayOpenBtn">🔍 View Full Details & Winners</button>
+        <button class="btn btn-outline btn-sm" onclick="showAllGiveawaysView()">← View All Giveaways</button>
+      </div>
+    </div>
+
     <div class="section-header">
       <h2 class="section-title">✨ Community Giveaways</h2>
       <div class="tab-group">
@@ -530,14 +545,21 @@
 
         <!-- Public Participants List (visible to everyone) -->
         <div id="publicParticipantsBox" style="border-top: 1px solid var(--border-color); padding-top: 1rem; margin-top: 1rem;">
-          <h4 style="color: var(--text-main); margin-bottom: 10px;">👥 Participants</h4>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+            <h4 style="color: var(--text-main); margin: 0; display: flex; align-items: center; gap: 6px;">
+              <span>👥 Registered Participants</span>
+              <span id="publicParticipantCountBadge" class="badge" style="background: rgba(99,102,241,0.2); color: #818cf8; font-size: 0.8rem; padding: 2px 8px; border-radius: 9999px;">0</span>
+            </h4>
+            <input type="text" id="publicParticipantSearch" class="form-input" placeholder="🔍 Search user, ID, or wallet..." style="max-width: 280px; padding: 6px 12px; font-size: 0.82rem;" oninput="filterPublicParticipants(this.value)">
+          </div>
           <div class="table-container">
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>Discord Username</th>
+                  <th>Participant</th>
                   <th>Discord ID</th>
                   <th id="publicWalletHeader">Wallet Address</th>
+                  <th>Status / Spot Won</th>
                 </tr>
               </thead>
               <tbody id="publicParticipantsBody">

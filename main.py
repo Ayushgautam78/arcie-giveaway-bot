@@ -8407,6 +8407,8 @@ async def start_health_server():
 
     # Add routes
     app.router.add_get("/", serve_index)
+    app.router.add_get("/giveaway/{id}", serve_index)
+    app.router.add_get("/g/{id}", serve_index)
     app.router.add_get("/static/{filename}", serve_static)
     app.router.add_get("/static/uploads/{filename}", serve_upload)
     app.router.add_get("/health", health_handler)

@@ -114,6 +114,7 @@ async function initApp() {
   await loadGiveaways();
   await loadGuildChannels();
   await loadGuildRoles();
+  await checkUrlDirectGiveaway();
 }
 
 function setupEventListeners() {
@@ -580,21 +581,32 @@ function updateHeroStats() {
 }
 
 // Render Giveaway Cards
-function renderGiveaways() {
+function renderGiveaways(highlightedGiveaway = null) {
   const grid = document.getElementById('giveawayGrid');
   const now = Math.floor(Date.now() / 1000);
   const isAdmin = currentUser && currentUser.is_admin;
 
   let filtered = currentGiveaways;
 
-  // Non-admin users: ONLY show active giveaways (no ended, no all tab)
-  if (!isAdmin) {
-    filtered = currentGiveaways.filter(g => g.is_active && g.ends_at > now);
+  if (highlightedGiveaway && highlightedGiveaway.id) {
+    // If a specific giveaway is requested via direct link, make sure it is included at the top!
+    const otherGiveaways = currentGiveaways.filter(g => g.id !== highlightedGiveaway.id);
+    if (!isAdmin) {
+      const activeOthers = otherGiveaways.filter(g => g.is_active && g.ends_at > now);
+      filtered = [highlightedGiveaway, ...activeOthers];
+    } else {
+      filtered = [highlightedGiveaway, ...otherGiveaways];
+    }
   } else {
-    if (currentFilter === 'active') {
+    // Non-admin users: ONLY show active giveaways (no ended, no all tab)
+    if (!isAdmin) {
       filtered = currentGiveaways.filter(g => g.is_active && g.ends_at > now);
-    } else if (currentFilter === 'ended') {
-      filtered = currentGiveaways.filter(g => !g.is_active || g.ends_at <= now);
+    } else {
+      if (currentFilter === 'active') {
+        filtered = currentGiveaways.filter(g => g.is_active && g.ends_at > now);
+      } else if (currentFilter === 'ended') {
+        filtered = currentGiveaways.filter(g => !g.is_active || g.ends_at <= now);
+      }
     }
   }
 
@@ -650,6 +662,7 @@ function renderGiveaways() {
         <div class="g-card-footer">
           <span style="font-size: 0.85rem; color: var(--text-muted);">👥 ${g.entries_count || 0} Entered</span>
           <div style="display: flex; gap: 6px; align-items: center;">
+            <button type="button" class="btn btn-outline btn-sm" style="padding: 4px 8px;" onclick="copyShareLink('${g.id}')" title="Copy Share Link">🔗</button>
             ${isAdmin ? `<button type="button" class="btn btn-danger btn-sm" style="padding: 4px 8px;" onclick="deleteGiveaway('${g.id}')" title="Delete Giveaway">🗑️</button>` : ''}
             <button class="btn btn-primary btn-sm" onclick="openDetailModal('${g.id}')">
               ${isEnded ? 'View Results' : 'View Giveaway'}
@@ -1257,20 +1270,150 @@ async function deleteGiveaway(giveawayId) {
   await loadGiveaways();
 }
 
+// Helper: Format Winners Text for Beautiful Web Display
+function formatWinnersForWeb(winnersText) {
+  if (!winnersText || typeof winnersText !== 'string' || !winnersText.trim()) return '';
+  const lines = winnersText.split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length === 0) return '';
+
+  return lines.map(line => {
+    if (line.includes(':')) {
+      const parts = line.split(':');
+      const category = parts[0].replace(/[*_`]/g, '').trim();
+      const mentions = parts.slice(1).join(':').trim();
+
+      let icon = '🎖️';
+      let catColor = '#fbbf24';
+      let borderLeft = '#eab308';
+      let bgStyle = 'rgba(234, 179, 8, 0.12)';
+
+      const lowerCat = category.toLowerCase();
+      if (lowerCat.includes('guaranteed') || lowerCat.includes('gtd')) {
+        icon = '🌟';
+        catColor = '#fbbf24';
+        borderLeft = '#eab308';
+        bgStyle = 'rgba(234, 179, 8, 0.12)';
+      } else if (lowerCat.includes('fcfs')) {
+        icon = '⚡';
+        catColor = '#c084fc';
+        borderLeft = '#a855f7';
+        bgStyle = 'rgba(168, 85, 247, 0.12)';
+      } else if (lowerCat.includes('tier 1')) {
+        icon = '🥇';
+        catColor = '#fbbf24';
+        borderLeft = '#eab308';
+      } else if (lowerCat.includes('tier 2')) {
+        icon = '🥈';
+        catColor = '#94a3b8';
+        borderLeft = '#64748b';
+      } else if (lowerCat.includes('tier 3')) {
+        icon = '🥉';
+        catColor = '#fb923c';
+        borderLeft = '#f97316';
+      }
+
+      return `
+        <div style="background: ${bgStyle}; padding: 10px 14px; border-radius: var(--radius-sm); border-left: 4px solid ${borderLeft}; margin-bottom: 6px;">
+          <div style="font-weight: 700; color: ${catColor}; font-size: 0.92rem; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+            <span>${icon}</span> <span>${escapeHtml(category)}</span>
+          </div>
+          <div style="color: #f8fafc; font-size: 0.9rem; line-height: 1.6; word-break: break-word;">
+            ${escapeHtml(mentions)}
+          </div>
+        </div>
+      `;
+    }
+    return `<div style="padding: 6px 12px; background: rgba(0,0,0,0.25); border-radius: var(--radius-sm); color: #f8fafc; font-size: 0.9rem; margin-bottom: 4px;">${escapeHtml(line)}</div>`;
+  }).join('');
+}
+
+// Global cache for public entries to support instant live search
+let allPublicEntries = [];
+let currentPublicWalletField = 'evm_wallet';
+let currentDetailWinnersText = '';
+
 // Open Detail & Admin Verification Modal
 async function openDetailModal(giveawayId) {
-  const g = currentGiveaways.find(x => x.id === giveawayId);
-  if (!g) return;
+  let g = currentGiveaways.find(x => x.id === giveawayId);
+  if (!g) {
+    // Fetch directly from API or Firebase if not in current memory
+    try {
+      const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        g = data.giveaway || data;
+      }
+      if (!g) {
+        g = await firebaseGet('giveaways/' + giveawayId);
+      }
+      if (g && g.id) {
+        currentGiveaways.push(g);
+      }
+    } catch (fetchErr) {
+      console.warn('Direct fetch giveaway detail failed:', fetchErr);
+    }
+  }
+
+  if (!g) {
+    showToast('Giveaway not found or removed', 'error');
+    return;
+  }
 
   const isAdmin = currentUser && currentUser.is_admin;
   activeDetailGiveaway = g;
+  currentDetailWinnersText = g.winners_text || '';
   document.getElementById('detailTitle').innerText = g.title;
   
   const content = document.getElementById('detailContent');
   const now = Math.floor(Date.now() / 1000);
   const isEnded = !g.is_active || g.ends_at <= now;
 
-  // Build task requirements list for public view
+  // 1. Build Winners Box HTML (if giveaway has ended and winners exist)
+  let winnersBoxHtml = '';
+  if (isEnded && g.winners_text && g.winners_text.trim()) {
+    const formattedWinners = formatWinnersForWeb(g.winners_text);
+    if (formattedWinners) {
+      winnersBoxHtml = `
+        <div style="background: linear-gradient(135deg, rgba(234, 179, 8, 0.15), rgba(245, 158, 11, 0.05)); border: 1px solid rgba(234, 179, 8, 0.4); border-radius: var(--radius-md); padding: 1.25rem; margin-bottom: 1rem;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 6px;">
+            <div style="display: flex; align-items: center; gap: 8px; color: #fbbf24; font-weight: 700; font-size: 1.05rem;">
+              <span>🏆</span> <span>OFFICIAL RAFFLE WINNERS</span>
+            </div>
+            <span class="badge" style="background: rgba(234,179,8,0.25); color: #fbbf24; border: 1px solid rgba(234,179,8,0.5); font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 4px;">Verified Result</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            ${formattedWinners}
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  // 2. Build Spot Tiers / Prizes Box
+  let spotTiersHtml = '';
+  if (g.spot_tiers && g.spot_tiers.length > 0) {
+    const tiersBadges = g.spot_tiers.map(t => `<span class="badge" style="background: rgba(99,102,241,0.15); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.3); padding: 4px 10px; border-radius: var(--radius-sm); font-size: 0.85rem; font-weight: 600;">🏷️ ${escapeHtml(t.name || 'Tier')}: <b>${t.count || 1} spots</b></span>`).join(' ');
+    spotTiersHtml = `
+      <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 0.85rem 1rem;">
+        <div style="font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 6px;">Spot Allocation / Prize Tiers</div>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px;">${tiersBadges}</div>
+      </div>
+    `;
+  } else if (g.guaranteed_spots || g.fcfs_spots) {
+    const gtd = g.guaranteed_spots || 0;
+    const fcfs = g.fcfs_spots || 0;
+    spotTiersHtml = `
+      <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 0.85rem 1rem;">
+        <div style="font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 6px;">Spot Allocation</div>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+          <span class="badge" style="background: rgba(234,179,8,0.15); color: #fbbf24; border: 1px solid rgba(234,179,8,0.3); padding: 4px 10px; border-radius: var(--radius-sm); font-size: 0.85rem; font-weight: 600;">🌟 Guaranteed: <b>${gtd} spots</b></span>
+          <span class="badge" style="background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.3); padding: 4px 10px; border-radius: var(--radius-sm); font-size: 0.85rem; font-weight: 600;">⚡ FCFS: <b>${fcfs} spots</b></span>
+        </div>
+      </div>
+    `;
+  }
+
+  // 3. Build task requirements list for public view
   const reqs = [];
   if (g.tasks?.twitter_follow) reqs.push(`<li>🐦 Follow <b>@${escapeHtml(g.tasks.twitter_follow)}</b></li>`);
   if (g.tasks?.twitter_like) reqs.push(`<li>❤️ Like Tweet</li>`);
@@ -1287,30 +1430,35 @@ async function openDetailModal(giveawayId) {
 
   content.innerHTML = `
     <div style="display: flex; flex-direction: column; gap: 1rem;">
+      ${winnersBoxHtml}
+
       ${g.banner_url ? `<img src="${escapeHtml(g.banner_url)}" style="width: 100%; height: 220px; object-fit: cover; border-radius: var(--radius-md);" alt="banner">` : ''}
       <div style="font-size: 0.98rem; color: var(--text-main); line-height: 1.6; background: rgba(0,0,0,0.25); padding: 1rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">${formatMarkdownDescription(g.description)} ${renderSocialButtonsHTML(g.social_links)}</div>
       
       <div class="g-badge-container">
         <span class="g-badge g-badge-timer">🌐 Network: ${escapeHtml(g.network || 'Ethereum')}</span>
-        ${isEnded ? '<span class="g-badge g-badge-ended">Ended</span>' : `<span class="g-badge g-badge-timer">Ends ${getTimeLeftString(g.ends_at)}</span>`}
+        ${isEnded ? '<span class="g-badge g-badge-ended">🔒 Ended</span>' : `<span class="g-badge g-badge-timer">⏳ Ends ${getTimeLeftString(g.ends_at)}</span>`}
+        <span class="g-badge" style="background: rgba(99,102,241,0.2); color: #818cf8; border: 1px solid rgba(99,102,241,0.3);">👑 Hosted by ${escapeHtml(g.hosted_by || 'Admin')}</span>
       </div>
 
-      <div class="g-tasks-summary" style="margin-top: 10px;">
+      ${spotTiersHtml}
+
+      <div class="g-tasks-summary">
         <div class="g-tasks-title">Giveaway Task Requirements</div>
         <ul class="g-task-list" style="font-size: 0.9rem; gap: 6px;">
           ${reqs.length ? reqs.join('') : '<li>No extra requirements specified.</li>'}
         </ul>
       </div>
 
-      <div style="display: flex; justify-content: space-between; align-items: center; pt-2;">
-        <button class="btn btn-outline btn-sm" onclick="copyShareLink('${g.id}')">🔗 Share Giveaway Link</button>
-        ${!currentUser ? '<span style="font-size: 0.8rem; color: var(--text-muted);">Sign in with Discord to participate!</span>' : ''}
+      <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 4px; flex-wrap: wrap; gap: 8px;">
+        <button class="btn btn-outline btn-sm" onclick="copyShareLink('${g.id}')">📋 Copy Share Link</button>
+        ${!currentUser ? '<span style="font-size: 0.82rem; color: var(--text-muted);">Sign in with Discord to view or submit profile!</span>' : ''}
       </div>
     </div>
   `;
 
   // Public participants list (visible to everyone)
-  await loadPublicParticipants(giveawayId, g.network || 'Ethereum');
+  await loadPublicParticipants(giveawayId, g.network || 'Ethereum', g.winners_text || '');
 
   // Admin Box setup
   const adminBox = document.getElementById('adminControlBox');
@@ -1356,15 +1504,19 @@ function getWalletFieldForNetwork(network) {
 }
 
 // Load Public Participants (visible to everyone)
-async function loadPublicParticipants(giveawayId, network) {
+async function loadPublicParticipants(giveawayId, network, winnersText = '') {
   const tbody = document.getElementById('publicParticipantsBody');
+  const countBadge = document.getElementById('publicParticipantCountBadge');
+  const searchInput = document.getElementById('publicParticipantSearch');
   const walletHeader = document.getElementById('publicWalletHeader');
+  if (searchInput) searchInput.value = '';
   if (!tbody) return;
 
   const walletInfo = getWalletFieldForNetwork(network);
+  currentPublicWalletField = walletInfo.field;
   if (walletHeader) walletHeader.innerText = walletInfo.label;
 
-  tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color: var(--text-muted); padding: 1rem;">Loading participants...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color: var(--text-muted); padding: 1rem;">Loading participants...</td></tr>';
 
   try {
     let entries = [];
@@ -1388,26 +1540,142 @@ async function loadPublicParticipants(giveawayId, network) {
       }
     }
 
-    if (!entries || entries.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">No participants yet.</td></tr>';
-      return;
-    }
+    allPublicEntries = (entries || []).filter(Boolean);
+    if (countBadge) countBadge.innerText = allPublicEntries.length;
 
-    tbody.innerHTML = entries.map(e => {
-      if (!e) return '';
-      const wallet = e[walletInfo.field] || 'Not provided';
-      return `
-        <tr>
-          <td><b>${escapeHtml(e.username || e.display_name || 'User')}</b></td>
-          <td><code style="font-size: 0.8rem;">${escapeHtml(e.user_id || 'N/A')}</code></td>
-          <td><code style="font-size: 0.8rem;">${escapeHtml(wallet)}</code></td>
-        </tr>
-      `;
-    }).join('');
+    renderPublicParticipantsTable(allPublicEntries, currentPublicWalletField, winnersText);
   } catch (err) {
     console.error('Error loading public participants:', err);
-    tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: #ff4757;">Failed to load participants.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #ff4757;">Failed to load participants.</td></tr>';
   }
+}
+
+function renderPublicParticipantsTable(entries, walletField, winnersText = '') {
+  const tbody = document.getElementById('publicParticipantsBody');
+  if (!tbody) return;
+
+  if (!entries || entries.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">No participants found.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = entries.map(e => {
+    if (!e) return '';
+    const wallet = e[walletField] || e.evm_wallet || e.solana_wallet || 'Not provided';
+    const uid = String(e.user_id || '');
+    const uname = e.username || e.display_name || 'User';
+
+    // Check winner status from winner_type or winnersText
+    let statusBadge = '<span style="color: var(--text-muted); font-size: 0.8rem;">Participant</span>';
+    const wType = String(e.winner_type || '').toLowerCase();
+    const isWinnerMentioned = winnersText && (winnersText.includes(uid) || (uname && winnersText.toLowerCase().includes(uname.toLowerCase())));
+
+    if (wType.includes('gtd') || wType.includes('guaranteed') || (winnersText.includes('Guaranteed') && isWinnerMentioned)) {
+      statusBadge = '<span class="badge" style="background: rgba(234,179,8,0.2); color: #fbbf24; border: 1px solid rgba(234,179,8,0.4); font-size: 0.78rem; font-weight: 700; padding: 2px 8px; border-radius: 4px;">🌟 Guaranteed Winner</span>';
+    } else if (wType.includes('fcfs') || (winnersText.includes('FCFS') && isWinnerMentioned)) {
+      statusBadge = '<span class="badge" style="background: rgba(168,85,247,0.2); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); font-size: 0.78rem; font-weight: 700; padding: 2px 8px; border-radius: 4px;">⚡ FCFS Winner</span>';
+    } else if (wType || isWinnerMentioned) {
+      statusBadge = '<span class="badge" style="background: rgba(34,197,94,0.2); color: #4ade80; border: 1px solid rgba(34,197,94,0.4); font-size: 0.78rem; font-weight: 700; padding: 2px 8px; border-radius: 4px;">🏆 Winner</span>';
+    }
+
+    return `
+      <tr>
+        <td><b>${escapeHtml(uname)}</b></td>
+        <td><code style="font-size: 0.8rem; color: var(--text-muted);">${escapeHtml(uid || 'N/A')}</code></td>
+        <td><code style="font-size: 0.8rem; color: #60a5fa;">${escapeHtml(wallet)}</code></td>
+        <td>${statusBadge}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function filterPublicParticipants(query) {
+  const q = (query || '').toLowerCase().trim();
+  if (!q) {
+    renderPublicParticipantsTable(allPublicEntries, currentPublicWalletField, currentDetailWinnersText);
+    return;
+  }
+  const filtered = allPublicEntries.filter(e => {
+    if (!e) return false;
+    const uname = String(e.username || e.display_name || '').toLowerCase();
+    const uid = String(e.user_id || '').toLowerCase();
+    const wallet = String(e[currentPublicWalletField] || e.evm_wallet || e.solana_wallet || '').toLowerCase();
+    const wType = String(e.winner_type || '').toLowerCase();
+    return uname.includes(q) || uid.includes(q) || wallet.includes(q) || wType.includes(q);
+  });
+  renderPublicParticipantsTable(filtered, currentPublicWalletField, currentDetailWinnersText);
+}
+
+// Deep Linking: Direct Giveaway URL detector
+async function checkUrlDirectGiveaway() {
+  const urlParams = new URLSearchParams(window.location.search);
+  let gId = urlParams.get('giveaway') || urlParams.get('id') || urlParams.get('g');
+
+  if (!gId) {
+    const pathMatch = window.location.pathname.match(/^\/(?:giveaway|g)\/([^\/]+)/i);
+    if (pathMatch) {
+      gId = pathMatch[1];
+    }
+  }
+
+  if (gId) {
+    gId = gId.trim();
+    await openDirectGiveawayView(gId);
+  }
+}
+
+async function openDirectGiveawayView(giveawayId) {
+  try {
+    let g = currentGiveaways.find(x => x.id === giveawayId);
+    if (!g) {
+      // Fetch directly from API or Firebase
+      const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        g = data.giveaway || data;
+      }
+      if (!g) {
+        g = await firebaseGet('giveaways/' + giveawayId);
+      }
+      if (g && g.id) {
+        currentGiveaways.push(g);
+      }
+    }
+
+    if (g) {
+      // Show Direct Giveaway Banner on Main Page
+      const banner = document.getElementById('singleGiveawayBanner');
+      const bannerTitle = document.getElementById('singleGiveawayBannerTitle');
+      const openBtn = document.getElementById('singleGiveawayOpenBtn');
+      if (banner && bannerTitle) {
+        bannerTitle.innerText = g.title || 'Giveaway';
+        banner.style.display = 'flex';
+        if (openBtn) {
+          openBtn.onclick = () => openDetailModal(g.id);
+        }
+      }
+
+      // Render grid highlighting this giveaway
+      renderGiveaways(g);
+
+      // Automatically open the full detail modal with participants & winners!
+      await openDetailModal(g.id);
+    } else {
+      showToast('Giveaway not found or has been removed.', 'error');
+    }
+  } catch (err) {
+    console.error('Direct giveaway view error:', err);
+  }
+}
+
+function showAllGiveawaysView() {
+  const banner = document.getElementById('singleGiveawayBanner');
+  if (banner) banner.style.display = 'none';
+  // Clean URL query without page reload
+  if (window.history && window.history.pushState) {
+    window.history.pushState({}, document.title, window.location.pathname);
+  }
+  renderGiveaways();
 }
 
 // Load Participants into Admin Table with Winner Highlighting
