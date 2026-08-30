@@ -1368,28 +1368,7 @@ async function openDetailModal(giveawayId) {
   const now = Math.floor(Date.now() / 1000);
   const isEnded = !g.is_active || g.ends_at <= now;
 
-  // 1. Build Winners Box HTML (if giveaway has ended and winners exist)
-  let winnersBoxHtml = '';
-  if (isEnded && g.winners_text && g.winners_text.trim()) {
-    const formattedWinners = formatWinnersForWeb(g.winners_text);
-    if (formattedWinners) {
-      winnersBoxHtml = `
-        <div style="background: linear-gradient(135deg, rgba(234, 179, 8, 0.15), rgba(245, 158, 11, 0.05)); border: 1px solid rgba(234, 179, 8, 0.4); border-radius: var(--radius-md); padding: 1.25rem; margin-bottom: 1rem;">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 6px;">
-            <div style="display: flex; align-items: center; gap: 8px; color: #fbbf24; font-weight: 700; font-size: 1.05rem;">
-              <span>🏆</span> <span>OFFICIAL RAFFLE WINNERS</span>
-            </div>
-            <span class="badge" style="background: rgba(234,179,8,0.25); color: #fbbf24; border: 1px solid rgba(234,179,8,0.5); font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 4px;">Verified Result</span>
-          </div>
-          <div style="display: flex; flex-direction: column; gap: 6px;">
-            ${formattedWinners}
-          </div>
-        </div>
-      `;
-    }
-  }
-
-  // 2. Build Spot Tiers / Prizes Box
+  // 1. Build Spot Tiers / Prizes Box
   let spotTiersHtml = '';
   if (g.spot_tiers && g.spot_tiers.length > 0) {
     const tiersBadges = g.spot_tiers.map(t => `<span class="badge" style="background: rgba(99,102,241,0.15); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.3); padding: 4px 10px; border-radius: var(--radius-sm); font-size: 0.85rem; font-weight: 600;">🏷️ ${escapeHtml(t.name || 'Tier')}: <b>${t.count || 1} spots</b></span>`).join(' ');
@@ -1413,7 +1392,7 @@ async function openDetailModal(giveawayId) {
     `;
   }
 
-  // 3. Build task requirements list for public view
+  // 2. Build task requirements list for public view
   const reqs = [];
   if (g.tasks?.twitter_follow) reqs.push(`<li>🐦 Follow <b>@${escapeHtml(g.tasks.twitter_follow)}</b></li>`);
   if (g.tasks?.twitter_like) reqs.push(`<li>❤️ Like Tweet</li>`);
@@ -1430,9 +1409,7 @@ async function openDetailModal(giveawayId) {
 
   content.innerHTML = `
     <div style="display: flex; flex-direction: column; gap: 1rem;">
-      ${winnersBoxHtml}
-
-      ${g.banner_url ? `<img src="${escapeHtml(g.banner_url)}" style="width: 100%; height: 220px; object-fit: cover; border-radius: var(--radius-md);" alt="banner">` : ''}
+      ${g.banner_url ? `<img src="${escapeHtml(g.banner_url)}" style="width: 100%; height: 220px; object-fit: cover; border-radius: var(--radius-md);" onerror="this.style.display='none'" alt="banner">` : ''}
       <div style="font-size: 0.98rem; color: var(--text-main); line-height: 1.6; background: rgba(0,0,0,0.25); padding: 1rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">${formatMarkdownDescription(g.description)} ${renderSocialButtonsHTML(g.social_links)}</div>
       
       <div class="g-badge-container">
