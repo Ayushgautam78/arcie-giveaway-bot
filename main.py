@@ -4586,76 +4586,86 @@ async def resolve_giveaway_by_identifier(identifier: str) -> Optional[dict]:
     return None
 
 
+_giveaway_locks: Dict[str, asyncio.Lock] = {}
+
+def get_giveaway_lock(g_id: str) -> asyncio.Lock:
+    if g_id not in _giveaway_locks:
+        _giveaway_locks[g_id] = asyncio.Lock()
+    return _giveaway_locks[g_id]
+
+
 async def update_giveaway_discord_message(giveaway_id: str):
-    g = await resolve_giveaway_by_identifier(giveaway_id)
-    if not g or not isinstance(g, dict):
-        print(f"[UPDATE EMBED FAIL] Giveaway '{giveaway_id}' not found in memory or Cloud DB.")
-        return
-    giveaway_id = g.get("id", giveaway_id)
-
-    # Resolve target channel
-    ch_id_clean = re.sub(r'[^0-9]', '', str(g.get("channel_id", "")))
-    channel = None
-    if ch_id_clean:
-        try:
-            channel = bot.get_channel(int(ch_id_clean))
-            if not channel:
-                channel = await bot.fetch_channel(int(ch_id_clean))
-        except Exception:
-            channel = None
-
-    if not channel and bot.guilds:
-        for guild in bot.guilds:
-            channel = guild.system_channel or (guild.text_channels[0] if guild.text_channels else None)
-            if channel:
-                break
-
-    if not channel:
-        print(f"[UPDATE EMBED FAIL] Could not find valid channel for giveaway '{giveaway_id}'")
-        return
-
-    port = os.getenv("PORT", "2025")
-    domain = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
-    embed, file_to_send = build_giveaway_embed(g)
-    view = GiveawayView(giveaway_id, domain)
-    mention_text = format_role_mention(g.get("mention_role")) if g.get("is_active") else None
-
-    msg = None
-    msg_id_clean = re.sub(r'[^0-9]', '', str(g.get("message_id", "")))
-    if msg_id_clean:
-        try:
-            msg = await channel.fetch_message(int(msg_id_clean))
-        except Exception as fe:
-            print(f"[UPDATE EMBED FETCH] Old message {msg_id_clean} not found in #{channel.name}: {fe}")
-            msg = None
-
-    if msg:
-        try:
-            kwargs = {"content": mention_text, "embed": embed, "view": view}
-            if file_to_send:
-                kwargs["attachments"] = [file_to_send]
-            await msg.edit(**kwargs)
-            print(f"[UPDATE EMBED SUCCESS] In-place edited Discord embed for '{g.get('title')}' in #{channel.name} (preserved sent timestamp)")
+    lock = get_giveaway_lock(giveaway_id)
+    async with lock:
+        g = await resolve_giveaway_by_identifier(giveaway_id)
+        if not g or not isinstance(g, dict):
+            print(f"[UPDATE EMBED FAIL] Giveaway '{giveaway_id}' not found in memory or Cloud DB.")
             return
-        except Exception as edit_err:
-            print(f"[UPDATE EMBED EDIT FAIL] {edit_err}, re-posting fresh message...")
+        giveaway_id = g.get("id", giveaway_id)
 
-    # Post fresh message if old message was missing or failed to edit
-    try:
-        if file_to_send:
-            new_msg = await channel.send(content=mention_text, embed=embed, view=view, file=file_to_send)
-        else:
-            new_msg = await channel.send(content=mention_text, embed=embed, view=view)
+        # Resolve target channel
+        ch_id_clean = re.sub(r'[^0-9]', '', str(g.get("channel_id", "")))
+        channel = None
+        if ch_id_clean:
+            try:
+                channel = bot.get_channel(int(ch_id_clean))
+                if not channel:
+                    channel = await bot.fetch_channel(int(ch_id_clean))
+            except Exception:
+                channel = None
 
-        g["message_id"] = str(new_msg.id)
-        g["channel_id"] = str(channel.id)
-        giveaways[giveaway_id] = g
-        save_giveaways()
-        await firebase_put(f"giveaways/{giveaway_id}", g)
-        bot.add_view(view, message_id=new_msg.id)
-        print(f"[UPDATE EMBED POST SUCCESS] Posted fresh embed for '{g.get('title')}' in #{channel.name} ({new_msg.id})")
-    except Exception as send_err:
-        print(f"[UPDATE EMBED POST ERROR] {send_err}")
+        if not channel and bot.guilds:
+            for guild in bot.guilds:
+                channel = guild.system_channel or (guild.text_channels[0] if guild.text_channels else None)
+                if channel:
+                    break
+
+        if not channel:
+            print(f"[UPDATE EMBED FAIL] Could not find valid channel for giveaway '{giveaway_id}'")
+            return
+
+        port = os.getenv("PORT", "2025")
+        domain = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
+        embed, file_to_send = build_giveaway_embed(g)
+        view = GiveawayView(giveaway_id, domain)
+        mention_text = format_role_mention(g.get("mention_role")) if g.get("is_active") else None
+
+        msg = None
+        msg_id_clean = re.sub(r'[^0-9]', '', str(g.get("message_id", "")))
+        if msg_id_clean:
+            try:
+                msg = await channel.fetch_message(int(msg_id_clean))
+            except Exception as fe:
+                print(f"[UPDATE EMBED FETCH] Old message {msg_id_clean} not found in #{channel.name}: {fe}")
+                msg = None
+
+        if msg:
+            try:
+                kwargs = {"content": mention_text, "embed": embed, "view": view}
+                if file_to_send:
+                    kwargs["attachments"] = [file_to_send]
+                await msg.edit(**kwargs)
+                print(f"[UPDATE EMBED SUCCESS] In-place edited Discord embed for '{g.get('title')}' in #{channel.name} (preserved sent timestamp)")
+                return
+            except Exception as edit_err:
+                print(f"[UPDATE EMBED EDIT FAIL] {edit_err}, re-posting fresh message...")
+
+        # Post fresh message if old message was missing or failed to edit
+        try:
+            if file_to_send:
+                new_msg = await channel.send(content=mention_text, embed=embed, view=view, file=file_to_send)
+            else:
+                new_msg = await channel.send(content=mention_text, embed=embed, view=view)
+
+            g["message_id"] = str(new_msg.id)
+            g["channel_id"] = str(channel.id)
+            giveaways[giveaway_id] = g
+            save_giveaways()
+            await firebase_put(f"giveaways/{giveaway_id}", g)
+            bot.add_view(view, message_id=new_msg.id)
+            print(f"[UPDATE EMBED POST SUCCESS] Posted fresh embed for '{g.get('title')}' in #{channel.name} ({new_msg.id})")
+        except Exception as send_err:
+            print(f"[UPDATE EMBED POST ERROR] {send_err}")
 
 
 # ======================================================================== #
@@ -6228,6 +6238,7 @@ async def set_custom_winners_cmd(interaction: discord.Interaction, giveaway_id: 
     ]
 
     g["is_active"] = False
+    g["winners_drawn"] = True
     g["winners_text"] = "\n".join(winner_summary_lines)
 
     save_giveaways()
@@ -6235,7 +6246,7 @@ async def set_custom_winners_cmd(interaction: discord.Interaction, giveaway_id: 
         await firebase_put(f"giveaways/{g_id}", g)
 
     await update_giveaway_discord_message(g_id)
-    await announce_winners_in_discord(g_id, winner_summary_lines)
+    await announce_winners_in_discord(g_id, winner_summary_lines, force=True)
 
     await interaction.followup.send(
         f"✅ **Fabricated / Custom Winners Set & Announced!**\n\n"
@@ -6904,253 +6915,306 @@ def format_role_mention(mention_str) -> Optional[str]:
     return clean
 
 
-async def announce_winners_in_discord(g_id: str, winner_summary_lines: list):
+_drawing_giveaways: Set[str] = set()
+_sync_giveaways_lock = asyncio.Lock()
+_bg_poster_task_started = False
+
+
+async def announce_winners_in_discord(g_id: str, winner_summary_lines: list, force: bool = False):
     """Post an official Winners Announcement Embed directly to the Discord giveaway or specified winner channel."""
-    g = giveaways.get(g_id)
-    if not g:
-        g = await firebase_get(f"giveaways/{g_id}")
-        if g:
-            giveaways[g_id] = g
-    if not g:
-        print(f"[ANNOUNCE ERROR] Giveaway '{g_id}' not found")
-        return
+    lock = get_giveaway_lock(g_id)
+    async with lock:
+        g = giveaways.get(g_id)
+        if not g:
+            g = await firebase_get(f"giveaways/{g_id}")
+            if g:
+                giveaways[g_id] = g
+        if not g:
+            print(f"[ANNOUNCE ERROR] Giveaway '{g_id}' not found")
+            return
 
-    winner_summary_lines = [line for line in winner_summary_lines if line and line.strip()]
-    if not winner_summary_lines:
-        print(f"[ANNOUNCE ERROR] No winner summary lines for giveaway '{g_id}'")
-        return
+        # Deduplication check: Do not announce winners twice for the same giveaway unless force is True
+        if not force and g.get("winners_announced") and g.get("winners_announcement_message_id"):
+            print(f"[ANNOUNCE SKIPPED] Winners already announced for giveaway '{g_id}' (msg: {g.get('winners_announcement_message_id')})")
+            return
 
-    channel = None
-    target_ch_str = str(g.get("winner_channel_id", "")).strip() or str(g.get("channel_id", "")).strip()
+        winner_summary_lines = [line for line in winner_summary_lines if line and line.strip()]
+        if not winner_summary_lines:
+            print(f"[ANNOUNCE ERROR] No winner summary lines for giveaway '{g_id}'")
+            return
 
-    # Clean channel ID string
-    clean_id = re.sub(r'[^0-9]', '', target_ch_str)
-    if clean_id:
-        try:
-            channel_id = int(clean_id)
-            channel = bot.get_channel(channel_id)
-            if not channel:
-                channel = await bot.fetch_channel(channel_id)
-        except Exception as e:
-            print(f"[ANNOUNCE CH FETCH ERROR] {e}")
+        channel = None
+        target_ch_str = str(g.get("winner_channel_id", "")).strip() or str(g.get("channel_id", "")).strip()
 
-    # Fallback 1: Try giveaway main channel_id if winner_channel_id failed
-    if not channel and g.get("channel_id"):
-        main_ch_id = re.sub(r'[^0-9]', '', str(g["channel_id"]))
-        if main_ch_id:
+        # Clean channel ID string
+        clean_id = re.sub(r'[^0-9]', '', target_ch_str)
+        if clean_id:
             try:
-                channel = bot.get_channel(int(main_ch_id))
+                channel_id = int(clean_id)
+                channel = bot.get_channel(channel_id)
                 if not channel:
-                    channel = await bot.fetch_channel(int(main_ch_id))
-            except Exception:
-                pass
+                    channel = await bot.fetch_channel(channel_id)
+            except Exception as e:
+                print(f"[ANNOUNCE CH FETCH ERROR] {e}")
 
-    # Fallback 2: Search guild channels by name or use system channel
-    if not channel and bot.guilds:
-        for guild in bot.guilds:
-            for ch in guild.text_channels:
-                if ch.name.lower() == target_ch_str.lower().strip('#'):
-                    channel = ch
-                    break
-            if channel: break
-
-            channel = guild.system_channel or (guild.text_channels[0] if guild.text_channels else None)
-            if channel: break
-
-    if not channel:
-        print(f"[ANNOUNCE ERROR] Could not find any valid channel to announce winners for giveaway '{g_id}'")
-        return
-
-    try:
-        title_text = g.get('title', 'Giveaway')
-        winner_block = "\n".join(winner_summary_lines)
-
-        # Format winner user mentions OUTSIDE & ABOVE the embed as plain message content (DO NOT tag any roles)
-        content_parts = [
-            f"🎉 **Raffle Winners Announced for {title_text}!**",
-            winner_block
-        ]
-
-        content_text = "\n\n".join(content_parts)
-
-        embed = discord.Embed(
-            title=f"🏆 Winners Announced — {title_text}",
-            description=f"🎉 **Congratulations to all selected winners!**",
-            color=discord.Color.gold()
-        )
-
-        # Add separate fields for each spot category (e.g. Guaranteed, FCFS, Tier 1, etc.)
-        for line in winner_summary_lines:
-            if ":" in line:
-                spot_part, winners_part = line.split(":", 1)
-                clean_spot_name = re.sub(r'[*_`]', '', spot_part).strip()
-                embed.add_field(
-                    name=f"🎖️ {clean_spot_name}",
-                    value=winners_part.strip() or "None",
-                    inline=False
-                )
-        banner_url = str(g.get("banner_url", "")).strip()
-        file_to_send = None
-        if banner_url:
-            if banner_url.startswith("data:image"):
+        # Fallback 1: Try giveaway main channel_id if winner_channel_id failed
+        if not channel and g.get("channel_id"):
+            main_ch_id = re.sub(r'[^0-9]', '', str(g["channel_id"]))
+            if main_ch_id:
                 try:
-                    header, encoded = banner_url.split(",", 1)
-                    img_bytes = base64.b64decode(encoded)
-                    fp = io.BytesIO(img_bytes)
-                    file_to_send = discord.File(fp, filename="banner.png")
-                    embed.set_image(url="attachment://banner.png")
+                    channel = bot.get_channel(int(main_ch_id))
+                    if not channel:
+                        channel = await bot.fetch_channel(int(main_ch_id))
                 except Exception:
                     pass
+
+        # Fallback 2: Search guild channels by name or use system channel
+        if not channel and bot.guilds:
+            for guild in bot.guilds:
+                for ch in guild.text_channels:
+                    if ch.name.lower() == target_ch_str.lower().strip('#'):
+                        channel = ch
+                        break
+                if channel: break
+
+                channel = guild.system_channel or (guild.text_channels[0] if guild.text_channels else None)
+                if channel: break
+
+        if not channel:
+            print(f"[ANNOUNCE ERROR] Could not find any valid channel to announce winners for giveaway '{g_id}'")
+            return
+
+        try:
+            title_text = g.get('title', 'Giveaway')
+            winner_block = "\n".join(winner_summary_lines)
+
+            # Format winner user mentions OUTSIDE & ABOVE the embed as plain message content (DO NOT tag any roles)
+            content_parts = [
+                f"🎉 **Raffle Winners Announced for {title_text}!**",
+                winner_block
+            ]
+
+            content_text = "\n\n".join(content_parts)
+
+            embed = discord.Embed(
+                title=f"🏆 Winners Announced — {title_text}",
+                description=f"🎉 **Congratulations to all selected winners!**",
+                color=discord.Color.gold()
+            )
+
+            # Add separate fields for each spot category (e.g. Guaranteed, FCFS, Tier 1, etc.)
+            for line in winner_summary_lines:
+                if ":" in line:
+                    spot_part, winners_part = line.split(":", 1)
+                    clean_spot_name = re.sub(r'[*_`]', '', spot_part).strip()
+                    embed.add_field(
+                        name=f"🎖️ {clean_spot_name}",
+                        value=winners_part.strip() or "None",
+                        inline=False
+                    )
+            banner_url = str(g.get("banner_url", "")).strip()
+            file_to_send = None
+            if banner_url:
+                if banner_url.startswith("data:image"):
+                    try:
+                        header, encoded = banner_url.split(",", 1)
+                        img_bytes = base64.b64decode(encoded)
+                        fp = io.BytesIO(img_bytes)
+                        file_to_send = discord.File(fp, filename="banner.png")
+                        embed.set_image(url="attachment://banner.png")
+                    except Exception:
+                        pass
+                else:
+                    base_dir = os.path.dirname(os.path.abspath(__file__))
+                    uploads_dir = os.path.join(base_dir, "static", "uploads")
+                    filename = os.path.basename(banner_url.split("?")[0])
+                    local_path = os.path.join(uploads_dir, filename)
+
+                    if filename and os.path.exists(local_path) and os.path.isfile(local_path):
+                        file_to_send = discord.File(local_path, filename=filename)
+                        embed.set_image(url=f"attachment://{filename}")
+                    elif (banner_url.startswith("http://") or banner_url.startswith("https://")) and not ("localhost" in banner_url or "127.0.0.1" in banner_url):
+                        embed.set_image(url=banner_url)
+
+            embed.set_footer(text="Powered by Arcie Bot")
+
+            if file_to_send:
+                sent_msg = await channel.send(content=content_text, embed=embed, file=file_to_send)
             else:
-                base_dir = os.path.dirname(os.path.abspath(__file__))
-                uploads_dir = os.path.join(base_dir, "static", "uploads")
-                filename = os.path.basename(banner_url.split("?")[0])
-                local_path = os.path.join(uploads_dir, filename)
+                sent_msg = await channel.send(content=content_text, embed=embed)
+            
+            g["winners_announced"] = True
+            g["winners_announcement_message_id"] = str(sent_msg.id)
+            g["winners_announced_at"] = int(time.time())
+            giveaways[g_id] = g
+            save_giveaways()
+            if FIREBASE_URL:
+                await firebase_put(f"giveaways/{g_id}", g)
 
-                if filename and os.path.exists(local_path) and os.path.isfile(local_path):
-                    file_to_send = discord.File(local_path, filename=filename)
-                    embed.set_image(url=f"attachment://{filename}")
-                elif (banner_url.startswith("http://") or banner_url.startswith("https://")) and not ("localhost" in banner_url or "127.0.0.1" in banner_url):
-                    embed.set_image(url=banner_url)
-
-        embed.set_footer(text="Powered by Arcie Bot")
-
-        if file_to_send:
-            await channel.send(content=content_text, embed=embed, file=file_to_send)
-        else:
-            await channel.send(content=content_text, embed=embed)
-        print(f"[WINNERS ANNOUNCED] Posted winners announcement for '{title_text}' in #{channel.name}")
-    except Exception as e:
-        print(f"[ANNOUNCE WINNERS ERROR] {e}")
+            print(f"[WINNERS ANNOUNCED] Posted winners announcement for '{title_text}' in #{channel.name} ({sent_msg.id})")
+        except Exception as e:
+            print(f"[ANNOUNCE WINNERS ERROR] {e}")
 
 
 async def sync_and_post_giveaways():
     """Sync Discord active giveaways & check for expired giveaways."""
-    port = os.getenv("PORT", "2025")
-    web_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
+    if _sync_giveaways_lock.locked():
+        return
+    async with _sync_giveaways_lock:
+        port = os.getenv("PORT", "2025")
+        web_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
 
-    # 1. Automatically purge any giveaways older than 40 days
-    try:
-        await cleanup_expired_giveaways_40_days()
-    except Exception as c_err:
-        print(f"[AUTO-PURGE 40 DAYS ERROR] {c_err}")
-
-    if FIREBASE_URL:
-        # 2. Sync Giveaways from Firebase & Post Missing Embeds
+        # 1. Automatically purge any giveaways older than 40 days
         try:
-            fb_giveaways = await firebase_get("giveaways")
-            if fb_giveaways and isinstance(fb_giveaways, dict):
-                # Clean up any deleted giveaways from Firebase payload
-                for del_id in list(deleted_giveaways):
-                    if del_id in fb_giveaways:
-                        del fb_giveaways[del_id]
-                        asyncio.create_task(firebase_put(f"giveaways/{del_id}", None))
-                        asyncio.create_task(firebase_put(f"giveaway_entries/{del_id}", None))
+            await cleanup_expired_giveaways_40_days()
+        except Exception as c_err:
+            print(f"[AUTO-PURGE 40 DAYS ERROR] {c_err}")
 
-                for g_id, g_data in fb_giveaways.items():
-                    if not isinstance(g_data, dict) or g_id in deleted_giveaways:
-                        continue
-                    # Preserve local banner_url if Firebase has empty banner_url
-                    if not g_data.get("banner_url") and giveaways.get(g_id, {}).get("banner_url"):
-                        g_data["banner_url"] = giveaways[g_id]["banner_url"]
-                    # Convert any base64 banner images from Firebase into local files
-                    banner = str(g_data.get("banner_url", "")).strip()
-                    if banner.startswith("data:image"):
-                        save_banner_image_if_data_url(g_data)
-                        # Update Firebase with local file path instead of base64
-                        try:
-                            await firebase_put(f"giveaways/{g_id}/banner_url", g_data.get("banner_url", ""))
-                        except Exception:
-                            pass
-                    giveaways[g_id] = g_data
-                    
-                    # Check if active giveaway needs Discord announcement embed posted or restored
-                    if g_data.get("is_active") and not g_data.get("message_id"):
-                        await update_giveaway_discord_message(g_id)
+        drawn_this_pass = set()
 
-                    # Check for expired giveaways and AUTOMATICALLY draw winners & post Winners Announcement Embed
-                    now = int(time.time())
-                    ends_at = int(g_data.get("ends_at", 0))
-                    if g_data.get("is_active") and ends_at > 0 and now >= ends_at:
-                        print(f"[AUTO-DRAW] Giveaway '{g_data.get('title')}' ({g_id}) expired. Drawing winners automatically...")
-                        await auto_draw_giveaway_winners(g_id)
-        except Exception as ge:
-            print(f"[GIVEAWAY SYNC ERROR] {ge}")
-
-    # 3. LOCAL expiry check — catch ALL expired giveaways in memory (even if Firebase fetch failed)
-    now = int(time.time())
-    for g_id, g_data in list(giveaways.items()):
-        if g_id in deleted_giveaways or not isinstance(g_data, dict):
-            continue
-        ends_at = int(g_data.get("ends_at", 0))
-        if g_data.get("is_active") and ends_at > 0 and now >= ends_at:
-            print(f"[AUTO-DRAW LOCAL] Giveaway '{g_data.get('title')}' ({g_id}) expired. Drawing winners & posting results NOW...")
+        if FIREBASE_URL:
+            # 2. Sync Giveaways from Firebase & Post Missing Embeds
             try:
-                await auto_draw_giveaway_winners(g_id)
-            except Exception as ad_err:
-                print(f"[AUTO-DRAW ERROR] {g_id}: {ad_err}")
+                fb_giveaways = await firebase_get("giveaways")
+                if fb_giveaways and isinstance(fb_giveaways, dict):
+                    # Clean up any deleted giveaways from Firebase payload
+                    for del_id in list(deleted_giveaways):
+                        if del_id in fb_giveaways:
+                            del fb_giveaways[del_id]
+                            asyncio.create_task(firebase_put(f"giveaways/{del_id}", None))
+                            asyncio.create_task(firebase_put(f"giveaway_entries/{del_id}", None))
+
+                    for g_id, g_data in fb_giveaways.items():
+                        if not isinstance(g_data, dict) or g_id in deleted_giveaways:
+                            continue
+                        # Preserve local banner_url if Firebase has empty banner_url
+                        if not g_data.get("banner_url") and giveaways.get(g_id, {}).get("banner_url"):
+                            g_data["banner_url"] = giveaways[g_id]["banner_url"]
+                        # Convert any base64 banner images from Firebase into local files
+                        banner = str(g_data.get("banner_url", "")).strip()
+                        if banner.startswith("data:image"):
+                            save_banner_image_if_data_url(g_data)
+                            # Update Firebase with local file path instead of base64
+                            try:
+                                await firebase_put(f"giveaways/{g_id}/banner_url", g_data.get("banner_url", ""))
+                            except Exception:
+                                pass
+
+                        # Preserve local active state if currently drawing in memory
+                        if g_id in _drawing_giveaways:
+                            continue
+
+                        # Preserve local message_id if Firebase has None
+                        if not g_data.get("message_id") and giveaways.get(g_id, {}).get("message_id"):
+                            g_data["message_id"] = giveaways[g_id]["message_id"]
+
+                        # Preserve winners_announced if local has it
+                        if not g_data.get("winners_announced") and giveaways.get(g_id, {}).get("winners_announced"):
+                            g_data["winners_announced"] = True
+                            g_data["winners_announcement_message_id"] = giveaways[g_id].get("winners_announcement_message_id")
+
+                        giveaways[g_id] = g_data
+                        
+                        # Check if active giveaway needs Discord announcement embed posted or restored
+                        if g_data.get("is_active") and not g_data.get("message_id"):
+                            await update_giveaway_discord_message(g_id)
+
+                        # Check for expired giveaways and AUTOMATICALLY draw winners & post Winners Announcement Embed
+                        now = int(time.time())
+                        ends_at = int(g_data.get("ends_at", 0))
+                        if g_data.get("is_active") and ends_at > 0 and now >= ends_at and not g_data.get("winners_drawn") and not g_data.get("winners_announced"):
+                            print(f"[AUTO-DRAW] Giveaway '{g_data.get('title')}' ({g_id}) expired. Drawing winners automatically...")
+                            drawn_this_pass.add(g_id)
+                            await auto_draw_giveaway_winners(g_id)
+            except Exception as ge:
+                print(f"[GIVEAWAY SYNC ERROR] {ge}")
+
+        # 3. LOCAL expiry check — catch ALL expired giveaways in memory (even if Firebase fetch failed)
+        now = int(time.time())
+        for g_id, g_data in list(giveaways.items()):
+            if g_id in deleted_giveaways or not isinstance(g_data, dict) or g_id in drawn_this_pass or g_id in _drawing_giveaways:
+                continue
+            ends_at = int(g_data.get("ends_at", 0))
+            if g_data.get("is_active") and ends_at > 0 and now >= ends_at and not g_data.get("winners_drawn") and not g_data.get("winners_announced"):
+                print(f"[AUTO-DRAW LOCAL] Giveaway '{g_data.get('title')}' ({g_id}) expired. Drawing winners & posting results NOW...")
+                try:
+                    await auto_draw_giveaway_winners(g_id)
+                except Exception as ad_err:
+                    print(f"[AUTO-DRAW ERROR] {g_id}: {ad_err}")
 
 
 async def auto_draw_giveaway_winners(g_id: str):
     """Automatically draw winners for an expired giveaway and post the Winners Announcement to Discord."""
-    # Extra check: Verify giveaway still exists in Cloud DB
-    fb_check = await firebase_get(f"giveaways/{g_id}")
-    if not fb_check:
-        print(f"[AUTO-DRAW SKIPPED] Giveaway '{g_id}' does not exist in Firebase database.")
-        if g_id in giveaways:
-            del giveaways[g_id]
+    if g_id in _drawing_giveaways:
+        return
+    _drawing_giveaways.add(g_id)
+    try:
+        lock = get_giveaway_lock(g_id)
+        async with lock:
+            # Extra check: Verify giveaway still exists in Cloud DB
+            fb_check = await firebase_get(f"giveaways/{g_id}")
+            if not fb_check:
+                print(f"[AUTO-DRAW SKIPPED] Giveaway '{g_id}' does not exist in Firebase database.")
+                if g_id in giveaways:
+                    del giveaways[g_id]
+                    save_giveaways()
+                return
+
+            g = giveaways.get(g_id)
+            if not g or not g.get("is_active"):
+                return
+            if g.get("winners_announced") or g.get("winners_drawn"):
+                return
+
+            # Mark as inactive immediately in memory to prevent concurrent auto-draws
+            g["is_active"] = False
+            g["winners_drawn"] = True
+
+            # Fetch entries from Firebase if missing locally
+            fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
+            if fb_entries and isinstance(fb_entries, (dict, list)):
+                entries = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+                giveaway_entries[g_id] = entries
+            else:
+                entries = giveaway_entries.get(g_id, [])
+
+            if not entries:
+                g["winners_text"] = "No participants joined."
+                save_giveaways()
+                await firebase_put(f"giveaways/{g_id}", g)
+                await update_giveaway_discord_message(g_id)
+                # Still announce "no participants" to the channel once
+                await announce_winners_in_discord(g_id, ["No participants joined."])
+                return
+
+            # Resolve guild for weighted raffle role multipliers
+            guild = None
+            ch_id_str = str(g.get("channel_id", "")).strip()
+            if ch_id_str:
+                try:
+                    ch = bot.get_channel(int(ch_id_str))
+                    if ch:
+                        guild = ch.guild
+                except Exception:
+                    pass
+
+            entries, winner_summary_lines = select_giveaway_winners(entries, g, guild)
+
+            g["winners_text"] = "\n".join(winner_summary_lines)
+
             save_giveaways()
-        return
+            save_giveaway_entries()
+            await firebase_put(f"giveaways/{g_id}", g)
+            await firebase_put(f"giveaway_entries/{g_id}", entries)
 
-    g = giveaways.get(g_id)
-    if not g or not g.get("is_active"):
-        return
+            # 1. Update the original giveaway embed in Discord (marks it as ended)
+            await update_giveaway_discord_message(g_id)
 
-    # Fetch entries from Firebase if missing locally
-    fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
-    if fb_entries and isinstance(fb_entries, (dict, list)):
-        entries = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
-        giveaway_entries[g_id] = entries
-    else:
-        entries = giveaway_entries.get(g_id, [])
-
-    if not entries:
-        g["is_active"] = False
-        g["winners_text"] = "No participants joined."
-        save_giveaways()
-        await firebase_put(f"giveaways/{g_id}", g)
-        await update_giveaway_discord_message(g_id)
-        # Still announce "no participants" to the channel
-        await announce_winners_in_discord(g_id, ["No participants joined."])
-        return
-
-    # Resolve guild for weighted raffle role multipliers
-    guild = None
-    ch_id_str = str(g.get("channel_id", "")).strip()
-    if ch_id_str:
-        try:
-            ch = bot.get_channel(int(ch_id_str))
-            if ch:
-                guild = ch.guild
-        except Exception:
-            pass
-
-    entries, winner_summary_lines = select_giveaway_winners(entries, g, guild)
-
-    g["is_active"] = False
-    g["winners_text"] = "\n".join(winner_summary_lines)
-
-    save_giveaways()
-    save_giveaway_entries()
-    await firebase_put(f"giveaways/{g_id}", g)
-    await firebase_put(f"giveaway_entries/{g_id}", entries)
-
-    # 1. Update the original giveaway embed in Discord (marks it as ended)
-    await update_giveaway_discord_message(g_id)
-
-    # 2. Post official Winners Announcement Embed IMMEDIATELY to Discord channel!
-    await announce_winners_in_discord(g_id, winner_summary_lines)
-    print(f"[AUTO-DRAW COMPLETE] Winners drawn & results posted for '{g.get('title')}' ({g_id})")
+            # 2. Post official Winners Announcement Embed IMMEDIATELY to Discord channel!
+            await announce_winners_in_discord(g_id, winner_summary_lines)
+            print(f"[AUTO-DRAW COMPLETE] Winners drawn & results posted for '{g.get('title')}' ({g_id})")
+    finally:
+        _drawing_giveaways.discard(g_id)
 
 
 async def bg_firebase_poster_task():
@@ -7266,16 +7330,13 @@ async def on_ready():
     except Exception as t_err:
         print(f"[TICKETS RESTORE ERROR] {t_err}")
 
-    # 4. Immediately sync channels & post any pending giveaways
-    try:
-        await sync_and_post_giveaways()
-    except Exception as spe:
-        print(f"[SYNC POST ERROR] {spe}")
+    # 4. Launch continuous background channel sync & giveaway poster loop (ONCE ONLY)
+    global _bg_poster_task_started
+    if not _bg_poster_task_started:
+        _bg_poster_task_started = True
+        bot.loop.create_task(bg_firebase_poster_task())
 
-    # 5. Launch continuous background channel sync & giveaway poster loop
-    bot.loop.create_task(bg_firebase_poster_task())
-
-    # 6. Non-blocking Slash Command Sync & Member Caching
+    # 5. Non-blocking Slash Command Sync & Member Caching
     try:
         synced = await bot.tree.sync()
         print(f"[BOOT] Synced {len(synced)} global slash commands.")
@@ -7645,8 +7706,6 @@ async def start_health_server():
         if not g:
             return web.json_response({"error": "Giveaway not found"}, status=404)
         g_id = g.get("id", g_id)
-        if not g:
-            return web.json_response({"error": "Giveaway not found"}, status=404)
 
         winners_text = g.get("winners_text", "")
         if not winners_text:
@@ -7654,7 +7713,7 @@ async def start_health_server():
 
         winner_summary_lines = [ln for ln in winners_text.split("\n") if ln.strip()]
         try:
-            await announce_winners_in_discord(g_id, winner_summary_lines)
+            await announce_winners_in_discord(g_id, winner_summary_lines, force=True)
             return web.json_response({"success": True, "message": "Announcement sent to Discord!"})
         except Exception as e:
             print(f"[ANNOUNCE ERROR] {e}")
@@ -7703,8 +7762,12 @@ async def start_health_server():
         except Exception:
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
-        g_id = f"g_{int(time.time())}_{random.randint(1000, 9999)}"
-        created_at = int(time.time())
+        raw_id = str(body.get("id", "")).strip()
+        if raw_id and raw_id.startswith("g_") and raw_id not in giveaways:
+            g_id = raw_id
+        else:
+            g_id = f"g_{int(time.time())}_{random.randint(1000, 9999)}"
+        created_at = int(body.get("created_at") or time.time())
         
         duration_val = float(body.get("duration_val") or body.get("duration_hours", 24))
         duration_unit = body.get("duration_unit", "hours")
@@ -7716,7 +7779,7 @@ async def start_health_server():
         else:
             duration_seconds = duration_val * 3600
 
-        ends_at = created_at + int(duration_seconds)
+        ends_at = int(body.get("ends_at") or (created_at + int(duration_seconds)))
         duration_hours = round(duration_seconds / 3600, 2)
 
         spot_tiers = body.get("spot_tiers", [])
@@ -7773,47 +7836,19 @@ async def start_health_server():
         giveaways[g_id] = g_data
         save_banner_image_if_data_url(g_data)
         save_giveaways()
-        await firebase_put(f"giveaways/{g_id}", g_data)
 
-        # Post Embed in Discord IMMEDIATELY on creation
-        ch_id_str = str(body.get("channel_id", "")).strip()
-        channel = None
-        if ch_id_str.isdigit():
-            channel = bot.get_channel(int(ch_id_str))
-            if not channel:
-                try:
-                    channel = await bot.fetch_channel(int(ch_id_str))
-                except Exception:
-                    channel = None
+        # Post Embed in Discord IMMEDIATELY on creation via unified update_giveaway_discord_message under lock
+        # This populates message_id BEFORE Firebase sync to prevent background sync duplicate posts
+        try:
+            await update_giveaway_discord_message(g_id)
+        except Exception as pe:
+            print(f"[CREATE POST ERROR] {pe}")
 
-        if not channel and bot.guilds:
-            for guild in bot.guilds:
-                channel = guild.system_channel or (guild.text_channels[0] if guild.text_channels else None)
-                if channel:
-                    break
+        # Sync to Firebase AFTER the Discord message is posted and message_id is populated
+        if FIREBASE_URL:
+            await firebase_put(f"giveaways/{g_id}", giveaways.get(g_id, g_data))
 
-        if channel:
-            try:
-                embed, file_to_send = build_giveaway_embed(g_data)
-                port = os.getenv("PORT", "2025")
-                web_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
-                view = GiveawayView(g_id, web_url)
-                mention_text = format_role_mention(g_data.get("mention_role"))
-                if file_to_send:
-                    msg = await channel.send(content=mention_text, embed=embed, view=view, file=file_to_send)
-                else:
-                    msg = await channel.send(content=mention_text, embed=embed, view=view)
-                g_data["message_id"] = str(msg.id)
-                g_data["channel_id"] = str(channel.id)
-                giveaways[g_id] = g_data
-                save_giveaways()
-                await firebase_put(f"giveaways/{g_id}", g_data)
-                bot.add_view(view)
-                print(f"[GIVEAWAY CREATED & POSTED] Sent giveaway '{g_data['title']}' to #{channel.name}")
-            except Exception as e:
-                print(f"[DISCORD POST ERROR] {e}")
-
-        return web.json_response(g_data)
+        return web.json_response(giveaways.get(g_id, g_data))
 
     async def edit_giveaway_handler(request):
         user = get_session_user(request)
@@ -7885,20 +7920,11 @@ async def start_health_server():
         save_giveaways()
         await firebase_put(f"giveaways/{g_id}", g)
 
-        # Edit Discord message in-place to preserve exact original sent timestamp!
+        # Edit Discord message in-place to preserve exact original sent timestamp
         try:
             await update_giveaway_discord_message(g_id)
         except Exception as ue:
             print(f"[EDIT: EMBED UPDATE ERROR] {ue}")
-
-        # If this giveaway already has winners drawn, re-announce winners to winner_channel_id
-        if g.get("winners_text"):
-            lines = [l for l in g["winners_text"].split("\n") if l.strip()]
-            if lines:
-                try:
-                    await announce_winners_in_discord(g_id, lines)
-                except Exception as ae:
-                    print(f"[EDIT: RE-ANNOUNCE ERROR] {ae}")
 
         return web.json_response(g)
 
@@ -7992,99 +8018,105 @@ async def start_health_server():
         if not user or not user.get("is_admin"):
             return web.json_response({"error": "Admin required"}, status=403)
         g_id = request.match_info.get("id")
-        g = giveaways.get(g_id)
-        if not g: return web.json_response({"error": "Not found"}, status=404)
+        lock = get_giveaway_lock(g_id)
+        async with lock:
+            g = giveaways.get(g_id)
+            if not g: return web.json_response({"error": "Not found"}, status=404)
 
-        # Fetch fresh entries from Firebase Cloud DB first
-        fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
-        if fb_entries and isinstance(fb_entries, (dict, list)):
-            fetched = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
-            if fetched:
-                giveaway_entries[g_id] = fetched
+            # Fetch fresh entries from Firebase Cloud DB first
+            fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
+            if fb_entries and isinstance(fb_entries, (dict, list)):
+                fetched = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+                if fetched:
+                    giveaway_entries[g_id] = fetched
 
-        entries = giveaway_entries.get(g_id, [])
-        if not entries:
-            return web.json_response({"error": "No entries to draw from"}, status=400)
+            entries = giveaway_entries.get(g_id, [])
+            if not entries:
+                return web.json_response({"error": "No entries to draw from"}, status=400)
 
-        # Resolve guild for weighted raffle role multipliers
-        guild = None
-        ch_id_str = str(g.get("channel_id", "")).strip()
-        if ch_id_str:
-            try:
-                ch = bot.get_channel(int(ch_id_str))
-                if ch:
-                    guild = ch.guild
-            except Exception:
-                pass
+            # Resolve guild for weighted raffle role multipliers
+            guild = None
+            ch_id_str = str(g.get("channel_id", "")).strip()
+            if ch_id_str:
+                try:
+                    ch = bot.get_channel(int(ch_id_str))
+                    if ch:
+                        guild = ch.guild
+                except Exception:
+                    pass
 
-        entries, winner_summary_lines = select_giveaway_winners(entries, g, guild)
+            entries, winner_summary_lines = select_giveaway_winners(entries, g, guild)
 
-        g["is_active"] = False
-        g["winners_text"] = "\n".join(winner_summary_lines)
-        save_giveaways()
-        save_giveaway_entries()
-        await firebase_put(f"giveaways/{g_id}", g)
-        await firebase_put(f"giveaway_entries/{g_id}", entries)
-        await update_giveaway_discord_message(g_id)
-        await announce_winners_in_discord(g_id, winner_summary_lines)
+            g["is_active"] = False
+            g["winners_drawn"] = True
+            g["winners_text"] = "\n".join(winner_summary_lines)
+            save_giveaways()
+            save_giveaway_entries()
+            await firebase_put(f"giveaways/{g_id}", g)
+            await firebase_put(f"giveaway_entries/{g_id}", entries)
+            await update_giveaway_discord_message(g_id)
+            await announce_winners_in_discord(g_id, winner_summary_lines, force=True)
 
-        total_winners = len([e for e in entries if e.get("winner_type")])
-        return web.json_response({
-            "success": True,
-            "winners_text": g["winners_text"],
-            "guaranteed_winners_count": len([e for e in entries if str(e.get("winner_type", "")).lower() in ("guaranteed", "gtd")]),
-            "fcfs_winners_count": len([e for e in entries if str(e.get("winner_type", "")).lower() == "fcfs"]),
-            "total_winners_count": total_winners
-        })
+            total_winners = len([e for e in entries if e.get("winner_type")])
+            return web.json_response({
+                "success": True,
+                "winners_text": g["winners_text"],
+                "guaranteed_winners_count": len([e for e in entries if str(e.get("winner_type", "")).lower() in ("guaranteed", "gtd")]),
+                "fcfs_winners_count": len([e for e in entries if str(e.get("winner_type", "")).lower() == "fcfs"]),
+                "total_winners_count": total_winners
+            })
 
     async def redraw_winners_handler(request):
         user = get_session_user(request)
         if not user or not user.get("is_admin"):
             return web.json_response({"error": "Admin required"}, status=403)
         g_id = request.match_info.get("id")
-        g = giveaways.get(g_id)
-        if not g: return web.json_response({"error": "Not found"}, status=404)
+        lock = get_giveaway_lock(g_id)
+        async with lock:
+            g = giveaways.get(g_id)
+            if not g: return web.json_response({"error": "Not found"}, status=404)
 
-        # Fetch entries from Firebase to ensure we have latest data
-        fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
-        if fb_entries and isinstance(fb_entries, (dict, list)):
-            fetched = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
-            if fetched:
-                giveaway_entries[g_id] = fetched
+            # Fetch entries from Firebase to ensure we have latest data
+            fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
+            if fb_entries and isinstance(fb_entries, (dict, list)):
+                fetched = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+                if fetched:
+                    giveaway_entries[g_id] = fetched
 
-        entries = giveaway_entries.get(g_id, [])
-        if not entries:
-            return web.json_response({"error": "No entries available"}, status=400)
+            entries = giveaway_entries.get(g_id, [])
+            if not entries:
+                return web.json_response({"error": "No entries available"}, status=400)
 
-        # Resolve guild for weighted raffle role multipliers
-        guild = None
-        ch_id_str = str(g.get("channel_id", "")).strip()
-        if ch_id_str:
-            try:
-                ch = bot.get_channel(int(ch_id_str))
-                if ch:
-                    guild = ch.guild
-            except Exception:
-                pass
+            # Resolve guild for weighted raffle role multipliers
+            guild = None
+            ch_id_str = str(g.get("channel_id", "")).strip()
+            if ch_id_str:
+                try:
+                    ch = bot.get_channel(int(ch_id_str))
+                    if ch:
+                        guild = ch.guild
+                except Exception:
+                    pass
 
-        new_winner_count, winner_summary_lines = redraw_giveaway_winners(entries, g, guild)
+            new_winner_count, winner_summary_lines = redraw_giveaway_winners(entries, g, guild)
 
-        g["is_active"] = False
-        g["winners_text"] = "\n".join(winner_summary_lines)
+            g["is_active"] = False
+            g["winners_drawn"] = True
+            g["winners_text"] = "\n".join(winner_summary_lines)
 
-        save_giveaways()
-        save_giveaway_entries()
-        await firebase_put(f"giveaways/{g_id}", g)
-        await firebase_put(f"giveaway_entries/{g_id}", entries)
+            save_giveaways()
+            save_giveaway_entries()
+            await firebase_put(f"giveaways/{g_id}", g)
+            await firebase_put(f"giveaway_entries/{g_id}", entries)
 
-        await update_giveaway_discord_message(g_id)
-        await announce_winners_in_discord(g_id, winner_summary_lines)
+            await update_giveaway_discord_message(g_id)
+            await announce_winners_in_discord(g_id, winner_summary_lines, force=True)
 
-        return web.json_response({
-            "success": True,
-            "new_winner_count": new_winner_count,
-            "winners_text": g["winners_text"]
-        })
+            return web.json_response({
+                "success": True,
+                "new_winner_count": new_winner_count,
+                "winners_text": g["winners_text"]
+            })
 
 
     async def verify_winner_handler(request):
@@ -8341,6 +8373,7 @@ async def start_health_server():
             winner_summary_lines.append(f"**FCFS:** {fcfs_str}")
 
         g["is_active"] = False
+        g["winners_drawn"] = True
         g["winners_text"] = "\n".join(winner_summary_lines)
 
         save_giveaways()
@@ -8348,7 +8381,7 @@ async def start_health_server():
             await firebase_put(f"giveaways/{g_id}", g)
 
         await update_giveaway_discord_message(g_id)
-        await announce_winners_in_discord(g_id, winner_summary_lines)
+        await announce_winners_in_discord(g_id, winner_summary_lines, force=True)
 
         return web.json_response({"success": True, "giveaway": g, "winners_text": g["winners_text"]})
 

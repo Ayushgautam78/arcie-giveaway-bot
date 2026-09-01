@@ -931,17 +931,26 @@ async function submitCreateGiveaway() {
       });
       
       if (res.ok) {
-        await firebasePut('giveaway_entries/' + giveawayId, []);
+        const created = await res.json().catch(() => null);
+        const finalId = (created && created.id) ? created.id : giveawayId;
+        await firebasePut('giveaway_entries/' + finalId, []);
         showToast('🚀 Giveaway published & posted to Discord!', 'success');
       } else {
+        // Fallback for static/offline mode only if backend is unreachable
+        const errData = await res.json().catch(() => ({}));
+        if (res.status === 403) {
+          showToast(errData.error || 'Admin permission required', 'error');
+          return;
+        }
         await firebasePut('giveaways/' + giveawayId, giveawayObj);
         await firebasePut('giveaway_entries/' + giveawayId, []);
-        showToast('🚀 Giveaway created!', 'success');
+        showToast('🚀 Giveaway created (Cloud DB sync)!', 'success');
       }
     } catch (err) {
+      console.warn('Backend API create error, using direct Cloud DB sync:', err);
       await firebasePut('giveaways/' + giveawayId, giveawayObj);
       await firebasePut('giveaway_entries/' + giveawayId, []);
-      showToast('🚀 Giveaway created!', 'success');
+      showToast('🚀 Giveaway created (Cloud DB sync)!', 'success');
     }
 
     createRequiredRoles = [];
@@ -1730,8 +1739,13 @@ async function loadGiveawayParticipants(giveawayId) {
 }
 
 // Admin Winner Drawing
+let isDrawingWinners = false;
 async function drawWinners(giveawayId) {
+  if (isDrawingWinners) return;
   if (!confirm('Are you sure you want to draw/assign winners for this giveaway?')) return;
+  isDrawingWinners = true;
+  const btn = document.getElementById('drawWinnersBtn');
+  if (btn) btn.disabled = true;
   try {
     const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}/draw`), { method: 'POST', credentials: 'include' });
     const data = await res.json();
@@ -1744,12 +1758,20 @@ async function drawWinners(giveawayId) {
     }
   } catch (err) {
     showToast('Error drawing winners', 'error');
+  } finally {
+    isDrawingWinners = false;
+    if (btn) btn.disabled = false;
   }
 }
 
 // Admin Winner Re-Drawing (Re-Raffle Disqualified Spots)
+let isRedrawingWinners = false;
 async function redrawWinners(giveawayId) {
+  if (isRedrawingWinners) return;
   if (!confirm('Are you sure you want to re-raffle replacement winners for any disqualified spots?')) return;
+  isRedrawingWinners = true;
+  const btn = document.getElementById('redrawWinnersBtn');
+  if (btn) btn.disabled = true;
   try {
     const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}/redraw`), { method: 'POST', credentials: 'include' });
     const data = await res.json();
@@ -1762,6 +1784,9 @@ async function redrawWinners(giveawayId) {
     }
   } catch (err) {
     showToast('Error re-raffling winners', 'error');
+  } finally {
+    isRedrawingWinners = false;
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -1789,7 +1814,12 @@ async function deleteParticipantEntry(giveawayId, userId) {
 }
 
 // Admin: Send Winners Announcement manually
+let isSendingAnnouncement = false;
 async function sendWinnersAnnouncement(giveawayId) {
+  if (isSendingAnnouncement) return;
+  isSendingAnnouncement = true;
+  const btn = document.getElementById('announceWinnersBtn');
+  if (btn) btn.disabled = true;
   try {
     const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}/announce`), { method: 'POST', credentials: 'include' });
     const data = await res.json();
@@ -1800,6 +1830,9 @@ async function sendWinnersAnnouncement(giveawayId) {
     }
   } catch (err) {
     showToast('Error sending announcement', 'error');
+  } finally {
+    isSendingAnnouncement = false;
+    if (btn) btn.disabled = false;
   }
 }
 
