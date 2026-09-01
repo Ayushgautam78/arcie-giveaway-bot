@@ -4586,17 +4586,14 @@ async def resolve_giveaway_by_identifier(identifier: str) -> Optional[dict]:
     return None
 
 
-_giveaway_locks: Dict[str, asyncio.Lock] = {}
-
-def get_giveaway_lock(g_id: str) -> asyncio.Lock:
-    if g_id not in _giveaway_locks:
-        _giveaway_locks[g_id] = asyncio.Lock()
-    return _giveaway_locks[g_id]
+_updating_giveaway_ids: Set[str] = set()
 
 
 async def update_giveaway_discord_message(giveaway_id: str):
-    lock = get_giveaway_lock(giveaway_id)
-    async with lock:
+    if giveaway_id in _updating_giveaway_ids:
+        return
+    _updating_giveaway_ids.add(giveaway_id)
+    try:
         g = await resolve_giveaway_by_identifier(giveaway_id)
         if not g or not isinstance(g, dict):
             print(f"[UPDATE EMBED FAIL] Giveaway '{giveaway_id}' not found in memory or Cloud DB.")
@@ -4666,6 +4663,8 @@ async def update_giveaway_discord_message(giveaway_id: str):
             print(f"[UPDATE EMBED POST SUCCESS] Posted fresh embed for '{g.get('title')}' in #{channel.name} ({new_msg.id})")
         except Exception as send_err:
             print(f"[UPDATE EMBED POST ERROR] {send_err}")
+    finally:
+        _updating_giveaway_ids.discard(giveaway_id)
 
 
 # ======================================================================== #
@@ -6916,14 +6915,17 @@ def format_role_mention(mention_str) -> Optional[str]:
 
 
 _drawing_giveaways: Set[str] = set()
+_announcing_giveaway_ids: Set[str] = set()
 _sync_giveaways_lock = asyncio.Lock()
 _bg_poster_task_started = False
 
 
 async def announce_winners_in_discord(g_id: str, winner_summary_lines: list, force: bool = False):
     """Post an official Winners Announcement Embed directly to the Discord giveaway or specified winner channel."""
-    lock = get_giveaway_lock(g_id)
-    async with lock:
+    if g_id in _announcing_giveaway_ids:
+        return
+    _announcing_giveaway_ids.add(g_id)
+    try:
         g = giveaways.get(g_id)
         if not g:
             g = await firebase_get(f"giveaways/{g_id}")
@@ -7054,6 +7056,8 @@ async def announce_winners_in_discord(g_id: str, winner_summary_lines: list, for
             print(f"[WINNERS ANNOUNCED] Posted winners announcement for '{title_text}' in #{channel.name} ({sent_msg.id})")
         except Exception as e:
             print(f"[ANNOUNCE WINNERS ERROR] {e}")
+    finally:
+        _announcing_giveaway_ids.discard(g_id)
 
 
 async def sync_and_post_giveaways():
@@ -7149,70 +7153,68 @@ async def auto_draw_giveaway_winners(g_id: str):
         return
     _drawing_giveaways.add(g_id)
     try:
-        lock = get_giveaway_lock(g_id)
-        async with lock:
-            # Extra check: Verify giveaway still exists in Cloud DB
-            fb_check = await firebase_get(f"giveaways/{g_id}")
-            if not fb_check:
-                print(f"[AUTO-DRAW SKIPPED] Giveaway '{g_id}' does not exist in Firebase database.")
-                if g_id in giveaways:
-                    del giveaways[g_id]
-                    save_giveaways()
-                return
-
-            g = giveaways.get(g_id)
-            if not g or not g.get("is_active"):
-                return
-            if g.get("winners_announced") or g.get("winners_drawn"):
-                return
-
-            # Mark as inactive immediately in memory to prevent concurrent auto-draws
-            g["is_active"] = False
-            g["winners_drawn"] = True
-
-            # Fetch entries from Firebase if missing locally
-            fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
-            if fb_entries and isinstance(fb_entries, (dict, list)):
-                entries = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
-                giveaway_entries[g_id] = entries
-            else:
-                entries = giveaway_entries.get(g_id, [])
-
-            if not entries:
-                g["winners_text"] = "No participants joined."
+        # Extra check: Verify giveaway still exists in Cloud DB
+        fb_check = await firebase_get(f"giveaways/{g_id}")
+        if not fb_check:
+            print(f"[AUTO-DRAW SKIPPED] Giveaway '{g_id}' does not exist in Firebase database.")
+            if g_id in giveaways:
+                del giveaways[g_id]
                 save_giveaways()
-                await firebase_put(f"giveaways/{g_id}", g)
-                await update_giveaway_discord_message(g_id)
-                # Still announce "no participants" to the channel once
-                await announce_winners_in_discord(g_id, ["No participants joined."])
-                return
+            return
 
-            # Resolve guild for weighted raffle role multipliers
-            guild = None
-            ch_id_str = str(g.get("channel_id", "")).strip()
-            if ch_id_str:
-                try:
-                    ch = bot.get_channel(int(ch_id_str))
-                    if ch:
-                        guild = ch.guild
-                except Exception:
-                    pass
+        g = giveaways.get(g_id)
+        if not g or not g.get("is_active"):
+            return
+        if g.get("winners_announced") or g.get("winners_drawn"):
+            return
 
-            entries, winner_summary_lines = select_giveaway_winners(entries, g, guild)
+        # Mark as inactive immediately in memory to prevent concurrent auto-draws
+        g["is_active"] = False
+        g["winners_drawn"] = True
 
-            g["winners_text"] = "\n".join(winner_summary_lines)
+        # Fetch entries from Firebase if missing locally
+        fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
+        if fb_entries and isinstance(fb_entries, (dict, list)):
+            entries = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+            giveaway_entries[g_id] = entries
+        else:
+            entries = giveaway_entries.get(g_id, [])
 
+        if not entries:
+            g["winners_text"] = "No participants joined."
             save_giveaways()
-            save_giveaway_entries()
             await firebase_put(f"giveaways/{g_id}", g)
-            await firebase_put(f"giveaway_entries/{g_id}", entries)
-
-            # 1. Update the original giveaway embed in Discord (marks it as ended)
             await update_giveaway_discord_message(g_id)
+            # Still announce "no participants" to the channel once
+            await announce_winners_in_discord(g_id, ["No participants joined."])
+            return
 
-            # 2. Post official Winners Announcement Embed IMMEDIATELY to Discord channel!
-            await announce_winners_in_discord(g_id, winner_summary_lines)
-            print(f"[AUTO-DRAW COMPLETE] Winners drawn & results posted for '{g.get('title')}' ({g_id})")
+        # Resolve guild for weighted raffle role multipliers
+        guild = None
+        ch_id_str = str(g.get("channel_id", "")).strip()
+        if ch_id_str:
+            try:
+                ch = bot.get_channel(int(ch_id_str))
+                if ch:
+                    guild = ch.guild
+            except Exception:
+                pass
+
+        entries, winner_summary_lines = select_giveaway_winners(entries, g, guild)
+
+        g["winners_text"] = "\n".join(winner_summary_lines)
+
+        save_giveaways()
+        save_giveaway_entries()
+        await firebase_put(f"giveaways/{g_id}", g)
+        await firebase_put(f"giveaway_entries/{g_id}", entries)
+
+        # 1. Update the original giveaway embed in Discord (marks it as ended)
+        await update_giveaway_discord_message(g_id)
+
+        # 2. Post official Winners Announcement Embed IMMEDIATELY to Discord channel!
+        await announce_winners_in_discord(g_id, winner_summary_lines)
+        print(f"[AUTO-DRAW COMPLETE] Winners drawn & results posted for '{g.get('title')}' ({g_id})")
     finally:
         _drawing_giveaways.discard(g_id)
 
@@ -8018,8 +8020,10 @@ async def start_health_server():
         if not user or not user.get("is_admin"):
             return web.json_response({"error": "Admin required"}, status=403)
         g_id = request.match_info.get("id")
-        lock = get_giveaway_lock(g_id)
-        async with lock:
+        if g_id in _drawing_giveaways:
+            return web.json_response({"error": "Draw already in progress"}, status=409)
+        _drawing_giveaways.add(g_id)
+        try:
             g = giveaways.get(g_id)
             if not g: return web.json_response({"error": "Not found"}, status=404)
 
@@ -8065,14 +8069,18 @@ async def start_health_server():
                 "fcfs_winners_count": len([e for e in entries if str(e.get("winner_type", "")).lower() == "fcfs"]),
                 "total_winners_count": total_winners
             })
+        finally:
+            _drawing_giveaways.discard(g_id)
 
     async def redraw_winners_handler(request):
         user = get_session_user(request)
         if not user or not user.get("is_admin"):
             return web.json_response({"error": "Admin required"}, status=403)
         g_id = request.match_info.get("id")
-        lock = get_giveaway_lock(g_id)
-        async with lock:
+        if g_id in _drawing_giveaways:
+            return web.json_response({"error": "Redraw already in progress"}, status=409)
+        _drawing_giveaways.add(g_id)
+        try:
             g = giveaways.get(g_id)
             if not g: return web.json_response({"error": "Not found"}, status=404)
 
@@ -8117,6 +8125,8 @@ async def start_health_server():
                 "new_winner_count": new_winner_count,
                 "winners_text": g["winners_text"]
             })
+        finally:
+            _drawing_giveaways.discard(g_id)
 
 
     async def verify_winner_handler(request):
