@@ -6548,6 +6548,8 @@ async def user_details_cmd(interaction: discord.Interaction, target: Optional[di
         prof = await get_or_fetch_user_profile(uid, usr)
 
         twitter_val = f"**{prof.get('twitter')}**" if prof.get("twitter") else "*Not set by user yet*"
+        telegram_val = f"**{prof.get('telegram')}**" if prof.get("telegram") else "*Not set by user yet*"
+        evm_val = f"`{prof.get('evm_wallet')}`" if prof.get("evm_wallet") else "*Not set by user yet*"
         fcfs_wallet_str = prof.get('fcfs_evm_wallet') or prof.get('burner_evm_wallet')
         fcfs_evm_val = f"`{fcfs_wallet_str}`" if fcfs_wallet_str else "*Not set by user yet*"
         solana_val = f"`{prof.get('solana_wallet')}`" if prof.get("solana_wallet") else "*Not set by user yet*"
