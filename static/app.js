@@ -173,6 +173,108 @@ function setupEventListeners() {
   }
 }
 
+let cachedServerChannels = [];
+let cachedServerRoles = [];
+
+// Filter & populate channel select dropdowns based on search query
+function filterChannelSelect(selectId, query) {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+  const q = (query || '').trim().toLowerCase();
+
+  let baseOpt = '';
+  if (selectId === 'gChannel') {
+    baseOpt = '<option value="auto">⚡ Auto-Detect Main Channel</option>';
+  } else if (selectId === 'editGChannel') {
+    baseOpt = '<option value="">-- Same as current channel --</option>';
+  } else {
+    baseOpt = '<option value="">📢 Same as Giveaway Channel (Default)</option>';
+  }
+
+  const filtered = cachedServerChannels.filter(c => {
+    if (!q) return true;
+    const name = (c.name || '').toLowerCase();
+    const gName = (c.guild_name || '').toLowerCase();
+    const id = String(c.id || '');
+    return name.includes(q) || gName.includes(q) || id.includes(q);
+  });
+
+  const optionsHtml = filtered.map(c =>
+    `<option value="${c.id}">💬 #${escapeHtml(c.name)}  •  ${escapeHtml(c.guild_name || 'Server')}</option>`
+  ).join('');
+
+  const currentVal = select.value;
+  select.innerHTML = baseOpt + optionsHtml;
+
+  if (q && filtered.length > 0) {
+    select.value = filtered[0].id;
+  } else if (currentVal && Array.from(select.options).some(o => o.value === currentVal)) {
+    select.value = currentVal;
+  }
+}
+
+// Filter & populate role select dropdowns based on search query
+function filterRoleSelect(selectId, query) {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+  const q = (query || '').trim().toLowerCase();
+
+  if (selectId === 'gMentionRole' || selectId === 'editGMentionRole') {
+    const basePings = [
+      { id: '', label: '🔕 No Ping (Silent Announcement)' },
+      { id: '@everyone', label: '🌐 @everyone (Ping Entire Server)' },
+      { id: '@here', label: '⚡ @here (Ping Online Members Only)' }
+    ];
+    const filteredBase = basePings.filter(p => !q || p.label.toLowerCase().includes(q) || p.id.toLowerCase().includes(q));
+    const baseHtml = filteredBase.map(p => `<option value="${p.id}">${p.label}</option>`).join('');
+
+    const filteredRoles = cachedServerRoles.filter(r => {
+      if (!q) return true;
+      const name = (r.name || '').toLowerCase();
+      const gName = (r.guild_name || '').toLowerCase();
+      const id = String(r.id || '');
+      return name.includes(q) || gName.includes(q) || id.includes(q);
+    });
+
+    const rolesHtml = filteredRoles.map(r =>
+      `<option value="${r.id}">🏷️ @${escapeHtml(r.name)}  •  ${escapeHtml(r.guild_name || 'Server')}</option>`
+    ).join('');
+
+    const currentVal = select.value;
+    select.innerHTML = baseHtml + (rolesHtml ? `<optgroup label="Server Roles">${rolesHtml}</optgroup>` : '');
+
+    if (q) {
+      if (filteredBase.length > 0) select.value = filteredBase[0].id;
+      else if (filteredRoles.length > 0) select.value = filteredRoles[0].id;
+    } else if (currentVal && Array.from(select.options).some(o => o.value === currentVal)) {
+      select.value = currentVal;
+    }
+  } else {
+    // For required role and multiplier selects
+    const baseHtml = '<option value="">Select Discord Server Role...</option>';
+    const filteredRoles = cachedServerRoles.filter(r => {
+      if (!q) return true;
+      const name = (r.name || '').toLowerCase();
+      const gName = (r.guild_name || '').toLowerCase();
+      const id = String(r.id || '');
+      return name.includes(q) || gName.includes(q) || id.includes(q);
+    });
+
+    const rolesHtml = filteredRoles.map(r =>
+      `<option value="${r.id}" data-name="${escapeHtml(r.name)}">@${escapeHtml(r.name)} (${escapeHtml(r.guild_name || 'Server')})</option>`
+    ).join('');
+
+    const currentVal = select.value;
+    select.innerHTML = baseHtml + rolesHtml;
+
+    if (q && filteredRoles.length > 0) {
+      select.value = filteredRoles[0].id;
+    } else if (currentVal && Array.from(select.options).some(o => o.value === currentVal)) {
+      select.value = currentVal;
+    }
+  }
+}
+
 // Load Guild Channels for Channel Selector from API or Firebase
 async function loadGuildChannels() {
   try {
@@ -199,26 +301,11 @@ async function loadGuildChannels() {
       }
     }
 
-    if (channelArray.length > 0) {
-      const options = channelArray.map(c =>
-        `<option value="${c.id}">💬 #${escapeHtml(c.name)}  •  ${escapeHtml(c.guild_name || 'Server')}</option>`
-      ).join('');
-
-      const gCh = document.getElementById('gChannel');
-      if (gCh) gCh.innerHTML = '<option value="auto">⚡ Auto-Detect Main Channel</option>' + options;
-
-      const gWin = document.getElementById('gWinnerChannel');
-      if (gWin) gWin.innerHTML = '<option value="">📢 Same as Giveaway Channel (Default)</option>' + options;
-
-      const editGWin = document.getElementById('editGWinnerChannel');
-      if (editGWin) editGWin.innerHTML = '<option value="">📢 Same as Giveaway Channel (Default)</option>' + options;
-
-      const editGCh = document.getElementById('editGChannel');
-      if (editGCh) editGCh.innerHTML = '<option value="">-- Same as current channel --</option>' + options;
-    } else {
-      const gCh = document.getElementById('gChannel');
-      if (gCh) gCh.innerHTML = '<option value="auto">⚡ Auto-Detect Main Channel</option>';
-    }
+    cachedServerChannels = channelArray;
+    filterChannelSelect('gChannel', '');
+    filterChannelSelect('gWinnerChannel', '');
+    filterChannelSelect('editGChannel', '');
+    filterChannelSelect('editGWinnerChannel', '');
   } catch (err) {
     console.error('Failed to load channels:', err);
   }
@@ -259,59 +346,19 @@ async function loadGuildRoles() {
       }
     });
 
-    const roleOpts = uniqueRoles
-      .filter(r => r.id !== '@everyone')
-      .map(r => `<option value="${r.id}">🏷️ @${escapeHtml(r.name)}  •  ${escapeHtml(r.guild_name || 'Server')}</option>`)
-      .join('');
-
-    const baseOptions = `
-      <option value="">🔕 No Ping (Silent Announcement)</option>
-      <option value="@everyone">🌐 @everyone (Ping Entire Server)</option>
-      <option value="@here">⚡ @here (Ping Online Members Only)</option>
-    `;
-
-    const gRole = document.getElementById('gMentionRole');
-    if (gRole && gRole.tagName === 'SELECT') {
-      gRole.innerHTML = baseOptions + (roleOpts ? `<optgroup label="Server Roles">${roleOpts}</optgroup>` : '');
-    }
-
-    const editRole = document.getElementById('editGMentionRole');
-    if (editRole && editRole.tagName === 'SELECT') {
-      editRole.innerHTML = baseOptions + (roleOpts ? `<optgroup label="Server Roles">${roleOpts}</optgroup>` : '');
-    }
-
-    // Dedicated Required Roles Dropdown options
     cachedServerRoles = uniqueRoles.filter(r => r.id !== '@everyone');
-    const reqRoleOpts = '<option value="">Select Discord Server Role...</option>' + cachedServerRoles
-      .map(r => `<option value="${r.id}" data-name="${escapeHtml(r.name)}">@${escapeHtml(r.name)} (${escapeHtml(r.guild_name || 'Server')})</option>`)
-      .join('');
-
-    const gReqRole = document.getElementById('gReqRoleSelect');
-    if (gReqRole && gReqRole.tagName === 'SELECT') {
-      gReqRole.innerHTML = reqRoleOpts;
-    }
-
-    const editReqRole = document.getElementById('editGReqRoleSelect');
-    if (editReqRole && editReqRole.tagName === 'SELECT') {
-      editReqRole.innerHTML = reqRoleOpts;
-    }
-
-    const gRoleMult = document.getElementById('gRoleMultSelect');
-    if (gRoleMult && gRoleMult.tagName === 'SELECT') {
-      gRoleMult.innerHTML = reqRoleOpts;
-    }
-
-    const editRoleMult = document.getElementById('editGRoleMultSelect');
-    if (editRoleMult && editRoleMult.tagName === 'SELECT') {
-      editRoleMult.innerHTML = reqRoleOpts;
-    }
+    filterRoleSelect('gMentionRole', '');
+    filterRoleSelect('editGMentionRole', '');
+    filterRoleSelect('gReqRoleSelect', '');
+    filterRoleSelect('editGReqRoleSelect', '');
+    filterRoleSelect('gRoleMultSelect', '');
+    filterRoleSelect('editGRoleMultSelect', '');
   } catch (err) {
     console.error('Failed to load roles:', err);
   }
 }
 
 // -------- Required Role Chip Management (OR Logic) -------- //
-let cachedServerRoles = [];
 let createRequiredRoles = [];
 let editRequiredRoles = [];
 
@@ -341,6 +388,9 @@ function addSelectedRequiredRole() {
     renderCreateRequiredRoles();
   }
   sel.value = '';
+  const searchInp = document.getElementById('gReqRoleSearch');
+  if (searchInp) searchInp.value = '';
+  filterRoleSelect('gReqRoleSelect', '');
 }
 
 function addManualRequiredRole() {
@@ -387,6 +437,9 @@ function addEditSelectedRequiredRole() {
     renderEditRequiredRoles();
   }
   sel.value = '';
+  const searchInp = document.getElementById('editGReqRoleSearch');
+  if (searchInp) searchInp.value = '';
+  filterRoleSelect('editGReqRoleSelect', '');
 }
 
 function addEditManualRequiredRole() {
@@ -456,6 +509,9 @@ function addRoleMultiplier() {
     createRoleMultipliers.push({ id: roleId, name: roleName, multiplier: count });
   }
   renderCreateRoleMultipliers();
+  const searchInp = document.getElementById('gRoleMultSearch');
+  if (searchInp) searchInp.value = '';
+  filterRoleSelect('gRoleMultSelect', '');
 }
 
 function removeRoleMultiplier(idx) {
@@ -783,19 +839,45 @@ function renderGiveaways(highlightedGiveaway = null) {
     const otherGiveaways = currentGiveaways.filter(g => g.id !== highlightedGiveaway.id);
     if (!isAdmin) {
       const activeOthers = otherGiveaways.filter(g => g.is_active && g.ends_at > now);
+      activeOthers.sort((a, b) => (Number(a.ends_at) || 0) - (Number(b.ends_at) || 0));
       filtered = [highlightedGiveaway, ...activeOthers];
     } else {
+      otherGiveaways.sort((a, b) => {
+        const timeA = Number(a.ends_at || a.created_at || 0);
+        const timeB = Number(b.ends_at || b.created_at || 0);
+        return timeB - timeA;
+      });
       filtered = [highlightedGiveaway, ...otherGiveaways];
     }
   } else {
     // Non-admin users: ONLY show active giveaways (no ended, no all tab)
     if (!isAdmin) {
       filtered = currentGiveaways.filter(g => g.is_active && g.ends_at > now);
+      filtered.sort((a, b) => (Number(a.ends_at) || 0) - (Number(b.ends_at) || 0));
     } else {
       if (currentFilter === 'active') {
         filtered = currentGiveaways.filter(g => g.is_active && g.ends_at > now);
+        // Active giveaways: ending soonest first
+        filtered.sort((a, b) => (Number(a.ends_at) || 0) - (Number(b.ends_at) || 0));
       } else if (currentFilter === 'ended') {
         filtered = currentGiveaways.filter(g => !g.is_active || g.ends_at <= now);
+        // Ended giveaways: MOST RECENTLY ENDED AT THE TOP, oldest at the bottom!
+        filtered.sort((a, b) => {
+          const timeA = Number(a.ends_at || a.created_at || 0);
+          const timeB = Number(b.ends_at || b.created_at || 0);
+          return timeB - timeA;
+        });
+      } else {
+        // 'all' filter: active first (ending soonest), then ended (most recently ended first)
+        const activeList = currentGiveaways.filter(g => g.is_active && g.ends_at > now);
+        activeList.sort((a, b) => (Number(a.ends_at) || 0) - (Number(b.ends_at) || 0));
+        const endedList = currentGiveaways.filter(g => !g.is_active || g.ends_at <= now);
+        endedList.sort((a, b) => {
+          const timeA = Number(a.ends_at || a.created_at || 0);
+          const timeB = Number(b.ends_at || b.created_at || 0);
+          return timeB - timeA;
+        });
+        filtered = [...activeList, ...endedList];
       }
     }
   }
@@ -1263,6 +1345,17 @@ function getEditDynamicTasksPayload() {
 function openEditModal(giveawayId) {
   const g = currentGiveaways.find(x => x.id === giveawayId);
   if (!g) return;
+
+  // Clear search inputs and reset options for edit modal
+  const editModal = document.getElementById('editModal');
+  if (editModal) {
+    editModal.querySelectorAll('.select-search-input').forEach(i => i.value = '');
+  }
+  filterChannelSelect('editGChannel', '');
+  filterChannelSelect('editGWinnerChannel', '');
+  filterRoleSelect('editGMentionRole', '');
+  filterRoleSelect('editGReqRoleSelect', '');
+  filterRoleSelect('editGRoleMultSelect', '');
 
   document.getElementById('editGId').value = g.id;
   document.getElementById('editGTitle').value = g.title || '';
@@ -2553,10 +2646,31 @@ async function submitCustomWinners() {
 
 // Utility Modal Helpers
 function openModal(id) {
-  document.getElementById(id).classList.add('active');
+  const modal = document.getElementById(id);
+  if (modal) {
+    modal.classList.add('active');
+    const searchInputs = modal.querySelectorAll('.select-search-input');
+    searchInputs.forEach(input => {
+      input.value = '';
+    });
+    if (id === 'createModal') {
+      filterChannelSelect('gChannel', '');
+      filterChannelSelect('gWinnerChannel', '');
+      filterRoleSelect('gMentionRole', '');
+      filterRoleSelect('gReqRoleSelect', '');
+      filterRoleSelect('gRoleMultSelect', '');
+    } else if (id === 'editModal') {
+      filterChannelSelect('editGChannel', '');
+      filterChannelSelect('editGWinnerChannel', '');
+      filterRoleSelect('editGMentionRole', '');
+      filterRoleSelect('editGReqRoleSelect', '');
+      filterRoleSelect('editGRoleMultSelect', '');
+    }
+  }
 }
 function closeModal(id) {
-  document.getElementById(id).classList.remove('active');
+  const modal = document.getElementById(id);
+  if (modal) modal.classList.remove('active');
 }
 
 function showToast(msg, type = 'info') {

@@ -140,6 +140,7 @@
             <div class="form-row">
               <div class="form-group">
                 <label class="form-label">📢 Discord Target Channel *</label>
+                <input type="text" id="gChannelSearch" class="form-input select-search-input" placeholder="🔍 Search channels..." oninput="filterChannelSelect('gChannel', this.value)">
                 <select id="gChannel" class="form-select">
                   <option value="">Select Channel...</option>
                 </select>
@@ -148,6 +149,7 @@
 
               <div class="form-group">
                 <label class="form-label">🔔 Mention Role (Ping on Post)</label>
+                <input type="text" id="gMentionRoleSearch" class="form-input select-search-input" placeholder="🔍 Search roles..." oninput="filterRoleSelect('gMentionRole', this.value)">
                 <select id="gMentionRole" class="form-select">
                   <option value="">🔕 No ping (Silent post)</option>
                   <option value="@everyone">🌐 @everyone</option>
@@ -158,6 +160,7 @@
 
             <div class="form-group">
               <label class="form-label">🏆 Winner Announcement Channel (Optional)</label>
+              <input type="text" id="gWinnerChannelSearch" class="form-input select-search-input" placeholder="🔍 Search channels..." oninput="filterChannelSelect('gWinnerChannel', this.value)">
               <select id="gWinnerChannel" class="form-select">
                 <option value="">Same as Giveaway Channel (Default)</option>
               </select>
@@ -230,13 +233,16 @@
                 <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-muted);">(OR Logic: Member needs ANY 1 role to enter)</span>
               </label>
               <div style="display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
-                <div style="flex: 1; min-width: 220px; display: flex; gap: 6px;">
-                  <select id="gReqRoleSelect" class="form-select" style="flex: 1;">
-                    <option value="">Select Discord Server Role...</option>
-                  </select>
-                  <button type="button" class="btn btn-primary btn-sm" onclick="addSelectedRequiredRole()" style="white-space: nowrap;">+ Add Role</button>
+                <div style="flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 4px;">
+                  <input type="text" id="gReqRoleSearch" class="form-input select-search-input" placeholder="🔍 Search server roles..." oninput="filterRoleSelect('gReqRoleSelect', this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();addSelectedRequiredRole();}">
+                  <div style="display: flex; gap: 6px;">
+                    <select id="gReqRoleSelect" class="form-select" style="flex: 1;">
+                      <option value="">Select Discord Server Role...</option>
+                    </select>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="addSelectedRequiredRole()" style="white-space: nowrap;">+ Add Role</button>
+                  </div>
                 </div>
-                <div style="flex: 1; min-width: 220px; display: flex; gap: 6px;">
+                <div style="flex: 1; min-width: 220px; display: flex; gap: 6px; align-items: flex-end;">
                   <input type="text" id="gReqRoleManual" class="form-input" placeholder="Or paste Role ID / Name..." style="flex: 1;">
                   <button type="button" class="btn btn-outline btn-sm" onclick="addManualRequiredRole()" style="white-space: nowrap;">+ Add Custom</button>
                 </div>
@@ -254,19 +260,22 @@
                 <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-muted);">(Give extra ticket entries to specific roles, e.g., 2x, 3x, 5x)</span>
               </label>
               <div style="display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
-                <div style="flex: 2; min-width: 200px;">
+                <div style="flex: 2; min-width: 200px; display: flex; flex-direction: column; gap: 4px;">
+                  <input type="text" id="gRoleMultSearch" class="form-input select-search-input" placeholder="🔍 Search server roles..." oninput="filterRoleSelect('gRoleMultSelect', this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();addRoleMultiplier();}">
                   <select id="gRoleMultSelect" class="form-select">
                     <option value="">Select Discord Server Role...</option>
                   </select>
                 </div>
-                <div style="flex: 1; min-width: 140px;">
+                <div style="flex: 1; min-width: 140px; display: flex; align-items: flex-end;">
                   <input type="text" id="gRoleMultManual" class="form-input" placeholder="Or Role ID / Name...">
                 </div>
-                <div style="width: 130px; display: flex; align-items: center; gap: 4px;">
+                <div style="width: 130px; display: flex; align-items: center; gap: 4px; align-self: flex-end;">
                   <input type="number" id="gRoleMultCount" class="form-input" min="1" max="100" value="2" placeholder="Entries" title="Number of entries / multiplier (e.g. 2 for 2x)">
                   <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: 600;">🎟️</span>
                 </div>
-                <button type="button" class="btn btn-primary btn-sm" onclick="addRoleMultiplier()" style="white-space: nowrap;">+ Add Multiplier</button>
+                <div style="display: flex; align-items: flex-end;">
+                  <button type="button" class="btn btn-primary btn-sm" onclick="addRoleMultiplier()" style="white-space: nowrap;">+ Add Multiplier</button>
+                </div>
               </div>
               <div id="gRoleMultsList" class="role-badges-container" style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px;">
                 <span style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">No role multipliers configured (Standard 1x entry for everyone)</span>
@@ -396,6 +405,7 @@
             <div class="form-row">
               <div class="form-group">
                 <label class="form-label">📢 Target Discord Channel</label>
+                <input type="text" id="editGChannelSearch" class="form-input select-search-input" placeholder="🔍 Search channels..." oninput="filterChannelSelect('editGChannel', this.value)">
                 <select id="editGChannel" class="form-select">
                   <option value="">-- Same as current --</option>
                 </select>
@@ -403,6 +413,7 @@
 
               <div class="form-group">
                 <label class="form-label">🔔 Mention Role (Ping on Post)</label>
+                <input type="text" id="editGMentionRoleSearch" class="form-input select-search-input" placeholder="🔍 Search roles..." oninput="filterRoleSelect('editGMentionRole', this.value)">
                 <select id="editGMentionRole" class="form-select">
                   <option value="">🔕 No ping (Silent post)</option>
                   <option value="@everyone">🌐 @everyone</option>
@@ -413,6 +424,7 @@
 
             <div class="form-group">
               <label class="form-label">🏆 Winner Announcement Channel (Optional)</label>
+              <input type="text" id="editGWinnerChannelSearch" class="form-input select-search-input" placeholder="🔍 Search channels..." oninput="filterChannelSelect('editGWinnerChannel', this.value)">
               <select id="editGWinnerChannel" class="form-select">
                 <option value="">Same as Giveaway Channel (Default)</option>
               </select>
@@ -481,13 +493,16 @@
                 <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-muted);">(OR Logic: Member needs ANY 1 role to enter)</span>
               </label>
               <div style="display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
-                <div style="flex: 1; min-width: 220px; display: flex; gap: 6px;">
-                  <select id="editGReqRoleSelect" class="form-select" style="flex: 1;">
-                    <option value="">Select Discord Server Role...</option>
-                  </select>
-                  <button type="button" class="btn btn-primary btn-sm" onclick="addEditSelectedRequiredRole()" style="white-space: nowrap;">+ Add Role</button>
+                <div style="flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 4px;">
+                  <input type="text" id="editGReqRoleSearch" class="form-input select-search-input" placeholder="🔍 Search server roles..." oninput="filterRoleSelect('editGReqRoleSelect', this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();addEditSelectedRequiredRole();}">
+                  <div style="display: flex; gap: 6px;">
+                    <select id="editGReqRoleSelect" class="form-select" style="flex: 1;">
+                      <option value="">Select Discord Server Role...</option>
+                    </select>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="addEditSelectedRequiredRole()" style="white-space: nowrap;">+ Add Role</button>
+                  </div>
                 </div>
-                <div style="flex: 1; min-width: 220px; display: flex; gap: 6px;">
+                <div style="flex: 1; min-width: 220px; display: flex; gap: 6px; align-items: flex-end;">
                   <input type="text" id="editGReqRoleManual" class="form-input" placeholder="Or paste Role ID / Name..." style="flex: 1;">
                   <button type="button" class="btn btn-outline btn-sm" onclick="addEditManualRequiredRole()" style="white-space: nowrap;">+ Add Custom</button>
                 </div>
@@ -505,19 +520,22 @@
                 <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-muted);">(Give extra ticket entries to specific roles, e.g., 2x, 3x, 5x)</span>
               </label>
               <div style="display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
-                <div style="flex: 2; min-width: 200px;">
+                <div style="flex: 2; min-width: 200px; display: flex; flex-direction: column; gap: 4px;">
+                  <input type="text" id="editGRoleMultSearch" class="form-input select-search-input" placeholder="🔍 Search server roles..." oninput="filterRoleSelect('editGRoleMultSelect', this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();addEditRoleMultiplier();}">
                   <select id="editGRoleMultSelect" class="form-select">
                     <option value="">Select Discord Server Role...</option>
                   </select>
                 </div>
-                <div style="flex: 1; min-width: 140px;">
+                <div style="flex: 1; min-width: 140px; display: flex; align-items: flex-end;">
                   <input type="text" id="editGRoleMultManual" class="form-input" placeholder="Or Role ID / Name...">
                 </div>
-                <div style="width: 130px; display: flex; align-items: center; gap: 4px;">
+                <div style="width: 130px; display: flex; align-items: center; gap: 4px; align-self: flex-end;">
                   <input type="number" id="editGRoleMultCount" class="form-input" min="1" max="100" value="2" placeholder="Entries" title="Number of entries / multiplier (e.g. 2 for 2x)">
                   <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: 600;">🎟️</span>
                 </div>
-                <button type="button" class="btn btn-primary btn-sm" onclick="addEditRoleMultiplier()" style="white-space: nowrap;">+ Add Multiplier</button>
+                <div style="display: flex; align-items: flex-end;">
+                  <button type="button" class="btn btn-primary btn-sm" onclick="addEditRoleMultiplier()" style="white-space: nowrap;">+ Add Multiplier</button>
+                </div>
               </div>
               <div id="editGRoleMultsList" class="role-badges-container" style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px;">
                 <span style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">No role multipliers configured (Standard 1x entry for everyone)</span>
