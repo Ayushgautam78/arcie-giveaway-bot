@@ -4346,8 +4346,23 @@ class GiveawayView(discord.ui.View):
         uid = str(interaction.user.id)
 
         # ---- FEATURE 3: Role Requirement Verification (OR Logic) ----
-        required_roles = g.get("tasks", {}).get("roles", [])
-        if required_roles and isinstance(required_roles, list) and len(required_roles) > 0:
+        raw_req_roles = (
+            (g.get("tasks", {}).get("roles") if isinstance(g.get("tasks"), dict) else None)
+            or g.get("required_roles")
+            or g.get("roles")
+            or []
+        )
+        required_roles = []
+        if isinstance(raw_req_roles, list):
+            for r in raw_req_roles:
+                if isinstance(r, dict):
+                    rid = str(r.get("id") or r.get("name") or "").strip()
+                else:
+                    rid = str(r).strip()
+                if rid and rid != "@everyone" and rid not in required_roles:
+                    required_roles.append(rid)
+
+        if required_roles:
             member = interaction.user
             if not isinstance(member, discord.Member) and interaction.guild:
                 member = interaction.guild.get_member(interaction.user.id)
@@ -4365,15 +4380,24 @@ class GiveawayView(discord.ui.View):
                         if rid_str.isdigit():
                             role_mentions.append(f"<@&{rid_str}>")
                         else:
-                            role_mentions.append(f"**{rid_str}**")
-                    roles_text = "\n".join(f"  • {rm}" for rm in role_mentions)
-                    await safe_respond(
-                        interaction,
-                        f"**Role Required!**\n\n"
-                        f"You must have **at least ONE** of the following roles to enter:\n{roles_text}\n\n"
-                        f"*Check the server's role-gating channels to earn a qualifying role.*",
-                        ephemeral=True
-                    )
+                            role_mentions.append(f"**@{rid_str.lstrip('@')}**")
+                    if len(role_mentions) == 1:
+                        await safe_respond(
+                            interaction,
+                            f"❌ **Role Required!**\n\n"
+                            f"You must have the {role_mentions[0]} role to join this giveaway.\n\n"
+                            f"*Check the server's role-gating channels to earn this role.*",
+                            ephemeral=True
+                        )
+                    else:
+                        roles_text = "\n".join(f"  • {rm}" for rm in role_mentions)
+                        await safe_respond(
+                            interaction,
+                            f"❌ **Role Required!**\n\n"
+                            f"You must have **at least ONE** of the following roles to enter:\n{roles_text}\n\n"
+                            f"*Check the server's role-gating channels to earn a qualifying role.*",
+                            ephemeral=True
+                        )
                     return
 
         # 1. Check if user is already registered FIRST
@@ -7299,8 +7323,45 @@ def build_giveaway_embed(g_data: dict):
     embed.add_field(name="Network", value=g_data.get("network", "Ethereum"), inline=True)
     embed.add_field(name="Ends At", value=f"<t:{int(g_data.get('ends_at', time.time()))}:R>", inline=True)
 
-    # Render Tasks / Requirements Field with Clean Formatting (No Emojis)
+    # 1. Parse & Render Prominent Role Requirement Field (🛡️ ROLE REQUIREMENT)
     tasks = g_data.get("tasks", {})
+    raw_req_roles = (
+        (tasks.get("roles") if isinstance(tasks, dict) else None)
+        or g_data.get("required_roles")
+        or g_data.get("roles")
+        or []
+    )
+    req_roles = []
+    if isinstance(raw_req_roles, list):
+        for r in raw_req_roles:
+            if isinstance(r, dict):
+                r_id = str(r.get("id") or r.get("name") or "").strip()
+            else:
+                r_id = str(r).strip()
+            if r_id and r_id != "@everyone" and r_id not in req_roles:
+                req_roles.append(r_id)
+
+    if req_roles:
+        if len(req_roles) == 1:
+            r_mention = f"<@&{req_roles[0]}>" if req_roles[0].isdigit() else f"**@{req_roles[0].lstrip('@')}**"
+            role_req_desc = f"• You must have the {r_mention} role to join this giveaway."
+        else:
+            role_pills = []
+            for r in req_roles:
+                if r.isdigit():
+                    role_pills.append(f"• <@&{r}>")
+                else:
+                    cname = r.lstrip("@")
+                    role_pills.append(f"• **@{cname}**")
+            roles_list_lines = "\n".join(role_pills)
+            role_req_desc = f"You must have **at least ONE** of the following roles to enter:\n{roles_list_lines}"
+        embed.add_field(
+            name="🛡️ ROLE REQUIREMENT",
+            value=role_req_desc,
+            inline=False
+        )
+
+    # 2. Render Tasks / Requirements Field with Clean Formatting (No Emojis)
     task_lines = []
     if isinstance(tasks, dict):
         dyn_tasks = tasks.get("dynamic_tasks", [])
@@ -7339,23 +7400,22 @@ def build_giveaway_embed(g_data: dict):
             if tasks.get("manual_task"):
                 link_str = format_task_link("manual_task", tasks['manual_task']).replace("• ", "").strip()
                 task_lines.append(f"• **Custom Task:** {link_str}")
-            if tasks.get("roles"):
-                role_fmt = []
-                for r in tasks["roles"]:
-                    r_str = str(r).strip()
-                    if r_str.isdigit():
-                        role_fmt.append(f"<@&{r_str}>")
-                    else:
-                        role_fmt.append(f"@{r_str.lstrip('@')}")
-                roles_formatted = " or ".join(role_fmt)
-                task_lines.append(f"• **Required Role (Any 1):** {roles_formatted}")
 
-        if tasks.get("require_evm"):
+        # Summary line for required roles inside tasks box
+        if req_roles:
+            if len(req_roles) == 1:
+                r_fmt = f"<@&{req_roles[0]}>" if req_roles[0].isdigit() else f"@{req_roles[0].lstrip('@')}"
+                task_lines.append(f"• **Required Role:** {r_fmt}")
+            else:
+                r_fmt_list = [f"<@&{r}>" if r.isdigit() else f"@{r.lstrip('@')}" for r in req_roles]
+                task_lines.append(f"• **Required Role (Any 1):** {' or '.join(r_fmt_list)}")
+
+        if tasks.get("require_evm") or g_data.get("require_evm"):
             if g_data.get("id") == "g_1786106868032":
                 task_lines.append("• **Submit EVM Wallet (0x...)**")
             else:
                 task_lines.append("• **Submit Main & FCFS EVM Wallets (0x...)**")
-        if tasks.get("require_solana"):
+        if tasks.get("require_solana") or g_data.get("require_solana"):
             task_lines.append("• **Submit Solana Wallet**")
 
     if task_lines:
