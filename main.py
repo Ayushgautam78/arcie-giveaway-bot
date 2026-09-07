@@ -684,14 +684,20 @@ def get_user_profile_fast(uid: str, usr: Optional[discord.User] = None) -> dict:
                     if e.get("evm_wallet") or e.get("solana_wallet") or e.get("twitter") or e.get("telegram"):
                         display_name = getattr(usr, 'display_name', None) or e.get("display_name") or uid_str
                         username = getattr(usr, 'name', None) or e.get("username") or uid_str
+                        raw_evm = str(e.get("evm_wallet") or "").strip()
+                        evm_clean = raw_evm if is_valid_evm_address(raw_evm) else ""
+                        raw_fcfs = str(e.get("fcfs_evm_wallet") or e.get("burner_evm_wallet") or "").strip()
+                        fcfs_clean = raw_fcfs if is_valid_evm_address(raw_fcfs) else ""
                         prof = {
                             "display_name": display_name,
                             "username": username,
                             "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            "evm_wallet": e.get("evm_wallet", ""),
-                            "solana_wallet": e.get("solana_wallet", ""),
-                            "twitter": e.get("twitter", ""),
-                            "telegram": e.get("telegram", "")
+                            "evm_wallet": evm_clean,
+                            "fcfs_evm_wallet": fcfs_clean,
+                            "burner_evm_wallet": fcfs_clean,
+                            "solana_wallet": str(e.get("solana_wallet") or "").strip(),
+                            "twitter": str(e.get("twitter") or "").strip(),
+                            "telegram": str(e.get("telegram") or "").strip()
                         }
                         user_profiles[uid_str] = prof
                         save_user_profiles()
@@ -5992,22 +5998,61 @@ async def rumble_command(
 # -------- Slash Commands for Profile & Giveaways -------- #
 
 class UserProfileModal(discord.ui.Modal, title="Update Web3 Socials & Wallets"):
-    twitter = discord.ui.TextInput(label="Twitter / X Handle", placeholder="@yourhandle", required=False)
-    telegram = discord.ui.TextInput(label="Telegram Handle", placeholder="@username", required=False)
-    evm = discord.ui.TextInput(label="Main EVM Wallet (0x...)", placeholder="0x1234...5678", required=True, min_length=42, max_length=42)
-    burner_evm = discord.ui.TextInput(label="FCFS EVM Wallet (0x...)", placeholder="0xabcd...ef01", required=True, min_length=42, max_length=42)
-    solana = discord.ui.TextInput(label="Solana Wallet Address", placeholder="Public Key...", required=False)
+    twitter = discord.ui.TextInput(
+        label="Twitter / X Handle",
+        placeholder="@yourhandle",
+        required=False,
+        max_length=64
+    )
+    telegram = discord.ui.TextInput(
+        label="Telegram Handle",
+        placeholder="@username",
+        required=False,
+        max_length=64
+    )
+    evm = discord.ui.TextInput(
+        label="Main EVM Wallet (0x...)",
+        placeholder="0x1234...5678 (42 characters)",
+        required=False,
+        max_length=64
+    )
+    burner_evm = discord.ui.TextInput(
+        label="FCFS EVM Wallet (0x...)",
+        placeholder="Optional (defaults to Main EVM if blank)",
+        required=False,
+        max_length=64
+    )
+    solana = discord.ui.TextInput(
+        label="Solana Wallet Address",
+        placeholder="Public Key...",
+        required=False,
+        max_length=64
+    )
 
     async def on_submit(self, interaction: discord.Interaction):
         uid = str(interaction.user.id)
         evm_val = self.evm.value.strip() if self.evm.value else ""
         burner_val = self.burner_evm.value.strip() if self.burner_evm.value else ""
+        tw_val = self.twitter.value.strip() if self.twitter.value else ""
+        tg_val = self.telegram.value.strip() if self.telegram.value else ""
+        sol_val = self.solana.value.strip() if self.solana.value else ""
 
-        if not is_valid_evm_address(evm_val):
-            await safe_respond(interaction, "❌ **Main EVM Wallet** is mandatory and must be a valid 42-character 0x address.", ephemeral=True)
+        # Validate EVM if provided
+        if evm_val and not is_valid_evm_address(evm_val):
+            await safe_respond(
+                interaction,
+                "❌ **Main EVM Wallet** must be a valid 42-character 0x address (e.g., `0x1234...5678`).",
+                ephemeral=True
+            )
             return
-        if not is_valid_evm_address(burner_val):
-            await safe_respond(interaction, "❌ **FCFS EVM Wallet** is mandatory and must be a valid 42-character 0x address.", ephemeral=True)
+
+        # Validate FCFS EVM if provided
+        if burner_val and not is_valid_evm_address(burner_val):
+            await safe_respond(
+                interaction,
+                "❌ **FCFS EVM Wallet** must be a valid 42-character 0x address (e.g., `0xabcd...ef01`).",
+                ephemeral=True
+            )
             return
 
         if uid not in user_profiles:
@@ -6017,24 +6062,41 @@ class UserProfileModal(discord.ui.Modal, title="Update Web3 Socials & Wallets"):
                 "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
             }
         
-        user_profiles[uid]["twitter"] = self.twitter.value.strip() if self.twitter.value else ""
-        user_profiles[uid]["telegram"] = self.telegram.value.strip() if self.telegram.value else ""
-        user_profiles[uid]["evm_wallet"] = evm_val
-        user_profiles[uid]["fcfs_evm_wallet"] = burner_val
-        user_profiles[uid]["burner_evm_wallet"] = burner_val
-        user_profiles[uid]["solana_wallet"] = self.solana.value.strip() if self.solana.value else ""
+        prof = user_profiles[uid]
+
+        # If user entered an EVM wallet but left FCFS blank, and had no existing FCFS wallet:
+        # Default FCFS EVM to Main EVM so they're covered for both
+        existing_fcfs = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet")
+        if not burner_val and evm_val and not existing_fcfs:
+            burner_val = evm_val
+
+        # Update fields if provided (or preserve existing if left empty and field was not explicitly cleared)
+        if tw_val:
+            prof["twitter"] = tw_val
+        if tg_val:
+            prof["telegram"] = tg_val
+        if evm_val:
+            prof["evm_wallet"] = evm_val
+        if burner_val:
+            prof["fcfs_evm_wallet"] = burner_val
+            prof["burner_evm_wallet"] = burner_val
+        if sol_val:
+            prof["solana_wallet"] = sol_val
+
         save_user_profiles()
         if FIREBASE_URL:
-            await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
+            await firebase_put(f"user_profiles/{uid}", prof)
         await sync_user_profile_to_unlocked_giveaways(uid)
 
         embed = discord.Embed(title="👤 Profile & Wallets Saved", color=discord.Color.green())
-        embed.add_field(name="Twitter", value=self.twitter.value or "Not set", inline=True)
-        embed.add_field(name="Telegram", value=self.telegram.value or "Not set", inline=True)
-        embed.add_field(name="Main EVM Wallet", value=f"`{evm_val}`", inline=False)
-        embed.add_field(name="FCFS EVM Wallet", value=f"`{burner_val}`", inline=False)
-        embed.add_field(name="Solana Wallet", value=f"`{self.solana.value}`" if self.solana.value else "Not set", inline=False)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        embed.add_field(name="Twitter", value=prof.get("twitter") or "*Not set*", inline=True)
+        embed.add_field(name="Telegram", value=prof.get("telegram") or "*Not set*", inline=True)
+        embed.add_field(name="Main EVM Wallet", value=f"`{prof.get('evm_wallet')}`" if prof.get('evm_wallet') else "*Not set*", inline=False)
+        fcfs_display = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet")
+        embed.add_field(name="FCFS EVM Wallet", value=f"`{fcfs_display}`" if fcfs_display else "*Not set*", inline=False)
+        embed.add_field(name="Solana Wallet", value=f"`{prof.get('solana_wallet')}`" if prof.get('solana_wallet') else "*Not set*", inline=False)
+        embed.set_footer(text="Edit anytime using /profile | Powered by Arcie Bot")
+        await safe_respond(interaction, embed=embed, ephemeral=True)
 
 
 @bot.tree.error
@@ -6057,14 +6119,22 @@ async def profile_cmd(interaction: discord.Interaction):
         uid = str(interaction.user.id)
         prof = get_user_profile_fast(uid, interaction.user)
         modal = UserProfileModal()
-        if prof.get("twitter"): modal.twitter.default = prof.get("twitter")
-        if prof.get("telegram"): modal.telegram.default = prof.get("telegram")
-        if prof.get("evm_wallet"): modal.evm.default = prof.get("evm_wallet")
-        fcfs_saved = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet")
-        if fcfs_saved: modal.burner_evm.default = fcfs_saved
-        if prof.get("solana_wallet"): modal.solana.default = prof.get("solana_wallet")
+        if prof.get("twitter"):
+            modal.twitter.default = str(prof.get("twitter"))
+        if prof.get("telegram"):
+            modal.telegram.default = str(prof.get("telegram"))
+        evm_val = str(prof.get("evm_wallet") or "").strip()
+        if evm_val and is_valid_evm_address(evm_val):
+            modal.evm.default = evm_val
+        fcfs_val = str(prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet") or "").strip()
+        if fcfs_val and is_valid_evm_address(fcfs_val):
+            modal.burner_evm.default = fcfs_val
+        if prof.get("solana_wallet"):
+            modal.solana.default = str(prof.get("solana_wallet"))
         await interaction.response.send_modal(modal)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"[PROFILE CMD ERROR] {e}")
         await safe_respond(interaction, f"❌ Failed to open profile: {e}", ephemeral=True)
 
@@ -6702,11 +6772,12 @@ async def recover_all_profiles_cmd(interaction: discord.Interaction):
                             "username": e.get("username", uid),
                             "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
                         })
-                        if e.get("evm_wallet") and not prof.get("evm_wallet"):
-                            prof["evm_wallet"] = e["evm_wallet"]
+                        evm_cand = str(e.get("evm_wallet") or "").strip()
+                        if evm_cand and is_valid_evm_address(evm_cand) and not prof.get("evm_wallet"):
+                            prof["evm_wallet"] = evm_cand
                             recovered_count += 1
-                        fcfs_e = e.get("fcfs_evm_wallet") or e.get("burner_evm_wallet")
-                        if fcfs_e and not (prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet")):
+                        fcfs_e = str(e.get("fcfs_evm_wallet") or e.get("burner_evm_wallet") or "").strip()
+                        if fcfs_e and is_valid_evm_address(fcfs_e) and not (prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet")):
                             prof["fcfs_evm_wallet"] = fcfs_e
                             prof["burner_evm_wallet"] = fcfs_e
                             recovered_count += 1
@@ -8796,11 +8867,17 @@ async def start_health_server():
         evm_wallet = str(body.get("evm_wallet", "")).strip()
         fcfs_evm = str(body.get("fcfs_evm_wallet") or body.get("burner_evm_wallet", "")).strip()
 
-        # Enforce valid 0x 42-character EVM address for both Main EVM and FCFS EVM
-        if not is_valid_evm_address(evm_wallet):
-            return web.json_response({"error": "Main EVM Wallet is mandatory and must be a valid 42-character 0x address."}, status=400)
-        if not is_valid_evm_address(fcfs_evm):
-            return web.json_response({"error": "FCFS EVM Wallet is mandatory and must be a valid 42-character 0x address."}, status=400)
+        # Validate EVM addresses if provided
+        if evm_wallet and not is_valid_evm_address(evm_wallet):
+            return web.json_response({"error": "Main EVM Wallet must be a valid 42-character 0x address."}, status=400)
+        if fcfs_evm and not is_valid_evm_address(fcfs_evm):
+            return web.json_response({"error": "FCFS EVM Wallet must be a valid 42-character 0x address."}, status=400)
+
+        # If user entered Main EVM but left FCFS blank, default FCFS to Main EVM if not previously set
+        existing_prof = user_profiles.get(uid, {})
+        existing_fcfs = existing_prof.get("fcfs_evm_wallet") or existing_prof.get("burner_evm_wallet")
+        if not fcfs_evm and evm_wallet and not existing_fcfs:
+            fcfs_evm = evm_wallet
 
         if uid not in user_profiles:
             user_profiles[uid] = {
@@ -8809,12 +8886,18 @@ async def start_health_server():
                 "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
             }
 
-        user_profiles[uid]["twitter"] = body.get("twitter", "").strip()
-        user_profiles[uid]["telegram"] = body.get("telegram", "").strip()
-        user_profiles[uid]["evm_wallet"] = evm_wallet
-        user_profiles[uid]["fcfs_evm_wallet"] = fcfs_evm
-        user_profiles[uid]["burner_evm_wallet"] = fcfs_evm
-        user_profiles[uid]["solana_wallet"] = body.get("solana_wallet", "").strip()
+        prof = user_profiles[uid]
+        if "twitter" in body:
+            prof["twitter"] = body.get("twitter", "").strip()
+        if "telegram" in body:
+            prof["telegram"] = body.get("telegram", "").strip()
+        if evm_wallet:
+            prof["evm_wallet"] = evm_wallet
+        if fcfs_evm:
+            prof["fcfs_evm_wallet"] = fcfs_evm
+            prof["burner_evm_wallet"] = fcfs_evm
+        if "solana_wallet" in body:
+            prof["solana_wallet"] = body.get("solana_wallet", "").strip()
         save_user_profiles()
         if FIREBASE_URL:
             await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
