@@ -228,6 +228,16 @@ async function loadGuildRoles() {
     if (editReqRole && editReqRole.tagName === 'SELECT') {
       editReqRole.innerHTML = reqRoleOpts;
     }
+
+    const gRoleMult = document.getElementById('gRoleMultSelect');
+    if (gRoleMult && gRoleMult.tagName === 'SELECT') {
+      gRoleMult.innerHTML = reqRoleOpts;
+    }
+
+    const editRoleMult = document.getElementById('editGRoleMultSelect');
+    if (editRoleMult && editRoleMult.tagName === 'SELECT') {
+      editRoleMult.innerHTML = reqRoleOpts;
+    }
   } catch (err) {
     console.error('Failed to load roles:', err);
   }
@@ -327,6 +337,118 @@ function removeEditRequiredRole(index) {
   if (index >= 0 && index < editRequiredRoles.length) {
     editRequiredRoles.splice(index, 1);
     renderEditRequiredRoles();
+  }
+}
+
+// -------- Role-Based Extra Entries / Multipliers Management -------- //
+let createRoleMultipliers = [];
+let editRoleMultipliers = [];
+
+function renderCreateRoleMultipliers() {
+  const container = document.getElementById('gRoleMultsList');
+  if (!container) return;
+  if (!createRoleMultipliers.length) {
+    container.innerHTML = `<span style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">No role multipliers configured (Standard 1x entry for everyone)</span>`;
+    return;
+  }
+  container.innerHTML = createRoleMultipliers.map((rm, idx) => `
+    <span class="role-badge-chip" style="background: rgba(234, 179, 8, 0.15); border-color: rgba(234, 179, 8, 0.35); color: #fde047;">
+      🎟️ @${escapeHtml(rm.name || rm.id)} — <b>${rm.multiplier}x ${rm.multiplier === 1 ? 'Entry' : 'Entries'}</b>
+      <span class="remove-btn" onclick="removeRoleMultiplier(${idx})" title="Remove multiplier">×</span>
+    </span>
+  `).join('');
+}
+
+function addRoleMultiplier() {
+  const sel = document.getElementById('gRoleMultSelect');
+  const manual = document.getElementById('gRoleMultManual');
+  const countInp = document.getElementById('gRoleMultCount');
+  const count = parseInt(countInp ? countInp.value : 2) || 1;
+
+  let roleId = '';
+  let roleName = '';
+
+  if (sel && sel.value) {
+    roleId = sel.value;
+    const opt = sel.options[sel.selectedIndex];
+    roleName = opt.getAttribute('data-name') || opt.text.replace(/^@/, '').split(' (')[0];
+    sel.value = '';
+  } else if (manual && manual.value.trim()) {
+    roleId = manual.value.trim();
+    roleName = roleId;
+    manual.value = '';
+  } else {
+    showToast('Please select or type a Discord role', 'info');
+    return;
+  }
+
+  const existingIdx = createRoleMultipliers.findIndex(r => r.id === roleId || r.name.toLowerCase() === roleName.toLowerCase());
+  if (existingIdx >= 0) {
+    createRoleMultipliers[existingIdx].multiplier = count;
+  } else {
+    createRoleMultipliers.push({ id: roleId, name: roleName, multiplier: count });
+  }
+  renderCreateRoleMultipliers();
+}
+
+function removeRoleMultiplier(idx) {
+  if (idx >= 0 && idx < createRoleMultipliers.length) {
+    createRoleMultipliers.splice(idx, 1);
+    renderCreateRoleMultipliers();
+  }
+}
+
+function renderEditRoleMultipliers() {
+  const container = document.getElementById('editGRoleMultsList');
+  if (!container) return;
+  if (!editRoleMultipliers.length) {
+    container.innerHTML = `<span style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">No role multipliers configured (Standard 1x entry for everyone)</span>`;
+    return;
+  }
+  container.innerHTML = editRoleMultipliers.map((rm, idx) => `
+    <span class="role-badge-chip" style="background: rgba(234, 179, 8, 0.15); border-color: rgba(234, 179, 8, 0.35); color: #fde047;">
+      🎟️ @${escapeHtml(rm.name || rm.id)} — <b>${rm.multiplier}x ${rm.multiplier === 1 ? 'Entry' : 'Entries'}</b>
+      <span class="remove-btn" onclick="removeEditRoleMultiplier(${idx})" title="Remove multiplier">×</span>
+    </span>
+  `).join('');
+}
+
+function addEditRoleMultiplier() {
+  const sel = document.getElementById('editGRoleMultSelect');
+  const manual = document.getElementById('editGRoleMultManual');
+  const countInp = document.getElementById('editGRoleMultCount');
+  const count = parseInt(countInp ? countInp.value : 2) || 1;
+
+  let roleId = '';
+  let roleName = '';
+
+  if (sel && sel.value) {
+    roleId = sel.value;
+    const opt = sel.options[sel.selectedIndex];
+    roleName = opt.getAttribute('data-name') || opt.text.replace(/^@/, '').split(' (')[0];
+    sel.value = '';
+  } else if (manual && manual.value.trim()) {
+    roleId = manual.value.trim();
+    roleName = roleId;
+    manual.value = '';
+  } else {
+    showToast('Please select or type a Discord role', 'info');
+    return;
+  }
+
+  const existingIdx = editRoleMultipliers.findIndex(r => r.id === roleId || r.name.toLowerCase() === roleName.toLowerCase());
+  if (existingIdx >= 0) {
+    editRoleMultipliers[existingIdx].multiplier = count;
+  } else {
+    editRoleMultipliers.push({ id: roleId, name: roleName, multiplier: count });
+  }
+  renderEditRoleMultipliers();
+}
+
+function removeEditRoleMultiplier(idx) {
+  if (idx >= 0 && idx < editRoleMultipliers.length) {
+    editRoleMultipliers.splice(idx, 1);
+    renderEditRoleMultipliers();
   }
 }
 
@@ -647,6 +769,7 @@ function renderGiveaways(highlightedGiveaway = null) {
           <div class="g-desc">${formatMarkdownDescription(g.description)}</div>
 
           <div class="g-badge-container">
+            ${g.is_done ? '<span class="g-badge" style="background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); font-weight: 700;">🔒 Done</span>' : ''}
             ${isEnded ? '<span class="g-badge g-badge-ended">🔒 Ended</span>' : `<span class="g-badge g-badge-timer">⏳ ${timeLeft}</span>`}
           </div>
 
@@ -656,6 +779,11 @@ function renderGiveaways(highlightedGiveaway = null) {
               ${reqs.slice(0, 4).join('')}
               ${reqs.length > 4 ? `<li style="font-style: italic; font-size: 0.78rem;">+ ${reqs.length - 4} more requirements</li>` : ''}
             </ul>
+            ${(g.role_multipliers && g.role_multipliers.length) ? `
+              <div style="margin-top: 6px; font-size: 0.78rem; color: #fbbf24; font-weight: 600;">
+                🎟️ Bonus: ${g.role_multipliers.map(rm => `@${escapeHtml(rm.name || rm.id)} (${rm.multiplier}x)`).join(', ')}
+              </div>
+            ` : ''}
           </div>
         </div>
 
@@ -913,6 +1041,7 @@ async function submitCreateGiveaway() {
       guaranteed_spots: (spot_tiers.find(t => t.name?.toLowerCase().includes('guarantee') || t.name === 'GTD') || {}).count || 0,
       fcfs_spots: (spot_tiers.find(t => t.name?.toLowerCase().includes('fcfs')) || {}).count || 0,
       entries_count: 0,
+      role_multipliers: createRoleMultipliers,
       tasks: {
         dynamic_tasks,
         require_evm,
@@ -953,9 +1082,12 @@ async function submitCreateGiveaway() {
       showToast('🚀 Giveaway created (Cloud DB sync)!', 'success');
     }
 
+    closeModal('createModal');
     createRequiredRoles = [];
     renderCreateRequiredRoles();
-    closeModal('createModal');
+    createRoleMultipliers = [];
+    renderCreateRoleMultipliers();
+    resetCreateForm();
     await loadGiveaways();
   } finally {
     isSubmittingCreate = false;
@@ -1139,6 +1271,17 @@ function openEditModal(giveawayId) {
   });
   renderEditRequiredRoles();
 
+  // Populate role multipliers
+  editRoleMultipliers = [];
+  if (g.role_multipliers && Array.isArray(g.role_multipliers)) {
+    editRoleMultipliers = g.role_multipliers.map(rm => ({
+      id: String(rm.id || '').trim(),
+      name: rm.name || rm.id || '',
+      multiplier: parseInt(rm.multiplier || rm.entries || 1) || 1
+    }));
+  }
+  renderEditRoleMultipliers();
+
   document.getElementById('editReqEvm').checked = !!g.tasks?.require_evm;
   document.getElementById('editReqSolana').checked = !!g.tasks?.require_solana;
 
@@ -1217,6 +1360,7 @@ async function submitEditGiveaway() {
     g.duration_unit = duration_unit;
     g.ends_at = g.created_at + durationInSeconds;
     g.spot_tiers = spot_tiers;
+    g.role_multipliers = editRoleMultipliers;
     g.tasks = {
       dynamic_tasks,
       require_evm,
@@ -1422,12 +1566,24 @@ async function openDetailModal(giveawayId) {
       <div style="font-size: 0.98rem; color: var(--text-main); line-height: 1.6; background: rgba(0,0,0,0.25); padding: 1rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">${formatMarkdownDescription(g.description)} ${renderSocialButtonsHTML(g.social_links)}</div>
       
       <div class="g-badge-container">
+        ${g.is_done ? '<span class="g-badge" style="background: rgba(234,179,8,0.2); color: #facc15; border: 1px solid rgba(234,179,8,0.4); font-weight: 700;">🔒 Done (Sheet Locked)</span>' : ''}
         <span class="g-badge g-badge-timer">🌐 Network: ${escapeHtml(g.network || 'Ethereum')}</span>
         ${isEnded ? '<span class="g-badge g-badge-ended">🔒 Ended</span>' : `<span class="g-badge g-badge-timer">⏳ Ends ${getTimeLeftString(g.ends_at)}</span>`}
         <span class="g-badge" style="background: rgba(99,102,241,0.2); color: #818cf8; border: 1px solid rgba(99,102,241,0.3);">👑 Hosted by ${escapeHtml(g.hosted_by || 'Admin')}</span>
       </div>
 
       ${spotTiersHtml}
+
+      ${(g.role_multipliers && g.role_multipliers.length) ? `
+        <div style="background: rgba(234, 179, 8, 0.08); border: 1px solid rgba(234, 179, 8, 0.25); border-radius: var(--radius-sm); padding: 0.85rem 1rem;">
+          <div style="font-size: 0.8rem; color: #fbbf24; text-transform: uppercase; font-weight: 700; margin-bottom: 6px;">🎟️ Role Entry Multipliers</div>
+          <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+            ${g.role_multipliers.map(rm => `<span class="badge" style="background: rgba(234, 179, 8, 0.15); color: #fde047; border: 1px solid rgba(234, 179, 8, 0.3); padding: 4px 10px; border-radius: var(--radius-sm); font-size: 0.85rem; font-weight: 600;">🎟️ @${escapeHtml(rm.name || rm.id)}: <b>${rm.multiplier}x ${rm.multiplier === 1 ? 'Entry' : 'Entries'}</b></span>`).join(' ')}
+          </div>
+        </div>
+      ` : ''}
+
+      <div id="userBonusEntriesSection"></div>
 
       <div class="g-tasks-summary">
         <div class="g-tasks-title">Giveaway Task Requirements</div>
@@ -1446,6 +1602,35 @@ async function openDetailModal(giveawayId) {
   // Public participants list (visible to everyone)
   await loadPublicParticipants(giveawayId, g.network || 'Ethereum', g.winners_text || '');
 
+  // Populate logged-in user bonus entries widget
+  const bonusContainer = document.getElementById('userBonusEntriesSection');
+  if (bonusContainer) {
+    if (currentUser && currentUser.id) {
+      const myEntry = (allPublicEntries || []).find(e => String(e.user_id) === String(currentUser.id));
+      const availBonus = currentUser.bonus_entries || 0;
+      if (myEntry && !isEnded) {
+        bonusContainer.innerHTML = `
+          <div style="background: rgba(234, 179, 8, 0.08); border: 1px solid rgba(234, 179, 8, 0.25); border-radius: var(--radius-sm); padding: 0.85rem 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <div>
+              <div style="font-weight: 700; color: #fbbf24; font-size: 0.9rem;">🎟️ Your Entries: ${myEntry.multiplier || 1}x ${myEntry.bonus_entries_used ? `(+${myEntry.bonus_entries_used} Bonus = ${(myEntry.multiplier || 1) + myEntry.bonus_entries_used}x Total)` : ''}</div>
+              <div style="font-size: 0.8rem; color: var(--text-muted);">Available Bonus Entries in Profile: <b>${availBonus}</b> 🎟️</div>
+            </div>
+            ${availBonus > 0 ? `
+              <div style="display: flex; gap: 6px; align-items: center;">
+                <input type="number" id="detailBonusAmount" class="form-input" min="1" max="${availBonus}" value="1" style="width: 70px; padding: 4px 8px; font-size: 0.85rem;">
+                <button class="btn btn-primary btn-sm" onclick="submitApplyBonusEntries('${g.id}')">🎟️ Apply Bonus Entries</button>
+              </div>
+            ` : ''}
+          </div>
+        `;
+      } else {
+        bonusContainer.innerHTML = '';
+      }
+    } else {
+      bonusContainer.innerHTML = '';
+    }
+  }
+
   // Admin Box setup
   const adminBox = document.getElementById('adminControlBox');
   if (isAdmin) {
@@ -1461,11 +1646,78 @@ async function openDetailModal(giveawayId) {
     }
     document.getElementById('exportAllEntriesBtn').onclick = () => exportAllEntriesCSV(giveawayId);
     document.getElementById('exportWinnersBtn').onclick = () => exportWinnersCSV(giveawayId);
+
+    // Setup Mark Done button & Lock notice banner
+    const markDoneBtn = document.getElementById('markDoneAdminBtn');
+    const lockNotice = document.getElementById('lockStatusNotice');
+    if (markDoneBtn) {
+      if (g.is_done) {
+        markDoneBtn.innerHTML = '🔒 Done (Locked) — Click to Re-open';
+        markDoneBtn.className = 'btn btn-outline-warning btn-sm';
+        if (lockNotice) {
+          lockNotice.style.display = 'block';
+          lockNotice.style.background = 'rgba(234, 179, 8, 0.12)';
+          lockNotice.style.border = '1px solid rgba(234, 179, 8, 0.4)';
+          lockNotice.style.color = '#facc15';
+          lockNotice.innerHTML = '🔒 <strong>Sheet Locked &amp; Frozen:</strong> This giveaway is marked as <strong>DONE</strong>. Participant and winner EVM / FCFS EVM wallet addresses are permanently frozen for distribution and will not change when users update their profiles.';
+        }
+      } else {
+        markDoneBtn.innerHTML = '✅ Done (Lock Sheet)';
+        markDoneBtn.className = 'btn btn-success btn-sm';
+        if (lockNotice) {
+          lockNotice.style.display = 'block';
+          lockNotice.style.background = 'rgba(16, 185, 129, 0.1)';
+          lockNotice.style.border = '1px solid rgba(16, 185, 129, 0.3)';
+          lockNotice.style.color = '#34d399';
+          lockNotice.innerHTML = '🟢 <strong>Live Sync Active:</strong> Participant &amp; winner EVM / FCFS EVM addresses automatically update live if users edit their profiles. Click <strong>"Done (Lock Sheet)"</strong> when ready to freeze addresses for distribution.';
+        }
+      }
+      markDoneBtn.onclick = () => toggleGiveawayDone(giveawayId);
+    }
   } else {
     adminBox.style.display = 'none';
   }
 
   openModal('detailModal');
+}
+
+async function toggleGiveawayDone(giveawayId) {
+  const g = allGiveaways.find(x => x.id === giveawayId);
+  const currentlyDone = g && g.is_done;
+  const actionText = currentlyDone 
+    ? "Unlock this giveaway sheet? Live syncing of user profile wallets will be re-enabled."
+    : "Mark this giveaway as DONE? This will permanently FREEZE all participant and winner wallet addresses (Main EVM and FCFS EVM) so user profile edits will no longer alter the distribution sheet or CSV downloads.";
+
+  if (!confirm(actionText)) return;
+
+  try {
+    const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}/mark-done`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ is_done: !currentlyDone })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      showToast(data.error || 'Failed to update giveaway done status', 'error');
+      return;
+    }
+
+    showToast(data.message || (data.is_done ? '🔒 Giveaway marked Done! Sheet is frozen.' : '🟢 Giveaway unlocked!'), 'success');
+    
+    // Update local giveaway object
+    if (g) {
+      g.is_done = data.is_done;
+      if (data.giveaway) Object.assign(g, data.giveaway);
+    }
+    
+    // Refresh modal and giveaways list
+    await fetchGiveaways();
+    openDetailModal(giveawayId);
+  } catch (err) {
+    console.error('Toggle done error:', err);
+    showToast('Failed to update status', 'error');
+  }
 }
 
 function copyShareLink(giveawayId) {
@@ -1507,22 +1759,22 @@ async function loadPublicParticipants(giveawayId, network, winnersText = '') {
   try {
     let entries = [];
 
-    // 1. Try Firebase directly
-    const fbData = await firebaseGet('giveaway_entries/' + giveawayId);
-    if (fbData && typeof fbData === 'object') {
-      entries = Array.isArray(fbData) ? fbData : Object.values(fbData);
+    // 1. Fetch from backend API first (which applies live profile wallet sync if not Done, or frozen if Done)
+    try {
+      const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        entries = data.entries || [];
+      }
+    } catch (e) {
+      console.warn('Backend API detail fetch failed, falling back to Firebase:', e);
     }
 
-    // 2. Fallback to backend API
+    // 2. Fallback to Firebase directly
     if (!entries || entries.length === 0) {
-      try {
-        const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
-        if (res.ok) {
-          const data = await res.json();
-          entries = data.entries || [];
-        }
-      } catch (e) {
-        console.warn('Backend API fallback unavailable:', e);
+      const fbData = await firebaseGet('giveaway_entries/' + giveawayId);
+      if (fbData && typeof fbData === 'object') {
+        entries = Array.isArray(fbData) ? fbData : Object.values(fbData);
       }
     }
 
@@ -1541,7 +1793,7 @@ function renderPublicParticipantsTable(entries, walletField, winnersText = '') {
   if (!tbody) return;
 
   if (!entries || entries.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">No participants found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">No participants found.</td></tr>';
     return;
   }
 
@@ -1564,10 +1816,15 @@ function renderPublicParticipantsTable(entries, walletField, winnersText = '') {
       statusBadge = '<span class="badge" style="background: rgba(34,197,94,0.2); color: #4ade80; border: 1px solid rgba(34,197,94,0.4); font-size: 0.78rem; font-weight: 700; padding: 2px 8px; border-radius: 4px;">🏆 Winner</span>';
     }
 
+    const mult = e.multiplier || 1;
+    const bonusUsed = e.bonus_entries_used || 0;
+    const ticketText = `🎟️ ${mult}x${bonusUsed ? ` (+${bonusUsed})` : ''}`;
+
     return `
       <tr>
         <td><b>${escapeHtml(uname)}</b></td>
         <td><code style="font-size: 0.8rem; color: var(--text-muted);">${escapeHtml(uid || 'N/A')}</code></td>
+        <td><span class="badge" style="background: rgba(234, 179, 8, 0.15); color: #fde047; border: 1px solid rgba(234, 179, 8, 0.3); font-size: 0.78rem; font-weight: 700; padding: 2px 6px; border-radius: 4px;">${ticketText}</span></td>
         <td><code style="font-size: 0.8rem; color: #60a5fa;">${escapeHtml(wallet)}</code></td>
         <td>${statusBadge}</td>
       </tr>
@@ -1667,31 +1924,35 @@ function showAllGiveawaysView() {
 // Load Participants into Admin Table with Winner Highlighting
 async function loadGiveawayParticipants(giveawayId) {
   const tbody = document.getElementById('participantsTableBody');
-  tbody.innerHTML = '<tr><td colspan="6">Loading entries...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8">Loading entries...</td></tr>';
   try {
     let entries = [];
     
-    // 1. Try reading directly from Firebase Cloud DB (works 100% on Vercel without CORS or server dependency)
-    const fbData = await firebaseGet('giveaway_entries/' + giveawayId);
-    if (fbData && typeof fbData === 'object') {
-      entries = Array.isArray(fbData) ? fbData : Object.values(fbData);
+    // 1. Fetch from backend API first (which applies live profile wallet sync if not Done, or frozen if Done)
+    try {
+      const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        entries = data.entries || [];
+        if (data.giveaway) {
+          const idx = allGiveaways.findIndex(x => x.id === giveawayId);
+          if (idx !== -1) allGiveaways[idx] = data.giveaway;
+        }
+      }
+    } catch (e) {
+      console.warn('Backend API detail fetch failed, trying Firebase:', e);
     }
 
-    // 2. Fallback to Python Backend API if Firebase is empty
+    // 2. Fallback to Firebase Cloud DB
     if (!entries || entries.length === 0) {
-      try {
-        const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
-        if (res.ok) {
-          const data = await res.json();
-          entries = data.entries || [];
-        }
-      } catch (e) {
-        console.warn('Backend API fallback unavailable:', e);
+      const fbData = await firebaseGet('giveaway_entries/' + giveawayId);
+      if (fbData && typeof fbData === 'object') {
+        entries = Array.isArray(fbData) ? fbData : Object.values(fbData);
       }
     }
     
     if (!entries || entries.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">No entries recorded yet. Users click [Join Giveaway] on Discord or website to participate!</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">No entries recorded yet. Users click [Join Giveaway] on Discord or website to participate!</td></tr>';
       return;
     }
 
@@ -1703,6 +1964,9 @@ async function loadGiveawayParticipants(giveawayId) {
         : '<span style="color: var(--text-muted);">Participant</span>';
       
       const nameStyle = isWinner ? 'color: #ffd700; font-weight: bold;' : 'font-weight: bold;';
+      const mult = e.multiplier || 1;
+      const bonusUsed = e.bonus_entries_used || 0;
+      const ticketBadge = `<span class="badge" style="background: rgba(234, 179, 8, 0.15); color: #fde047; border: 1px solid rgba(234, 179, 8, 0.3); font-weight: 700; padding: 2px 8px; border-radius: 4px;">🎟️ ${mult}x${bonusUsed ? ` (+${bonusUsed})` : ''}</span>`;
 
       return `
         <tr style="${isWinner ? 'background: rgba(255, 215, 0, 0.08);' : ''}">
@@ -1711,7 +1975,9 @@ async function loadGiveawayParticipants(giveawayId) {
             <span style="font-size: 0.75rem; color: var(--text-dim);">ID: ${e.user_id || 'N/A'}</span>
           </td>
           <td>${winnerBadge}</td>
+          <td>${ticketBadge}</td>
           <td><code>${escapeHtml(e.evm_wallet || 'None')}</code></td>
+          <td><code>${escapeHtml(e.fcfs_evm_wallet || e.burner_evm_wallet || 'None')}</code></td>
           <td><code>${escapeHtml(e.solana_wallet || 'None')}</code></td>
           <td>
             <span style="font-size: 0.8rem;">
@@ -1876,21 +2142,28 @@ async function updateVerificationStatus(giveawayId, userId, status) {
   }
 }
 
-// Export All Entries as CSV (Reads directly from Firebase over HTTPS)
+// Export All Entries as CSV (Live synced before Done, frozen after Done)
 async function exportAllEntriesCSV(giveawayId) {
   try {
     let entries = [];
-    const fbData = await firebaseGet('giveaway_entries/' + giveawayId);
-    if (fbData && typeof fbData === 'object') {
-      entries = Array.isArray(fbData) ? fbData : Object.values(fbData);
-    }
 
-    if (!entries || entries.length === 0) {
-      try {
-        const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
+    // 1. Fetch from backend API first (which applies live sync if not marked Done, or frozen if Done)
+    try {
+      const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
+      if (res.ok) {
         const data = await res.json();
         entries = data.entries || [];
-      } catch (e) {}
+      }
+    } catch (apiErr) {
+      console.warn('Backend API detail fetch failed, falling back to Firebase:', apiErr);
+    }
+
+    // 2. Fallback to Firebase
+    if (!entries || entries.length === 0) {
+      const fbData = await firebaseGet('giveaway_entries/' + giveawayId);
+      if (fbData && typeof fbData === 'object') {
+        entries = Array.isArray(fbData) ? fbData : Object.values(fbData);
+      }
     }
 
     if (!entries || entries.length === 0) {
@@ -1898,11 +2171,14 @@ async function exportAllEntriesCSV(giveawayId) {
       return;
     }
 
-    let csv = '\uFEFFDiscord Username,Discord ID,Twitter Handle,Telegram Handle,EVM Wallet,Solana Wallet,Task Status,Winner Status\n';
+    let csv = '\uFEFFDiscord Username,Discord ID,Twitter Handle,Telegram Handle,Main EVM Wallet,FCFS EVM Wallet,Solana Wallet,Entries (Tickets),Bonus Entries Used,Task Status,Winner Status\n';
     entries.forEach(e => {
       if (!e) return;
       const winnerStatus = e.winner_type ? `WINNER (${String(e.winner_type).toUpperCase()})` : 'Participant';
-      csv += `"${(e.username || e.display_name || 'User').replace(/"/g, '""')}","${e.user_id || ''}","${(e.twitter || '').replace(/"/g, '""')}","${(e.telegram || '').replace(/"/g, '""')}","${e.evm_wallet || ''}","${e.solana_wallet || ''}","${e.task_status || 'verified'}","${winnerStatus}"\n`;
+      const tickets = `${e.multiplier || 1}x`;
+      const bonusUsed = e.bonus_entries_used || 0;
+      const fcfsWallet = e.fcfs_evm_wallet || e.burner_evm_wallet || '';
+      csv += `"${(e.username || e.display_name || 'User').replace(/"/g, '""')}","${e.user_id || ''}","${(e.twitter || '').replace(/"/g, '""')}","${(e.telegram || '').replace(/"/g, '""')}","${e.evm_wallet || ''}","${fcfsWallet}","${e.solana_wallet || ''}","${tickets}","${bonusUsed}","${e.task_status || 'verified'}","${winnerStatus}"\n`;
     });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -1925,33 +2201,40 @@ async function exportAllEntriesCSV(giveawayId) {
   }
 }
 
-// Export Winners as CSV (Reads directly from Firebase over HTTPS)
+// Export Winners as CSV (Live synced before Done, frozen after Done)
 async function exportWinnersCSV(giveawayId) {
   try {
     let entries = [];
-    const fbData = await firebaseGet('giveaway_entries/' + giveawayId);
-    if (fbData && typeof fbData === 'object') {
-      entries = Array.isArray(fbData) ? fbData : Object.values(fbData);
-    }
 
-    if (!entries || entries.length === 0) {
-      try {
-        const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
+    // 1. Fetch from backend API first
+    try {
+      const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}`), { credentials: 'include' });
+      if (res.ok) {
         const data = await res.json();
         entries = data.entries || [];
-      } catch (e) {}
+      }
+    } catch (apiErr) {
+      console.warn('Backend API detail fetch failed, falling back to Firebase:', apiErr);
+    }
+
+    // 2. Fallback to Firebase
+    if (!entries || entries.length === 0) {
+      const fbData = await firebaseGet('giveaway_entries/' + giveawayId);
+      if (fbData && typeof fbData === 'object') {
+        entries = Array.isArray(fbData) ? fbData : Object.values(fbData);
+      }
     }
 
     const winners = entries.filter(e => e && e.winner_type);
-    
     if (winners.length === 0) {
       showToast('No winners to export yet.', 'info');
       return;
     }
 
-    let csv = '\uFEFFDiscord Username,Discord ID,Spot Type,EVM Wallet,Solana Wallet,Twitter Handle,Telegram Handle,Task Status\n';
+    let csv = '\uFEFFDiscord Username,Discord ID,Spot Type,Main EVM Wallet,FCFS EVM Wallet,Solana Wallet,Entries (Tickets),Twitter Handle,Telegram Handle,Task Status\n';
     winners.forEach(w => {
-      csv += `"${(w.username || w.display_name || 'User').replace(/"/g, '""')}","${w.user_id || ''}","${String(w.winner_type).toUpperCase()}","${w.evm_wallet || ''}","${w.solana_wallet || ''}","${(w.twitter || '').replace(/"/g, '""')}","${(w.telegram || '').replace(/"/g, '""')}","${w.task_status || 'verified'}"\n`;
+      const fcfsWallet = w.fcfs_evm_wallet || w.burner_evm_wallet || '';
+      csv += `"${(w.username || w.display_name || 'User').replace(/"/g, '""')}","${w.user_id || ''}","${String(w.winner_type).toUpperCase()}","${w.evm_wallet || ''}","${fcfsWallet}","${w.solana_wallet || ''}","${w.multiplier || 1}x","${(w.twitter || '').replace(/"/g, '""')}","${(w.telegram || '').replace(/"/g, '""')}","${w.task_status || 'verified'}"\n`;
     });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -1980,6 +2263,8 @@ function openProfileModal() {
   document.getElementById('profTwitter').value = currentUser.twitter || '';
   document.getElementById('profTelegram').value = currentUser.telegram || '';
   document.getElementById('profEvm').value = currentUser.evm_wallet || '';
+  const burnerInp = document.getElementById('profBurnerEvm');
+  if (burnerInp) burnerInp.value = currentUser.fcfs_evm_wallet || currentUser.burner_evm_wallet || '';
   document.getElementById('profSolana').value = currentUser.solana_wallet || '';
   openModal('profileModal');
 }
@@ -1988,24 +2273,66 @@ async function submitSaveProfile() {
   const twitter = document.getElementById('profTwitter').value.trim();
   const telegram = document.getElementById('profTelegram').value.trim();
   const evm_wallet = document.getElementById('profEvm').value.trim();
+  const fcfs_evm_wallet = document.getElementById('profBurnerEvm') ? document.getElementById('profBurnerEvm').value.trim() : '';
   const solana_wallet = document.getElementById('profSolana').value.trim();
+
+  const evmRegex = /^0x[a-fA-F0-9]{40}$/;
+  if (!evm_wallet || !evmRegex.test(evm_wallet)) {
+    showToast('❌ Main EVM Wallet is mandatory and must be a valid 0x address (42 chars).', 'error');
+    return;
+  }
+  if (!fcfs_evm_wallet || !evmRegex.test(fcfs_evm_wallet)) {
+    showToast('❌ FCFS EVM Wallet is mandatory and must be a valid 0x address (42 chars).', 'error');
+    return;
+  }
 
   try {
     const res = await fetch(apiUrl('/api/user/profile'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ twitter, telegram, evm_wallet, solana_wallet })
+      body: JSON.stringify({
+        twitter,
+        telegram,
+        evm_wallet,
+        fcfs_evm_wallet,
+        burner_evm_wallet: fcfs_evm_wallet,
+        solana_wallet
+      })
     });
     if (res.ok) {
       showToast('Profile and wallets updated!', 'success');
       closeModal('profileModal');
       await checkAuth();
     } else {
-      showToast('Failed to update profile', 'error');
+      const errData = await res.json().catch(() => ({}));
+      showToast(errData.error || 'Failed to update profile', 'error');
     }
   } catch (err) {
     showToast('Error saving profile', 'error');
+  }
+}
+
+async function submitApplyBonusEntries(giveawayId) {
+  const input = document.getElementById('detailBonusAmount');
+  const amount = parseInt(input ? input.value : 1) || 1;
+  try {
+    const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}/apply-bonus-entries`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ amount })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`🎉 Applied ${amount} bonus entries! Total tickets: ${data.total_tickets}x`, 'success');
+      if (currentUser) currentUser.bonus_entries = data.remaining_bonus_entries;
+      await openDetailModal(giveawayId);
+    } else {
+      showToast(data.error || 'Failed to apply bonus entries', 'error');
+    }
+  } catch (err) {
+    showToast('Error applying bonus entries', 'error');
   }
 }
 

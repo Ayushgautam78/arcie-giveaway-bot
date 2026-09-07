@@ -93,34 +93,52 @@ def weighted_sample_without_replacement(population: list, weights: list, k: int)
     return selected
 
 
-def get_entry_weights(entries: list, guild) -> list:
-    """Calculate weight for each giveaway entry based on role multipliers.
+def is_valid_evm_address(addr: str) -> bool:
+    """Validates an EVM (Ethereum) address: 0x followed by 40 hex characters."""
+    if not addr or not isinstance(addr, str):
+        return False
+    return bool(re.match(r"^0x[a-fA-F0-9]{40}$", addr.strip()))
+
+
+def get_entry_weights(entries: list, guild=None, g: Optional[dict] = None) -> list:
+    """Calculate weight for each giveaway entry based on role multipliers and bonus entries.
     
-    Args:
-        entries: List of entry dicts with 'user_id' field
-        guild: discord.Guild object (or None if unavailable)
-    
-    Returns:
-        List of float weights, one per entry. Default weight = 1.0
+    Total Entry Weight = (Role Multiplier) + (Bonus Entries Applied).
+    Default weight = 1.0.
     """
-    if not guild or not ROLE_MULTIPLIERS:
-        return [1.0] * len(entries)
+    giveaway_role_mults = {}
+    if g and isinstance(g, dict):
+        raw_mults = g.get("role_multipliers")
+        if isinstance(raw_mults, list):
+            for rm in raw_mults:
+                if isinstance(rm, dict):
+                    rid = str(rm.get("id") or "").strip()
+                    mult = float(rm.get("multiplier") or rm.get("entries") or 1.0)
+                    if rid:
+                        giveaway_role_mults[rid] = mult
+        elif isinstance(raw_mults, dict):
+            giveaway_role_mults = {str(k): float(v) for k, v in raw_mults.items()}
     
+    if not giveaway_role_mults and ROLE_MULTIPLIERS:
+        giveaway_role_mults = ROLE_MULTIPLIERS
+
     weights = []
     for entry in entries:
         uid = entry.get("user_id")
-        weight = 1.0
-        if uid:
+        base_mult = float(entry.get("multiplier", 1.0))
+        bonus = float(entry.get("bonus_entries_used", 0.0))
+
+        if guild and uid and giveaway_role_mults:
             try:
                 member = guild.get_member(int(uid))
                 if member:
-                    matching = [ROLE_MULTIPLIERS[str(r.id)]
-                               for r in member.roles if str(r.id) in ROLE_MULTIPLIERS]
+                    matching = [giveaway_role_mults[str(r.id)] for r in member.roles if str(r.id) in giveaway_role_mults]
                     if matching:
-                        weight = max(matching)
+                        base_mult = max(matching)
             except Exception:
                 pass
-        weights.append(weight)
+        
+        weights.append(max(1.0, base_mult) + max(0.0, bonus))
     return weights
 
 
@@ -174,12 +192,16 @@ def select_giveaway_winners(entries: list, g: dict, guild=None) -> Tuple[List[di
     random.shuffle(p1_pool)
     random.shuffle(p2_pool)
 
-    # Weighted sampling for regular participants based on Discord role multipliers
+    # Weighted sampling for regular participants based on Discord role multipliers + bonus entries
     if guild:
-        reg_weights = get_entry_weights(reg_pool, guild)
+        reg_weights = get_entry_weights(reg_pool, guild, g)
         reg_pool = weighted_sample_without_replacement(reg_pool, reg_weights, len(reg_pool))
     else:
-        random.shuffle(reg_pool)
+        reg_weights = get_entry_weights(reg_pool, None, g)
+        if any(w != 1.0 for w in reg_weights):
+            reg_pool = weighted_sample_without_replacement(reg_pool, reg_weights, len(reg_pool))
+        else:
+            random.shuffle(reg_pool)
 
     spot_tiers = g.get("spot_tiers", [])
     winner_summary_lines = []
@@ -680,6 +702,71 @@ def get_user_profile_fast(uid: str, usr: Optional[discord.User] = None) -> dict:
 async def get_or_fetch_user_profile(uid: str, usr: Optional[discord.User] = None) -> dict:
     """Fast profile retrieval without slow blocking Firebase tree downloads."""
     return get_user_profile_fast(uid, usr)
+
+async def sync_user_profile_to_unlocked_giveaways(uid: str):
+    """
+    Syncs updated user profile (Main EVM, FCFS EVM / Burner EVM, Twitter, Telegram, Solana)
+    to all giveaways that are NOT marked as 'done'.
+    If a giveaway is marked done (g.get('is_done') == True), its participant list
+    and wallet addresses are permanently frozen and will NOT be modified.
+    """
+    try:
+        uid_str = str(uid)
+        prof = user_profiles.get(uid_str)
+        if not prof or not isinstance(prof, dict):
+            return
+
+        evm = prof.get("evm_wallet", "")
+        fcfs = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", "")
+        sol = prof.get("solana_wallet", "")
+        tw = prof.get("twitter", "")
+        tg = prof.get("telegram", "")
+
+        changed_giveaways = set()
+
+        for g_id, g in list(giveaways.items()):
+            if not isinstance(g, dict):
+                continue
+            # If giveaway is marked Done / Locked, do not touch its entries!
+            if g.get("is_done"):
+                continue
+
+            entries = giveaway_entries.get(g_id)
+            if not entries or not isinstance(entries, list):
+                continue
+
+            g_changed = False
+            for entry in entries:
+                if isinstance(entry, dict) and str(entry.get("user_id")) == uid_str:
+                    if evm and entry.get("evm_wallet") != evm:
+                        entry["evm_wallet"] = evm
+                        g_changed = True
+                    if fcfs and (entry.get("fcfs_evm_wallet") != fcfs or entry.get("burner_evm_wallet") != fcfs):
+                        entry["fcfs_evm_wallet"] = fcfs
+                        entry["burner_evm_wallet"] = fcfs
+                        g_changed = True
+                    if sol and entry.get("solana_wallet") != sol:
+                        entry["solana_wallet"] = sol
+                        g_changed = True
+                    if tw and entry.get("twitter") != tw:
+                        entry["twitter"] = tw
+                        g_changed = True
+                    if tg and entry.get("telegram") != tg:
+                        entry["telegram"] = tg
+                        g_changed = True
+
+            if g_changed:
+                changed_giveaways.add(g_id)
+
+        if changed_giveaways:
+            save_giveaway_entries()
+            if FIREBASE_URL:
+                for g_id in changed_giveaways:
+                    sync_firebase_background(f"giveaway_entries/{g_id}", giveaway_entries.get(g_id, []))
+            print(f"[PROFILE SYNC] Synced profile updates for user {uid_str} to {len(changed_giveaways)} unlocked giveaways: {list(changed_giveaways)}")
+    except Exception as e:
+        print(f"[PROFILE SYNC ERROR] Failed to sync profile to unlocked giveaways: {e}")
+
 
 # Track task button clicks per user per giveaway: {g_id: {user_id: set(task_types_completed)}}
 giveaway_task_progress = {}
@@ -4053,11 +4140,78 @@ async def on_member_join(member: discord.Member):
 
 # -------- Giveaway System UI Views, Modals & Handlers -------- #
 
+class ApplyBonusEntriesModal(discord.ui.Modal, title="Apply Bonus Giveaway Entries"):
+    def __init__(self, giveaway_id: str, max_avail: int):
+        super().__init__()
+        self.giveaway_id = giveaway_id
+        self.max_avail = max_avail
+        self.amount_input = discord.ui.TextInput(
+            label=f"Bonus Entries (Available: {max_avail})",
+            placeholder=f"Enter number of entries (1 to {max_avail})",
+            default="1",
+            required=True
+        )
+        self.add_item(self.amount_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
+        val_str = self.amount_input.value.strip()
+        if not val_str.isdigit():
+            await safe_respond(interaction, "❌ Please enter a valid positive number.", ephemeral=True)
+            return
+        amount = int(val_str)
+        avail = int(user_profiles.get(uid, {}).get("bonus_entries", 0))
+        if amount <= 0 or amount > avail:
+            await safe_respond(interaction, f"❌ Invalid amount. You have **{avail}** bonus entries available.", ephemeral=True)
+            return
+        
+        g = giveaways.get(self.giveaway_id)
+        entries = giveaway_entries.get(self.giveaway_id, [])
+        entry = next((e for e in entries if e.get("user_id") == uid), None)
+        if not entry:
+            await safe_respond(interaction, "❌ You have not joined this giveaway yet.", ephemeral=True)
+            return
+
+        user_profiles[uid]["bonus_entries"] = avail - amount
+        entry["bonus_entries_used"] = int(entry.get("bonus_entries_used", 0)) + amount
+        save_user_profiles()
+        save_giveaway_entries()
+        if FIREBASE_URL:
+            await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
+            await firebase_put(f"giveaway_entries/{self.giveaway_id}", entries)
+
+        total_tickets = int(entry.get("multiplier", 1)) + entry["bonus_entries_used"]
+        title_txt = g.get('title', 'this giveaway') if g else 'this giveaway'
+        await safe_respond(
+            interaction,
+            f"🎉 **Bonus Entries Applied!** You used **{amount}** bonus entries for **{title_txt}**!\n\n"
+            f"• **Total Winning Weight:** **{total_tickets}x Entries** 🎟️\n"
+            f"• **Remaining Bonus Entries:** **{user_profiles[uid]['bonus_entries']}** 🎟️",
+            ephemeral=True
+        )
+
+
+class ApplyBonusEntriesDiscordView(discord.ui.View):
+    def __init__(self, giveaway_id: str, max_avail: int):
+        super().__init__(timeout=180)
+        self.giveaway_id = giveaway_id
+        self.max_avail = max_avail
+
+    @discord.ui.button(label="Apply Bonus Entries 🎟️", style=discord.ButtonStyle.success)
+    async def apply_btn_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+        uid = str(interaction.user.id)
+        avail = int(user_profiles.get(uid, {}).get("bonus_entries", 0))
+        if avail <= 0:
+            await safe_respond(interaction, "❌ You don't have any bonus entries available.", ephemeral=True)
+            return
+        await interaction.response.send_modal(ApplyBonusEntriesModal(self.giveaway_id, avail))
+
 
 class JoinGiveawayModal(discord.ui.Modal, title="Giveaway Profile & Wallet Setup"):
     twitter = discord.ui.TextInput(label="Twitter Handle", placeholder="@yourhandle", required=False)
     telegram = discord.ui.TextInput(label="Telegram Handle", placeholder="@username", required=False)
-    evm_wallet = discord.ui.TextInput(label="EVM Wallet Address (0x...)", placeholder="0x1234...5678", required=False)
+    evm_wallet = discord.ui.TextInput(label="Main EVM Wallet Address (0x...)", placeholder="0x1234...5678", required=False)
+    burner_evm_wallet = discord.ui.TextInput(label="FCFS EVM Wallet Address (0x...)", placeholder="0xabcd...ef01", required=False)
     solana_wallet = discord.ui.TextInput(label="Solana Wallet Address", placeholder="Solana Wallet Public Key", required=False)
 
     def __init__(self, giveaway_id: str):
@@ -4077,15 +4231,28 @@ class JoinGiveawayModal(discord.ui.Modal, title="Giveaway Profile & Wallet Setup
         if self.twitter.value: user_profiles[uid]["twitter"] = self.twitter.value.strip()
         if self.telegram.value: user_profiles[uid]["telegram"] = self.telegram.value.strip()
         if self.evm_wallet.value: user_profiles[uid]["evm_wallet"] = self.evm_wallet.value.strip()
+        if self.burner_evm_wallet.value:
+            fcfs_addr = self.burner_evm_wallet.value.strip()
+            user_profiles[uid]["burner_evm_wallet"] = fcfs_addr
+            user_profiles[uid]["fcfs_evm_wallet"] = fcfs_addr
         if self.solana_wallet.value: user_profiles[uid]["solana_wallet"] = self.solana_wallet.value.strip()
         save_user_profiles()
+        if FIREBASE_URL:
+            await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
+        await sync_user_profile_to_unlocked_giveaways(uid)
 
         # Validate required wallets if configured on giveaway
         if g:
             tasks = g.get("tasks", {})
-            if tasks.get("require_evm") and not user_profiles[uid].get("evm_wallet"):
-                await safe_respond(interaction, "❌ **EVM Wallet Address is required** to join this giveaway! Please fill in your EVM wallet (0x...).", ephemeral=True)
-                return
+            if tasks.get("require_evm"):
+                if not user_profiles[uid].get("evm_wallet"):
+                    await safe_respond(interaction, "❌ **Main EVM Wallet Address is required** to join this giveaway! Please fill in your EVM wallet (0x...).", ephemeral=True)
+                    return
+                # Only enforce FCFS EVM wallet if NOT the legacy active giveaway g_1786106868032
+                fcfs_has = user_profiles[uid].get("fcfs_evm_wallet") or user_profiles[uid].get("burner_evm_wallet")
+                if self.giveaway_id != "g_1786106868032" and not fcfs_has:
+                    await safe_respond(interaction, "❌ **FCFS EVM Wallet Address is required** to join this giveaway! Please fill in your FCFS EVM wallet (0x...).", ephemeral=True)
+                    return
             if tasks.get("require_solana") and not user_profiles[uid].get("solana_wallet"):
                 await safe_respond(interaction, "❌ **Solana Wallet Address is required** to join this giveaway! Please fill in your Solana wallet.", ephemeral=True)
                 return
@@ -4349,15 +4516,21 @@ class GiveawayView(discord.ui.View):
         req_evm = tasks.get("require_evm", False)
         req_solana = tasks.get("require_solana", False)
 
-        missing_evm = req_evm and not prof.get("evm_wallet")
+        if g_id == "g_1786106868032":
+            missing_evm = req_evm and not prof.get("evm_wallet")
+        else:
+            fcfs_wallet = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet")
+            missing_evm = req_evm and (not prof.get("evm_wallet") or not fcfs_wallet)
         missing_solana = req_solana and not prof.get("solana_wallet")
-        has_profile = bool(prof.get("evm_wallet") or prof.get("solana_wallet") or prof.get("twitter") or prof.get("telegram"))
+        fcfs_wallet_val = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet")
+        has_profile = bool(prof.get("evm_wallet") or fcfs_wallet_val or prof.get("solana_wallet") or prof.get("twitter") or prof.get("telegram"))
 
         if missing_evm or missing_solana or not has_profile:
             modal = JoinGiveawayModal(g_id)
             if prof.get("twitter"): modal.twitter.default = prof.get("twitter")
             if prof.get("telegram"): modal.telegram.default = prof.get("telegram")
             if prof.get("evm_wallet"): modal.evm_wallet.default = prof.get("evm_wallet")
+            if fcfs_wallet_val: modal.burner_evm_wallet.default = fcfs_wallet_val
             if prof.get("solana_wallet"): modal.solana_wallet.default = prof.get("solana_wallet")
             await interaction.response.send_modal(modal)
             return
@@ -4381,13 +4554,35 @@ class GiveawayView(discord.ui.View):
         embed.add_field(name="Task Status", value=f"**{my_entry.get('task_status', 'pending').upper()}**", inline=True)
         if my_entry.get("winner_type"):
             embed.add_field(name="🏆 Result", value=f"**{my_entry['winner_type'].upper()} WINNER!**", inline=False)
-        embed.add_field(name="EVM Wallet", value=f"`{my_entry.get('evm_wallet') or 'Not provided'}`", inline=False)
+        
+        mult = int(my_entry.get("multiplier", 1))
+        bonus_used = int(my_entry.get("bonus_entries_used", 0))
+        total_tickets = mult + bonus_used
+        tickets_str = f"**{total_tickets}x** 🎟️ ({mult}x base" + (f" + {bonus_used} bonus)" if bonus_used else ")")
+        embed.add_field(name="🎟️ Entries / Tickets", value=tickets_str, inline=True)
+
+        embed.add_field(name="Main EVM Wallet", value=f"`{my_entry.get('evm_wallet') or 'Not provided'}`", inline=False)
+        fcfs_val = my_entry.get("fcfs_evm_wallet") or my_entry.get("burner_evm_wallet") or "Not provided"
+        embed.add_field(name="FCFS EVM Wallet", value=f"`{fcfs_val}`", inline=False)
         embed.add_field(name="Solana Wallet", value=f"`{my_entry.get('solana_wallet') or 'Not provided'}`", inline=False)
         embed.add_field(name="Twitter", value=my_entry.get("twitter") or "Not provided", inline=True)
         embed.add_field(name="Telegram", value=my_entry.get("telegram") or "Not provided", inline=True)
 
+        user_bonus_avail = int(user_profiles.get(uid, {}).get("bonus_entries", 0))
+        embed.add_field(name="🎟️ Available Bonus Entries", value=f"**{user_bonus_avail}** bonus tickets", inline=True)
         embed.set_footer(text="Powered by Arcie Bot")
-        await safe_respond(interaction, embed=embed, ephemeral=True)
+
+        if user_bonus_avail > 0 and g and g.get("is_active"):
+            view = ApplyBonusEntriesDiscordView(g_id, user_bonus_avail)
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+                else:
+                    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            except Exception:
+                await safe_respond(interaction, embed=embed, ephemeral=True)
+        else:
+            await safe_respond(interaction, embed=embed, ephemeral=True)
 
 
 async def safe_respond(interaction: discord.Interaction, content: str = None, embed: discord.Embed = None, ephemeral: bool = True):
@@ -4398,39 +4593,53 @@ async def safe_respond(interaction: discord.Interaction, content: str = None, em
         else:
             await interaction.followup.send(content=content, embed=embed, ephemeral=ephemeral)
     except Exception as e:
-        print(f"[SAFE RESPOND WARN] {e}")
-        try:
-            await interaction.followup.send(content=content, embed=embed, ephemeral=ephemeral)
-        except Exception:
-            pass
+        print(f"[SAFE RESPOND ERROR] {e}")
 
 
 async def register_giveaway_entry(interaction: discord.Interaction, giveaway_id: str):
+    """Registers a participant entry, calculating role multipliers and storing EVM & FCFS EVM wallets."""
     g = giveaways.get(giveaway_id)
     if not g:
-        await safe_respond(interaction, "❌ Giveaway not found.", ephemeral=True)
+        await safe_respond(interaction, "Giveaway not found.", ephemeral=True)
         return
 
     entries = giveaway_entries.setdefault(giveaway_id, [])
     uid = str(interaction.user.id)
-    
-    existing = next((e for e in entries if e["user_id"] == uid), None)
-    if existing:
-        await safe_respond(interaction, f"✅ You are already registered for **{g['title']}**!", ephemeral=True)
-        return
+    prof = get_user_profile_fast(uid, interaction.user)
 
-    prof = user_profiles.get(uid, {})
+    # Determine highest matching Role Multiplier
+    role_mult = 1
+    g_role_mults = g.get("role_multipliers") or []
+    mult_map = {}
+    if isinstance(g_role_mults, list):
+        for rm in g_role_mults:
+            if isinstance(rm, dict):
+                rid = str(rm.get("id", "")).strip()
+                if rid:
+                    mult_map[rid] = int(rm.get("multiplier") or rm.get("entries") or 1)
+    elif isinstance(g_role_mults, dict):
+        mult_map = {str(k): int(v) for k, v in g_role_mults.items()}
+
+    if mult_map and isinstance(interaction.user, discord.Member):
+        matching_mults = [mult_map[str(r.id)] for r in interaction.user.roles if str(r.id) in mult_map]
+        if matching_mults:
+            role_mult = max(matching_mults)
+
+    fcfs_stored = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", "")
     new_entry = {
         "user_id": uid,
         "username": str(interaction.user),
         "display_name": interaction.user.display_name,
         "joined_at": int(time.time()),
         "evm_wallet": prof.get("evm_wallet", ""),
+        "burner_evm_wallet": prof.get("burner_evm_wallet", ""),
         "solana_wallet": prof.get("solana_wallet", ""),
         "twitter": prof.get("twitter", ""),
         "telegram": prof.get("telegram", ""),
         "task_status": "verified",
-        "winner_type": None
+        "winner_type": None,
+        "multiplier": role_mult,
+        "bonus_entries_used": 0
     }
     entries.append(new_entry)
     g["entries_count"] = len(entries)
@@ -4438,7 +4647,8 @@ async def register_giveaway_entry(interaction: discord.Interaction, giveaway_id:
     save_giveaway_entries()
 
     # Respond to interaction FIRST so user gets instant confirmation and 0 errors!
-    await safe_respond(interaction, f"🎉 **Success!** You have joined **{g['title']}**!", ephemeral=True)
+    tickets_txt = f" ({role_mult}x Entries 🎟️)" if role_mult > 1 else ""
+    await safe_respond(interaction, f"🎉 **Success!** You have joined **{g['title']}**{tickets_txt}!", ephemeral=True)
 
     # Background task to refresh live Discord channel embed
     asyncio.create_task(update_giveaway_discord_message(giveaway_id))
@@ -5875,11 +6085,22 @@ async def rumble_command(
 class UserProfileModal(discord.ui.Modal, title="Update Web3 Socials & Wallets"):
     twitter = discord.ui.TextInput(label="Twitter / X Handle", placeholder="@yourhandle", required=False)
     telegram = discord.ui.TextInput(label="Telegram Handle", placeholder="@username", required=False)
-    evm = discord.ui.TextInput(label="EVM Wallet Address", placeholder="0x1234...5678", required=False)
+    evm = discord.ui.TextInput(label="Main EVM Wallet (0x...)", placeholder="0x1234...5678", required=True, min_length=42, max_length=42)
+    burner_evm = discord.ui.TextInput(label="FCFS EVM Wallet (0x...)", placeholder="0xabcd...ef01", required=True, min_length=42, max_length=42)
     solana = discord.ui.TextInput(label="Solana Wallet Address", placeholder="Public Key...", required=False)
 
     async def on_submit(self, interaction: discord.Interaction):
         uid = str(interaction.user.id)
+        evm_val = self.evm.value.strip() if self.evm.value else ""
+        burner_val = self.burner_evm.value.strip() if self.burner_evm.value else ""
+
+        if not is_valid_evm_address(evm_val):
+            await safe_respond(interaction, "❌ **Main EVM Wallet** is mandatory and must be a valid 42-character 0x address.", ephemeral=True)
+            return
+        if not is_valid_evm_address(burner_val):
+            await safe_respond(interaction, "❌ **FCFS EVM Wallet** is mandatory and must be a valid 42-character 0x address.", ephemeral=True)
+            return
+
         if uid not in user_profiles:
             user_profiles[uid] = {
                 "display_name": interaction.user.display_name,
@@ -5889,14 +6110,20 @@ class UserProfileModal(discord.ui.Modal, title="Update Web3 Socials & Wallets"):
         
         user_profiles[uid]["twitter"] = self.twitter.value.strip() if self.twitter.value else ""
         user_profiles[uid]["telegram"] = self.telegram.value.strip() if self.telegram.value else ""
-        user_profiles[uid]["evm_wallet"] = self.evm.value.strip() if self.evm.value else ""
+        user_profiles[uid]["evm_wallet"] = evm_val
+        user_profiles[uid]["fcfs_evm_wallet"] = burner_val
+        user_profiles[uid]["burner_evm_wallet"] = burner_val
         user_profiles[uid]["solana_wallet"] = self.solana.value.strip() if self.solana.value else ""
         save_user_profiles()
+        if FIREBASE_URL:
+            await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
+        await sync_user_profile_to_unlocked_giveaways(uid)
 
         embed = discord.Embed(title="👤 Profile & Wallets Saved", color=discord.Color.green())
         embed.add_field(name="Twitter", value=self.twitter.value or "Not set", inline=True)
         embed.add_field(name="Telegram", value=self.telegram.value or "Not set", inline=True)
-        embed.add_field(name="EVM Wallet", value=f"`{self.evm.value}`" if self.evm.value else "Not set", inline=False)
+        embed.add_field(name="Main EVM Wallet", value=f"`{evm_val}`", inline=False)
+        embed.add_field(name="FCFS EVM Wallet", value=f"`{burner_val}`", inline=False)
         embed.add_field(name="Solana Wallet", value=f"`{self.solana.value}`" if self.solana.value else "Not set", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -5924,6 +6151,8 @@ async def profile_cmd(interaction: discord.Interaction):
         if prof.get("twitter"): modal.twitter.default = prof.get("twitter")
         if prof.get("telegram"): modal.telegram.default = prof.get("telegram")
         if prof.get("evm_wallet"): modal.evm.default = prof.get("evm_wallet")
+        fcfs_saved = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet")
+        if fcfs_saved: modal.burner_evm.default = fcfs_saved
         if prof.get("solana_wallet"): modal.solana.default = prof.get("solana_wallet")
         await interaction.response.send_modal(modal)
     except Exception as e:
@@ -5931,9 +6160,13 @@ async def profile_cmd(interaction: discord.Interaction):
         await safe_respond(interaction, f"❌ Failed to open profile: {e}", ephemeral=True)
 
 
-@bot.tree.command(name="set-evm-wallet", description="Set your EVM (Ethereum) wallet address.")
-@app_commands.describe(address="EVM Wallet Address (0x...)")
+@bot.tree.command(name="set-evm-wallet", description="Set your Main EVM (Ethereum) wallet address.")
+@app_commands.describe(address="Main EVM Wallet Address (0x...)")
 async def set_evm_wallet_cmd(interaction: discord.Interaction, address: str):
+    addr = address.strip()
+    if not is_valid_evm_address(addr):
+        await safe_respond(interaction, "❌ Invalid EVM address format. Must start with 0x followed by 40 hex characters (42 characters total).", ephemeral=True)
+        return
     uid = str(interaction.user.id)
     if uid not in user_profiles:
         user_profiles[uid] = {
@@ -5941,9 +6174,183 @@ async def set_evm_wallet_cmd(interaction: discord.Interaction, address: str):
             "username": interaction.user.name,
             "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
         }
-    user_profiles[uid]["evm_wallet"] = address.strip()
+    user_profiles[uid]["evm_wallet"] = addr
     save_user_profiles()
-    await interaction.response.send_message(f"✅ **EVM Wallet Updated!**\nAddress: `{address.strip()}`", ephemeral=True)
+    if FIREBASE_URL:
+        await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
+    await sync_user_profile_to_unlocked_giveaways(uid)
+    await interaction.response.send_message(f"✅ **Main EVM Wallet Updated!**\nAddress: `{addr}`", ephemeral=True)
+
+
+@bot.tree.command(name="set-fcfs-evm-wallet", description="Set your FCFS EVM wallet address.")
+@app_commands.describe(address="FCFS EVM Wallet Address (0x...)")
+async def set_fcfs_evm_wallet_cmd(interaction: discord.Interaction, address: str):
+    await _handle_set_fcfs_evm(interaction, address)
+
+
+@bot.tree.command(name="set-burner-evm-wallet", description="Set your FCFS EVM wallet address (alias).")
+@app_commands.describe(address="FCFS EVM Wallet Address (0x...)")
+async def set_burner_evm_wallet_cmd(interaction: discord.Interaction, address: str):
+    await _handle_set_fcfs_evm(interaction, address)
+
+
+async def _handle_set_fcfs_evm(interaction: discord.Interaction, address: str):
+    addr = address.strip()
+    if not is_valid_evm_address(addr):
+        await safe_respond(interaction, "❌ Invalid EVM address format. Must start with 0x followed by 40 hex characters (42 characters total).", ephemeral=True)
+        return
+    uid = str(interaction.user.id)
+    if uid not in user_profiles:
+        user_profiles[uid] = {
+            "display_name": interaction.user.display_name,
+            "username": interaction.user.name,
+            "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        }
+    user_profiles[uid]["fcfs_evm_wallet"] = addr
+    user_profiles[uid]["burner_evm_wallet"] = addr
+    save_user_profiles()
+    if FIREBASE_URL:
+        await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
+    await sync_user_profile_to_unlocked_giveaways(uid)
+    await interaction.response.send_message(f"✅ **FCFS EVM Wallet Updated!**\nAddress: `{addr}`", ephemeral=True)
+
+
+@bot.tree.command(name="extra_entries_allow", description="Moderator: Grant bonus giveaway entries to a user.")
+@app_commands.describe(user="The member to grant bonus entries to", amount="Number of bonus entries to grant (default: 1)", reason="Optional reason for the grant")
+async def extra_entries_allow_cmd(interaction: discord.Interaction, user: discord.User, amount: int = 1, reason: Optional[str] = None):
+    uid = str(interaction.user.id)
+    is_admin = is_bot_admin_by_id(uid)
+    has_perm = interaction.permissions and (interaction.permissions.manage_guild or interaction.permissions.administrator)
+    if not (is_admin or has_perm):
+        await safe_respond(interaction, "❌ You do not have permission to grant bonus entries (Admin / Manage Guild required).", ephemeral=True)
+        return
+
+    if amount <= 0:
+        await safe_respond(interaction, "❌ Amount must be at least 1.", ephemeral=True)
+        return
+
+    target_id = str(user.id)
+    if target_id not in user_profiles:
+        user_profiles[target_id] = {
+            "display_name": user.display_name,
+            "username": user.name,
+            "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        }
+    
+    current_bonus = int(user_profiles[target_id].get("bonus_entries", 0))
+    new_bonus = current_bonus + amount
+    user_profiles[target_id]["bonus_entries"] = new_bonus
+    save_user_profiles()
+    if FIREBASE_URL:
+        await firebase_put(f"user_profiles/{target_id}", user_profiles[target_id])
+
+    embed = discord.Embed(
+        title="🎟️ Bonus Giveaway Entries Granted!",
+        description=f"Successfully granted **{amount}** bonus entries to {user.mention}!\n\n"
+                    f"• **Previous Balance:** `{current_bonus}` 🎟️\n"
+                    f"• **New Balance:** **`{new_bonus}`** Available Bonus Entries 🎟️\n"
+                    + (f"• **Reason:** {reason}\n" if reason else "") +
+                    f"\n💡 *The user can apply these bonus entries to any giveaway to increase their winning odds!*",
+        color=discord.Color.gold()
+    )
+    embed.set_footer(text=f"Granted by {interaction.user.name} | Powered by Arcie Bot")
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="view-bonus-entries", description="Check how many bonus giveaway entries you have left (visible only to you).")
+@app_commands.describe(user="Optional member to check balance for (defaults to yourself)")
+async def view_bonus_entries_cmd(interaction: discord.Interaction, user: Optional[discord.User] = None):
+    await _handle_view_bonus_entries(interaction, user)
+
+
+@bot.tree.command(name="view_bonus_entries", description="Check how many bonus giveaway entries you have left (visible only to you).")
+@app_commands.describe(user="Optional member to check balance for (defaults to yourself)")
+async def view_bonus_entries_underscore_cmd(interaction: discord.Interaction, user: Optional[discord.User] = None):
+    await _handle_view_bonus_entries(interaction, user)
+
+
+@bot.tree.command(name="check-bonus-entries", description="Check available bonus entries (tickets) for giveaways.")
+@app_commands.describe(user="Optional member to check balance for (defaults to yourself)")
+async def check_bonus_entries_cmd(interaction: discord.Interaction, user: Optional[discord.User] = None):
+    await _handle_view_bonus_entries(interaction, user)
+
+
+async def _handle_view_bonus_entries(interaction: discord.Interaction, user: Optional[discord.User] = None):
+    target = user or interaction.user
+    t_id = str(target.id)
+    prof = user_profiles.get(t_id, {})
+    bal = int(prof.get("bonus_entries", 0))
+
+    embed = discord.Embed(
+        title="🎟️ Your Bonus Giveaway Entries",
+        description=f"**User:** {target.mention} (`{target.name}`)\n\n"
+                    f"• **Available Bonus Entries Left:** **`{bal}`** 🎟️\n\n"
+                    f"💡 *You can apply bonus entries to any active giveaway using **[View Your Entry] ➔ [Apply Bonus Entries]** or `/use-bonus-entries`!*",
+        color=discord.Color.gold()
+    )
+    embed.set_footer(text="Only visible to you | Powered by Arcie Bot")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="use-bonus-entries", description="Apply your bonus entries to a giveaway to increase your winning odds!")
+@app_commands.describe(amount="Number of bonus entries to apply", giveaway_id="Optional Giveaway ID (defaults to active giveaway in this channel)")
+async def use_bonus_entries_cmd(interaction: discord.Interaction, amount: int, giveaway_id: Optional[str] = None):
+    uid = str(interaction.user.id)
+    avail = int(user_profiles.get(uid, {}).get("bonus_entries", 0))
+    if avail <= 0:
+        await safe_respond(interaction, "❌ You don't have any bonus entries available! Earn bonus entries from server moderators.", ephemeral=True)
+        return
+    if amount <= 0:
+        await safe_respond(interaction, "❌ Amount must be at least 1.", ephemeral=True)
+        return
+    if amount > avail:
+        await safe_respond(interaction, f"❌ You only have **{avail}** bonus entries available.", ephemeral=True)
+        return
+
+    # Resolve giveaway
+    g = None
+    if giveaway_id:
+        g = await resolve_giveaway_by_identifier(giveaway_id)
+    else:
+        # Find active giveaway in this channel
+        ch_id = str(interaction.channel_id)
+        for g_obj in giveaways.values():
+            if str(g_obj.get("channel_id")) == ch_id and g_obj.get("is_active"):
+                g = g_obj
+                break
+    if not g:
+        await safe_respond(interaction, "❌ Active giveaway not found. Please specify the Giveaway ID or run this command in the giveaway channel.", ephemeral=True)
+        return
+
+    g_id = g.get("id")
+    entries = giveaway_entries.get(g_id, [])
+    entry = next((e for e in entries if e.get("user_id") == uid), None)
+    if not entry:
+        await safe_respond(interaction, f"❌ You have not joined **{g.get('title', 'this giveaway')}** yet! Click **[Join Giveaway]** first.", ephemeral=True)
+        return
+
+    # Apply entries
+    user_profiles[uid]["bonus_entries"] = avail - amount
+    entry["bonus_entries_used"] = int(entry.get("bonus_entries_used", 0)) + amount
+    save_user_profiles()
+    save_giveaway_entries()
+    if FIREBASE_URL:
+        await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
+        await firebase_put(f"giveaway_entries/{g_id}", entries)
+
+    base_mult = int(entry.get("multiplier", 1))
+    total_tickets = base_mult + entry["bonus_entries_used"]
+
+    embed = discord.Embed(
+        title="🎟️ Bonus Entries Applied!",
+        description=f"Successfully applied **{amount}** bonus entries to **{g.get('title')}**!\n\n"
+                    f"• **Base Role Entries:** {base_mult}x\n"
+                    f"• **Bonus Entries Used:** +{entry['bonus_entries_used']}\n"
+                    f"• **Total Winning Weight:** **{total_tickets}x Entries** 🎟️\n\n"
+                    f"**Remaining Bonus Balance:** `{user_profiles[uid]['bonus_entries']}` 🎟️",
+        color=discord.Color.green()
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="set-solana-wallet", description="Set your Solana wallet address.")
@@ -5958,6 +6365,9 @@ async def set_solana_wallet_cmd(interaction: discord.Interaction, address: str):
         }
     user_profiles[uid]["solana_wallet"] = address.strip()
     save_user_profiles()
+    if FIREBASE_URL:
+        await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
+    await sync_user_profile_to_unlocked_giveaways(uid)
     await interaction.response.send_message(f"✅ **Solana Wallet Updated!**\nAddress: `{address.strip()}`", ephemeral=True)
 
 
@@ -5976,6 +6386,9 @@ async def set_twitter_cmd(interaction: discord.Interaction, handle: str):
         }
     user_profiles[uid]["twitter"] = clean_handle
     save_user_profiles()
+    if FIREBASE_URL:
+        await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
+    await sync_user_profile_to_unlocked_giveaways(uid)
     await interaction.response.send_message(f"✅ **Twitter Handle Updated!**\nHandle: **{clean_handle}**", ephemeral=True)
 
 
@@ -5994,6 +6407,9 @@ async def set_telegram_cmd(interaction: discord.Interaction, username: str):
         }
     user_profiles[uid]["telegram"] = clean_username
     save_user_profiles()
+    if FIREBASE_URL:
+        await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
+    await sync_user_profile_to_unlocked_giveaways(uid)
     await interaction.response.send_message(f"✅ **Telegram Handle Updated!**\nUsername: **{clean_username}**", ephemeral=True)
 
 
@@ -6085,9 +6501,10 @@ async def user_details_cmd(interaction: discord.Interaction, target: Optional[di
         prof = await get_or_fetch_user_profile(uid, usr)
 
         twitter_val = f"**{prof.get('twitter')}**" if prof.get("twitter") else "*Not set by user yet*"
-        telegram_val = f"**{prof.get('telegram')}**" if prof.get("telegram") else "*Not set by user yet*"
-        evm_val = f"`{prof.get('evm_wallet')}`" if prof.get("evm_wallet") else "*Not set by user yet*"
+        fcfs_wallet_str = prof.get('fcfs_evm_wallet') or prof.get('burner_evm_wallet')
+        fcfs_evm_val = f"`{fcfs_wallet_str}`" if fcfs_wallet_str else "*Not set by user yet*"
         solana_val = f"`{prof.get('solana_wallet')}`" if prof.get("solana_wallet") else "*Not set by user yet*"
+        bonus_val = f"**{prof.get('bonus_entries', 0)}** 🎟️"
 
         embed = discord.Embed(
             title=f"Web3 Profile - {usr.display_name}",
@@ -6097,8 +6514,10 @@ async def user_details_cmd(interaction: discord.Interaction, target: Optional[di
         embed.add_field(name="User", value=f"{usr.mention} (`{usr.id}`)", inline=False)
         embed.add_field(name="Twitter", value=twitter_val, inline=True)
         embed.add_field(name="Telegram", value=telegram_val, inline=True)
-        embed.add_field(name="EVM Wallet", value=evm_val, inline=False)
+        embed.add_field(name="Main EVM Wallet", value=evm_val, inline=False)
+        embed.add_field(name="FCFS EVM Wallet", value=fcfs_evm_val, inline=False)
         embed.add_field(name="Solana Wallet", value=solana_val, inline=False)
+        embed.add_field(name="🎟️ Bonus Giveaway Entries", value=bonus_val, inline=False)
 
         if is_bot_admin_by_id(uid):
             embed.set_footer(text="Bot Administrator | Powered by Arcie Bot")
@@ -6309,6 +6728,11 @@ async def recover_all_profiles_cmd(interaction: discord.Interaction):
                         if e.get("evm_wallet") and not prof.get("evm_wallet"):
                             prof["evm_wallet"] = e["evm_wallet"]
                             recovered_count += 1
+                        fcfs_e = e.get("fcfs_evm_wallet") or e.get("burner_evm_wallet")
+                        if fcfs_e and not (prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet")):
+                            prof["fcfs_evm_wallet"] = fcfs_e
+                            prof["burner_evm_wallet"] = fcfs_e
+                            recovered_count += 1
                         if e.get("solana_wallet") and not prof.get("solana_wallet"):
                             prof["solana_wallet"] = e["solana_wallet"]
                             recovered_count += 1
@@ -6445,6 +6869,9 @@ async def set_wallet_cmd(interaction: discord.Interaction, evm: Optional[str] = 
     if evm: user_profiles[uid]["evm_wallet"] = evm.strip()
     if solana: user_profiles[uid]["solana_wallet"] = solana.strip()
     save_user_profiles()
+    if FIREBASE_URL:
+        await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
+    await sync_user_profile_to_unlocked_giveaways(uid)
     await interaction.response.send_message("✅ Wallet address(es) updated successfully!", ephemeral=True)
 
 
@@ -6464,6 +6891,9 @@ async def set_socials_cmd(interaction: discord.Interaction, twitter: Optional[st
     if twitter: user_profiles[uid]["twitter"] = twitter.strip()
     if telegram: user_profiles[uid]["telegram"] = telegram.strip()
     save_user_profiles()
+    if FIREBASE_URL:
+        await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
+    await sync_user_profile_to_unlocked_giveaways(uid)
     await interaction.response.send_message("✅ Social handles updated successfully!", ephemeral=True)
 
 
@@ -6871,7 +7301,10 @@ def build_giveaway_embed(g_data: dict):
                 task_lines.append(f"• **Required Role (Any 1):** {roles_formatted}")
 
         if tasks.get("require_evm"):
-            task_lines.append("• **Submit EVM Wallet (0x...)**")
+            if g_data.get("id") == "g_1786106868032":
+                task_lines.append("• **Submit EVM Wallet (0x...)**")
+            else:
+                task_lines.append("• **Submit Main & FCFS EVM Wallets (0x...)**")
         if tasks.get("require_solana"):
             task_lines.append("• **Submit Solana Wallet**")
 
@@ -6882,6 +7315,29 @@ def build_giveaway_embed(g_data: dict):
             value=f"\n{task_block}\n",
             inline=False
         )
+
+    # Render Role Multipliers / Extra Entries with Ticket Emoji (🎟️)
+    role_mults = g_data.get("role_multipliers") or []
+    if role_mults and isinstance(role_mults, list):
+        mult_lines = []
+        for rm in role_mults:
+            if isinstance(rm, dict):
+                rid = str(rm.get("id", "")).strip()
+                rname = rm.get("name") or rid
+                count = int(rm.get("multiplier") or rm.get("entries") or 1)
+                count_str = f"{count}x {'Entry' if count == 1 else 'Entries'}"
+                if rid.isdigit():
+                    mult_lines.append(f"• 🎟️ <@&{rid}> ➔ **{count_str}**")
+                elif rid in ("@everyone", "@here"):
+                    mult_lines.append(f"• 🎟️ **{rid}** ➔ **{count_str}**")
+                else:
+                    mult_lines.append(f"• 🎟️ **@{rname.lstrip('@')}** ➔ **{count_str}**")
+        if mult_lines:
+            embed.add_field(
+                name="🎟️ ROLE ENTRIES / MULTIPLIERS",
+                value="\n".join(mult_lines),
+                inline=False
+            )
 
     spot_tiers = g_data.get("spot_tiers", [])
     if spot_tiers:
@@ -7516,7 +7972,10 @@ async def start_health_server():
             "twitter": prof.get("twitter", ""),
             "telegram": prof.get("telegram", ""),
             "evm_wallet": prof.get("evm_wallet", ""),
-            "solana_wallet": prof.get("solana_wallet", "")
+            "fcfs_evm_wallet": prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", ""),
+            "burner_evm_wallet": prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", ""),
+            "solana_wallet": prof.get("solana_wallet", ""),
+            "bonus_entries": prof.get("bonus_entries", 0)
         }
         token = base64.b64encode(os.urandom(24)).decode('utf-8')
         active_sessions[token] = {"user": user_info, "expires_at": time.time() + 86400 * 7}
@@ -7529,6 +7988,17 @@ async def start_health_server():
         user = get_session_user(request)
         if not user:
             return web.json_response({"authenticated": False})
+        # Keep profile wallets and bonus entries updated from user_profiles
+        uid = str(user.get("id"))
+        prof = user_profiles.get(uid, {})
+        user["twitter"] = prof.get("twitter", user.get("twitter", ""))
+        user["telegram"] = prof.get("telegram", user.get("telegram", ""))
+        user["evm_wallet"] = prof.get("evm_wallet", user.get("evm_wallet", ""))
+        fcfs_val = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", "")
+        user["fcfs_evm_wallet"] = fcfs_val
+        user["burner_evm_wallet"] = fcfs_val
+        user["solana_wallet"] = prof.get("solana_wallet", user.get("solana_wallet", ""))
+        user["bonus_entries"] = prof.get("bonus_entries", 0)
         return web.json_response({"authenticated": True, "user": user})
 
     # Guild Channels Endpoint
@@ -7603,8 +8073,11 @@ async def start_health_server():
                         "mention": f"<@{uid}>",
                         "avatar": avatar_url,
                         "evm_wallet": prof.get("evm_wallet", ""),
+                        "fcfs_evm_wallet": prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", ""),
+                        "burner_evm_wallet": prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", ""),
                         "solana_wallet": prof.get("solana_wallet", ""),
-                        "twitter": prof.get("twitter", "")
+                        "twitter": prof.get("twitter", ""),
+                        "bonus_entries": prof.get("bonus_entries", 0)
                     })
                     seen_ids.add(uid)
                     if len(results) >= 50: break
@@ -7623,8 +8096,11 @@ async def start_health_server():
                         "mention": f"<@{uid}>",
                         "avatar": "https://cdn.discordapp.com/embed/avatars/0.png",
                         "evm_wallet": prof.get("evm_wallet", ""),
+                        "fcfs_evm_wallet": prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", ""),
+                        "burner_evm_wallet": prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", ""),
                         "solana_wallet": prof.get("solana_wallet", ""),
-                        "twitter": prof.get("twitter", "")
+                        "twitter": prof.get("twitter", ""),
+                        "bonus_entries": prof.get("bonus_entries", 0)
                     })
                     seen_ids.add(uid)
                     if len(results) >= 50: break
@@ -7693,6 +8169,41 @@ async def start_health_server():
             entries = local_entries
 
         giveaway_entries[g_id] = entries
+
+        # Live sync with user_profiles if giveaway is NOT marked done (locked)
+        if not g.get("is_done"):
+            entries_changed = False
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                uid = str(entry.get("user_id", ""))
+                prof = user_profiles.get(uid)
+                if prof and isinstance(prof, dict):
+                    evm = prof.get("evm_wallet", "")
+                    fcfs = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", "")
+                    tw = prof.get("twitter", "")
+                    tg = prof.get("telegram", "")
+                    sol = prof.get("solana_wallet", "")
+                    if evm and entry.get("evm_wallet") != evm:
+                        entry["evm_wallet"] = evm
+                        entries_changed = True
+                    if fcfs and (entry.get("fcfs_evm_wallet") != fcfs or entry.get("burner_evm_wallet") != fcfs):
+                        entry["fcfs_evm_wallet"] = fcfs
+                        entry["burner_evm_wallet"] = fcfs
+                        entries_changed = True
+                    if tw and entry.get("twitter") != tw:
+                        entry["twitter"] = tw
+                        entries_changed = True
+                    if tg and entry.get("telegram") != tg:
+                        entry["telegram"] = tg
+                        entries_changed = True
+                    if sol and entry.get("solana_wallet") != sol:
+                        entry["solana_wallet"] = sol
+                        entries_changed = True
+            if entries_changed:
+                giveaway_entries[g_id] = entries
+                save_giveaway_entries()
+
         g["entries_count"] = len(entries)
         save_giveaways()
         save_giveaway_entries()
@@ -7720,6 +8231,77 @@ async def start_health_server():
         except Exception as e:
             print(f"[ANNOUNCE ERROR] {e}")
             return web.json_response({"error": str(e)}, status=500)
+
+    async def mark_giveaway_done_handler(request):
+        """Admin: Toggle or set the 'is_done' status of a giveaway.
+        When marked done (is_done=True), the sheet is permanently frozen/locked.
+        Subsequent profile edits by users will NOT alter this giveaway's entries or CSV export.
+        """
+        user = get_session_user(request)
+        if not user or not user.get("is_admin"):
+            return web.json_response({"error": "Admin required"}, status=403)
+
+        g_id = request.match_info.get("id")
+        g = await resolve_giveaway_by_identifier(g_id)
+        if not g:
+            return web.json_response({"error": "Giveaway not found"}, status=404)
+        g_id = g.get("id", g_id)
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        if "is_done" in body:
+            new_status = bool(body["is_done"])
+        else:
+            new_status = not bool(g.get("is_done", False))
+
+        g["is_done"] = new_status
+        if new_status:
+            g["done_at"] = int(time.time())
+            g["done_by"] = user.get("username", "Admin")
+
+            # Freeze current entries with latest profile info right before locking
+            entries = giveaway_entries.get(g_id, [])
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                uid = str(entry.get("user_id", ""))
+                prof = user_profiles.get(uid)
+                if prof and isinstance(prof, dict):
+                    evm = prof.get("evm_wallet")
+                    fcfs = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet")
+                    tw = prof.get("twitter")
+                    tg = prof.get("telegram")
+                    sol = prof.get("solana_wallet")
+                    if evm: entry["evm_wallet"] = evm
+                    if fcfs:
+                        entry["fcfs_evm_wallet"] = fcfs
+                        entry["burner_evm_wallet"] = fcfs
+                    if tw: entry["twitter"] = tw
+                    if tg: entry["telegram"] = tg
+                    if sol: entry["solana_wallet"] = sol
+
+            giveaway_entries[g_id] = entries
+            save_giveaway_entries()
+            if FIREBASE_URL:
+                await firebase_put(f"giveaway_entries/{g_id}", entries)
+        else:
+            g.pop("done_at", None)
+            g.pop("done_by", None)
+
+        save_giveaways()
+        if FIREBASE_URL:
+            await firebase_put(f"giveaways/{g_id}", g)
+
+        msg = "Giveaway marked as DONE! The participant sheet and wallet addresses are now frozen." if new_status else "Giveaway unlocked! Live profile sync re-enabled."
+        return web.json_response({
+            "success": True,
+            "is_done": new_status,
+            "message": msg,
+            "giveaway": g
+        })
 
 
 
@@ -7830,6 +8412,7 @@ async def start_health_server():
             "network": body.get("network", "Ethereum"),
             "tasks": tasks,
             "social_links": social_links,
+            "role_multipliers": body.get("role_multipliers", []),
             "is_active": True,
             "entries_count": 0,
             "message_id": None
@@ -7878,6 +8461,7 @@ async def start_health_server():
         if "max_per_user" in body: g["max_per_user"] = int(body["max_per_user"])
         if "tasks" in body: g["tasks"] = body["tasks"]
         if "spot_tiers" in body: g["spot_tiers"] = body["spot_tiers"]
+        if "role_multipliers" in body: g["role_multipliers"] = body.get("role_multipliers", [])
         if "mention_role" in body: g["mention_role"] = body["mention_role"]
         if "winner_channel_id" in body: g["winner_channel_id"] = str(body["winner_channel_id"])
         if "social_links" in body or "twitter_link" in body:
@@ -8173,6 +8757,15 @@ async def start_health_server():
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
         uid = user["id"]
+        evm_wallet = str(body.get("evm_wallet", "")).strip()
+        fcfs_evm = str(body.get("fcfs_evm_wallet") or body.get("burner_evm_wallet", "")).strip()
+
+        # Enforce valid 0x 42-character EVM address for both Main EVM and FCFS EVM
+        if not is_valid_evm_address(evm_wallet):
+            return web.json_response({"error": "Main EVM Wallet is mandatory and must be a valid 42-character 0x address."}, status=400)
+        if not is_valid_evm_address(fcfs_evm):
+            return web.json_response({"error": "FCFS EVM Wallet is mandatory and must be a valid 42-character 0x address."}, status=400)
+
         if uid not in user_profiles:
             user_profiles[uid] = {
                 "display_name": user.get("username"),
@@ -8182,17 +8775,94 @@ async def start_health_server():
 
         user_profiles[uid]["twitter"] = body.get("twitter", "").strip()
         user_profiles[uid]["telegram"] = body.get("telegram", "").strip()
-        user_profiles[uid]["evm_wallet"] = body.get("evm_wallet", "").strip()
+        user_profiles[uid]["evm_wallet"] = evm_wallet
+        user_profiles[uid]["fcfs_evm_wallet"] = fcfs_evm
+        user_profiles[uid]["burner_evm_wallet"] = fcfs_evm
         user_profiles[uid]["solana_wallet"] = body.get("solana_wallet", "").strip()
         save_user_profiles()
+        if FIREBASE_URL:
+            await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
+        await sync_user_profile_to_unlocked_giveaways(uid)
 
         # Update session user object
         user["twitter"] = user_profiles[uid]["twitter"]
         user["telegram"] = user_profiles[uid]["telegram"]
         user["evm_wallet"] = user_profiles[uid]["evm_wallet"]
+        user["fcfs_evm_wallet"] = fcfs_evm
+        user["burner_evm_wallet"] = fcfs_evm
         user["solana_wallet"] = user_profiles[uid]["solana_wallet"]
+        user["bonus_entries"] = user_profiles[uid].get("bonus_entries", 0)
 
         return web.json_response({"success": True, "profile": user_profiles[uid]})
+
+    async def apply_bonus_entries_handler(request):
+        user = get_session_user(request)
+        if not user:
+            return web.json_response({"error": "Authentication required. Please login first."}, status=401)
+        
+        g_id = request.match_info.get("id")
+        g = await resolve_giveaway_by_identifier(g_id)
+        if not g:
+            return web.json_response({"error": "Giveaway not found"}, status=404)
+        if not g.get("is_active"):
+            return web.json_response({"error": "This giveaway has already ended."}, status=400)
+        
+        g_id = g.get("id", g_id)
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        try:
+            amount = int(body.get("amount", 1))
+        except (ValueError, TypeError):
+            return web.json_response({"error": "Invalid amount specified"}, status=400)
+
+        if amount <= 0:
+            return web.json_response({"error": "Amount must be at least 1"}, status=400)
+
+        uid = str(user.get("id"))
+        prof = user_profiles.get(uid, {})
+        avail = int(prof.get("bonus_entries", 0))
+
+        if avail < amount:
+            return web.json_response({"error": f"Insufficient bonus entries. You have {avail} available."}, status=400)
+
+        local_entries = giveaway_entries.get(g_id, [])
+        if FIREBASE_URL and not local_entries:
+            fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
+            if fb_entries and isinstance(fb_entries, (dict, list)):
+                local_entries = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+                giveaway_entries[g_id] = local_entries
+
+        entries = giveaway_entries.get(g_id, [])
+        entry = next((e for e in entries if isinstance(e, dict) and str(e.get("user_id")) == uid), None)
+        if not entry:
+            return web.json_response({"error": "You must join this giveaway before applying bonus entries!"}, status=400)
+
+        # Deduct bonus entries from user profile
+        prof["bonus_entries"] = avail - amount
+        user_profiles[uid] = prof
+        
+        # Add to entry
+        entry["bonus_entries_used"] = int(entry.get("bonus_entries_used", 0)) + amount
+        
+        save_user_profiles()
+        save_giveaway_entries()
+
+        if FIREBASE_URL:
+            await firebase_put(f"user_profiles/{uid}", prof)
+            await firebase_put(f"giveaway_entries/{g_id}", entries)
+
+        base_mult = int(entry.get("multiplier", 1))
+        total_tickets = base_mult + entry["bonus_entries_used"]
+
+        return web.json_response({
+            "success": True,
+            "applied": amount,
+            "total_tickets": total_tickets,
+            "remaining_bonus_entries": prof["bonus_entries"]
+        })
 
     async def download_backup_handler(request):
         user = get_session_user(request)
@@ -8479,6 +9149,8 @@ async def start_health_server():
     app.router.add_post("/api/giveaways/{id}/set-custom-winners", set_custom_winners_handler)
     app.router.add_post("/api/giveaways/{id}/announce", send_announcement_handler)
     app.router.add_post("/api/giveaways/{id}/verify-winner", verify_winner_handler)
+    app.router.add_post("/api/giveaways/{id}/apply-bonus-entries", apply_bonus_entries_handler)
+    app.router.add_post("/api/giveaways/{id}/mark-done", mark_giveaway_done_handler)
     app.router.add_post("/api/user/profile", save_profile_handler)
     app.router.add_get("/api/admin/backup", download_backup_handler)
     app.router.add_post("/api/admin/restore", restore_backup_handler)

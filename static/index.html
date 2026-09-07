@@ -247,6 +247,33 @@
               <p class="form-hint" style="margin-top: 6px; font-size: 0.75rem;">If no roles are added, all server members can participate in this giveaway.</p>
             </div>
 
+            <!-- Role-Based Extra Entries / Multipliers Builder -->
+            <div class="form-group" style="margin-bottom: 14px; padding: 14px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 8px;">
+              <label class="form-label" style="font-weight: 600; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <span>🎟️ Role-Based Extra Entries / Multipliers (Optional)</span>
+                <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-muted);">(Give extra ticket entries to specific roles, e.g., 2x, 3x, 5x)</span>
+              </label>
+              <div style="display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
+                <div style="flex: 2; min-width: 200px;">
+                  <select id="gRoleMultSelect" class="form-select">
+                    <option value="">Select Discord Server Role...</option>
+                  </select>
+                </div>
+                <div style="flex: 1; min-width: 140px;">
+                  <input type="text" id="gRoleMultManual" class="form-input" placeholder="Or Role ID / Name...">
+                </div>
+                <div style="width: 130px; display: flex; align-items: center; gap: 4px;">
+                  <input type="number" id="gRoleMultCount" class="form-input" min="1" max="100" value="2" placeholder="Entries" title="Number of entries / multiplier (e.g. 2 for 2x)">
+                  <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: 600;">🎟️</span>
+                </div>
+                <button type="button" class="btn btn-primary btn-sm" onclick="addRoleMultiplier()" style="white-space: nowrap;">+ Add Multiplier</button>
+              </div>
+              <div id="gRoleMultsList" class="role-badges-container" style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px;">
+                <span style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">No role multipliers configured (Standard 1x entry for everyone)</span>
+              </div>
+              <p class="form-hint" style="margin-top: 6px; font-size: 0.75rem;">Members with these roles receive extra ticket entries in the giveaway draw (e.g. 5x entries = 5 tickets). If a member has multiple configured roles, their highest entry multiplier applies.</p>
+            </div>
+
             <div id="dynamicTasksList" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px;">
               <!-- Dynamic task items -->
             </div>
@@ -471,6 +498,33 @@
               <p class="form-hint" style="margin-top: 6px; font-size: 0.75rem;">If no roles are added, all server members can participate in this giveaway.</p>
             </div>
 
+            <!-- Edit Role-Based Extra Entries / Multipliers Builder -->
+            <div class="form-group" style="margin-bottom: 14px; padding: 14px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 8px;">
+              <label class="form-label" style="font-weight: 600; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <span>🎟️ Role-Based Extra Entries / Multipliers (Optional)</span>
+                <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-muted);">(Give extra ticket entries to specific roles, e.g., 2x, 3x, 5x)</span>
+              </label>
+              <div style="display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
+                <div style="flex: 2; min-width: 200px;">
+                  <select id="editGRoleMultSelect" class="form-select">
+                    <option value="">Select Discord Server Role...</option>
+                  </select>
+                </div>
+                <div style="flex: 1; min-width: 140px;">
+                  <input type="text" id="editGRoleMultManual" class="form-input" placeholder="Or Role ID / Name...">
+                </div>
+                <div style="width: 130px; display: flex; align-items: center; gap: 4px;">
+                  <input type="number" id="editGRoleMultCount" class="form-input" min="1" max="100" value="2" placeholder="Entries" title="Number of entries / multiplier (e.g. 2 for 2x)">
+                  <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: 600;">🎟️</span>
+                </div>
+                <button type="button" class="btn btn-primary btn-sm" onclick="addEditRoleMultiplier()" style="white-space: nowrap;">+ Add Multiplier</button>
+              </div>
+              <div id="editGRoleMultsList" class="role-badges-container" style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px;">
+                <span style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">No role multipliers configured (Standard 1x entry for everyone)</span>
+              </div>
+              <p class="form-hint" style="margin-top: 6px; font-size: 0.75rem;">Members with these roles receive extra ticket entries in the giveaway draw (e.g. 5x entries = 5 tickets). If a member has multiple configured roles, their highest entry multiplier applies.</p>
+            </div>
+
             <div id="editDynamicTasksList" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px;"></div>
             
             <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">
@@ -558,6 +612,7 @@
                 <tr>
                   <th>Participant</th>
                   <th>Discord ID</th>
+                  <th>Entries 🎟️</th>
                   <th id="publicWalletHeader">Wallet Address</th>
                   <th>Status / Spot Won</th>
                 </tr>
@@ -579,10 +634,13 @@
             <button id="drawWinnersBtn" class="btn btn-outline btn-sm">🎲 Auto Draw Winners</button>
             <button id="redrawWinnersBtn" class="btn btn-outline btn-sm">🔄 Re-Raffle Disqualified Spots</button>
             <button id="announceWinnersBtn" class="btn btn-primary btn-sm">📢 Send Winners Announcement</button>
+            <button id="markDoneAdminBtn" class="btn btn-success btn-sm">✅ Done (Lock Sheet)</button>
             <button id="exportAllEntriesBtn" class="btn btn-primary btn-sm">📥 Download All Entries (CSV)</button>
             <button id="exportWinnersBtn" class="btn btn-outline btn-sm">🏆 Export Winners Only (CSV)</button>
             <button id="deleteGiveawayAdminBtn" class="btn btn-danger btn-sm">🗑️ Delete Giveaway</button>
           </div>
+
+          <div id="lockStatusNotice" style="display: none; margin-bottom: 12px; font-size: 0.84rem; padding: 8px 12px; border-radius: 6px; font-weight: 600;"></div>
 
           <h5 style="font-size: 0.9rem; margin-bottom: 8px;">Participants & Entries</h5>
           <div class="table-container">
@@ -591,7 +649,9 @@
                 <tr>
                   <th>Discord User</th>
                   <th>Spot Entry</th>
-                  <th>EVM Wallet</th>
+                  <th>Entries 🎟️</th>
+                  <th>Main EVM</th>
+                  <th>FCFS EVM</th>
                   <th>Solana Wallet</th>
                   <th>Socials</th>
                   <th>Task Verification</th>
@@ -679,8 +739,13 @@
             <input type="text" id="profTelegram" class="form-input" placeholder="@username">
           </div>
           <div class="form-group">
-            <label class="form-label">EVM Wallet Address (0x...)</label>
-            <input type="text" id="profEvm" class="form-input" placeholder="0x1234...5678">
+            <label class="form-label">Main EVM Wallet Address (0x...) <span style="color: var(--danger);">*</span></label>
+            <input type="text" id="profEvm" class="form-input" placeholder="0x1234...5678" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">⚡ FCFS EVM Wallet (0x...) <span style="color: var(--danger);">*</span></label>
+            <input type="text" id="profBurnerEvm" class="form-input" placeholder="0xabcd...ef01" required>
+            <p class="form-hint" style="margin-top: 4px; font-size: 0.75rem;">Mandatory FCFS EVM wallet for minting / claims.</p>
           </div>
           <div class="form-group">
             <label class="form-label">Solana Wallet Address</label>
