@@ -174,13 +174,30 @@ async function loadGuildChannels() {
   }
 }
 
-// Load Guild Roles for Mention Role dropdowns from Firebase
+// Load Guild Roles for Mention Role dropdowns from API or Firebase
 async function loadGuildRoles() {
   try {
-    const roles = await firebaseGet('roles');
     let roleArray = [];
-    if (roles && typeof roles === 'object') {
-      roleArray = Array.isArray(roles) ? roles : Object.values(roles);
+
+    // 1. Try Backend API first (always returns latest live discord server roles)
+    try {
+      const res = await fetch(apiUrl('/api/guilds/roles'), { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          roleArray = data;
+        }
+      }
+    } catch (apiErr) {
+      console.warn('Backend API roles fetch failed, trying Firebase:', apiErr);
+    }
+
+    // 2. Fallback to Firebase Cloud DB
+    if (!roleArray || roleArray.length === 0) {
+      const roles = await firebaseGet('roles');
+      if (roles && typeof roles === 'object') {
+        roleArray = Array.isArray(roles) ? roles : Object.values(roles);
+      }
     }
 
     const uniqueRoles = [];

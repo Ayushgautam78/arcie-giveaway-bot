@@ -6215,9 +6215,37 @@ async def _handle_set_fcfs_evm(interaction: discord.Interaction, address: str):
     await interaction.response.send_message(f"✅ **FCFS EVM Wallet Updated!**\nAddress: `{addr}`", ephemeral=True)
 
 
-@bot.tree.command(name="extra_entries_allow", description="Moderator: Grant bonus giveaway entries to a user.")
+@bot.tree.command(name="allow-bonus-entry", description="Admin: Grant bonus giveaway entries to a user (visible only to you).")
+@app_commands.describe(user="The member to grant bonus entries to", amount="Number of bonus entries to grant (default: 1)", reason="Optional reason for the grant")
+async def allow_bonus_entry_cmd(interaction: discord.Interaction, user: discord.User, amount: int = 1, reason: Optional[str] = None):
+    await _handle_allow_bonus_entry(interaction, user, amount, reason)
+
+
+@bot.tree.command(name="allow_bonus_entry", description="Admin: Grant bonus giveaway entries to a user (visible only to you).")
+@app_commands.describe(user="The member to grant bonus entries to", amount="Number of bonus entries to grant (default: 1)", reason="Optional reason for the grant")
+async def allow_bonus_entry_underscore_cmd(interaction: discord.Interaction, user: discord.User, amount: int = 1, reason: Optional[str] = None):
+    await _handle_allow_bonus_entry(interaction, user, amount, reason)
+
+
+@bot.tree.command(name="extra_entries_allow", description="Admin: Grant bonus giveaway entries to a user (alias).")
 @app_commands.describe(user="The member to grant bonus entries to", amount="Number of bonus entries to grant (default: 1)", reason="Optional reason for the grant")
 async def extra_entries_allow_cmd(interaction: discord.Interaction, user: discord.User, amount: int = 1, reason: Optional[str] = None):
+    await _handle_allow_bonus_entry(interaction, user, amount, reason)
+
+
+@bot.tree.command(name="reduce-bonus-entries", description="Admin: Deduct/reduce bonus giveaway entries from a user (visible only to you).")
+@app_commands.describe(user="The member to reduce bonus entries from", amount="Number of bonus entries to deduct (default: 1)", reason="Optional reason for the deduction")
+async def reduce_bonus_entries_cmd(interaction: discord.Interaction, user: discord.User, amount: int = 1, reason: Optional[str] = None):
+    await _handle_reduce_bonus_entries(interaction, user, amount, reason)
+
+
+@bot.tree.command(name="reduce_bonus_entries", description="Admin: Deduct/reduce bonus giveaway entries from a user (visible only to you).")
+@app_commands.describe(user="The member to reduce bonus entries from", amount="Number of bonus entries to deduct (default: 1)", reason="Optional reason for the deduction")
+async def reduce_bonus_entries_underscore_cmd(interaction: discord.Interaction, user: discord.User, amount: int = 1, reason: Optional[str] = None):
+    await _handle_reduce_bonus_entries(interaction, user, amount, reason)
+
+
+async def _handle_allow_bonus_entry(interaction: discord.Interaction, user: discord.User, amount: int = 1, reason: Optional[str] = None):
     uid = str(interaction.user.id)
     is_admin = is_bot_admin_by_id(uid)
     has_perm = interaction.permissions and (interaction.permissions.manage_guild or interaction.permissions.administrator)
@@ -6246,15 +6274,55 @@ async def extra_entries_allow_cmd(interaction: discord.Interaction, user: discor
 
     embed = discord.Embed(
         title="🎟️ Bonus Giveaway Entries Granted!",
-        description=f"Successfully granted **{amount}** bonus entries to {user.mention}!\n\n"
+        description=f"Successfully granted **+{amount}** bonus entries to {user.mention} (`{user.name}`)!\n\n"
                     f"• **Previous Balance:** `{current_bonus}` 🎟️\n"
                     f"• **New Balance:** **`{new_bonus}`** Available Bonus Entries 🎟️\n"
                     + (f"• **Reason:** {reason}\n" if reason else "") +
                     f"\n💡 *The user can apply these bonus entries to any giveaway to increase their winning odds!*",
         color=discord.Color.gold()
     )
-    embed.set_footer(text=f"Granted by {interaction.user.name} | Powered by Arcie Bot")
-    await interaction.response.send_message(embed=embed)
+    embed.set_footer(text=f"Granted by {interaction.user.name} | Only visible to you")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+async def _handle_reduce_bonus_entries(interaction: discord.Interaction, user: discord.User, amount: int = 1, reason: Optional[str] = None):
+    uid = str(interaction.user.id)
+    is_admin = is_bot_admin_by_id(uid)
+    has_perm = interaction.permissions and (interaction.permissions.manage_guild or interaction.permissions.administrator)
+    if not (is_admin or has_perm):
+        await safe_respond(interaction, "❌ You do not have permission to reduce bonus entries (Admin / Manage Guild required).", ephemeral=True)
+        return
+
+    if amount <= 0:
+        await safe_respond(interaction, "❌ Amount must be at least 1.", ephemeral=True)
+        return
+
+    target_id = str(user.id)
+    if target_id not in user_profiles:
+        user_profiles[target_id] = {
+            "display_name": user.display_name,
+            "username": user.name,
+            "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        }
+    
+    current_bonus = int(user_profiles[target_id].get("bonus_entries", 0))
+    new_bonus = max(0, current_bonus - amount)
+    actual_deducted = current_bonus - new_bonus
+    user_profiles[target_id]["bonus_entries"] = new_bonus
+    save_user_profiles()
+    if FIREBASE_URL:
+        await firebase_put(f"user_profiles/{target_id}", user_profiles[target_id])
+
+    embed = discord.Embed(
+        title="🔻 Bonus Giveaway Entries Reduced",
+        description=f"Successfully deducted **-{actual_deducted}** bonus entries from {user.mention} (`{user.name}`)!\n\n"
+                    f"• **Previous Balance:** `{current_bonus}` 🎟️\n"
+                    f"• **New Balance:** **`{new_bonus}`** Available Bonus Entries 🎟️\n"
+                    + (f"• **Reason:** {reason}\n" if reason else ""),
+        color=discord.Color.red()
+    )
+    embed.set_footer(text=f"Reduced by {interaction.user.name} | Only visible to you")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="view-bonus-entries", description="Check how many bonus giveaway entries you have left (visible only to you).")
@@ -7685,6 +7753,36 @@ async def bg_firebase_poster_task():
         await asyncio.sleep(30)
 
 
+async def sync_server_roles_to_firebase() -> list:
+    """Sync all Discord server roles to Firebase Cloud DB so web dashboard and bot are always in sync."""
+    roles = []
+    try:
+        for guild in bot.guilds:
+            for role in guild.roles:
+                if role.name == "@everyone":
+                    roles.append({
+                        "id": "@everyone",
+                        "name": "@everyone",
+                        "guild_name": guild.name,
+                        "guild_id": str(guild.id),
+                        "mention": "@everyone"
+                    })
+                    continue
+                roles.append({
+                    "id": str(role.id),
+                    "name": role.name,
+                    "guild_name": guild.name,
+                    "guild_id": str(guild.id),
+                    "mention": f"<@&{role.id}>"
+                })
+        if roles and FIREBASE_URL:
+            await firebase_put("roles", roles)
+            print(f"[ROLES SYNC] Successfully synced {len(roles)} Discord server roles to Firebase Cloud DB.")
+    except Exception as e:
+        print(f"[ROLES SYNC ERROR] Failed to sync roles: {e}")
+    return roles
+
+
 @bot.event
 async def on_ready():
     global session
@@ -7692,6 +7790,12 @@ async def on_ready():
         session = aiohttp.ClientSession()
 
     print(f"[READY] Logged in as {bot.user.name} ({bot.user.id})")
+
+    # 0. Sync Discord server roles immediately to Firebase Cloud DB
+    try:
+        await sync_server_roles_to_firebase()
+    except Exception as re:
+        print(f"[ON_READY ROLES SYNC ERROR] {re}")
 
     # 1. IMMEDIATE FIREBASE CLOUD DB SYNC (Restores Profiles, Giveaways, Entries & Reaction Roles instantly)
     if FIREBASE_URL:
@@ -7817,6 +7921,50 @@ async def on_ready():
             print(f"[MEMBERS] Skipping slow member chunking for '{guild.name}'")
 
     print(f"[BOOT] {bot.user.name} ({bot.user.id}) IS FULLY ONLINE & CONNECTED TO FIREBASE CLOUD DB.")
+
+
+@bot.event
+async def on_guild_role_create(role: discord.Role):
+    print(f"[ROLE EVENT] Role created: {role.name} ({role.id}) in {role.guild.name}")
+    await sync_server_roles_to_firebase()
+
+
+@bot.event
+async def on_guild_role_update(before: discord.Role, after: discord.Role):
+    if before.name != after.name:
+        print(f"[ROLE EVENT] Role updated: {before.name} -> {after.name} ({after.id})")
+        await sync_server_roles_to_firebase()
+
+
+@bot.event
+async def on_guild_role_delete(role: discord.Role):
+    print(f"[ROLE EVENT] Role deleted: {role.name} ({role.id}) in {role.guild.name}")
+    await sync_server_roles_to_firebase()
+
+
+@bot.tree.command(name="sync-roles", description="Admin: Sync latest Discord server roles to the Web Dashboard and Cloud DB.")
+async def sync_roles_cmd(interaction: discord.Interaction):
+    uid = str(interaction.user.id)
+    is_admin = is_bot_admin_by_id(uid)
+    has_perm = interaction.permissions and (interaction.permissions.manage_guild or interaction.permissions.administrator)
+    if not (is_admin or has_perm):
+        await safe_respond(interaction, "❌ You do not have permission to sync server roles (Admin / Manage Guild required).", ephemeral=True)
+        return
+
+    roles = await sync_server_roles_to_firebase()
+    unique_count = len([r for r in roles if r.get("id") != "@everyone"])
+    guild_name = interaction.guild.name if interaction.guild else "Server"
+    await interaction.response.send_message(
+        f"✅ **Roles Synced Successfully!**\n"
+        f"Synced **{unique_count}** roles from **{guild_name}** to the Web Dashboard and Cloud Database.",
+        ephemeral=True
+    )
+
+
+@bot.tree.command(name="sync_roles", description="Admin: Sync latest Discord server roles (alias).")
+async def sync_roles_underscore_cmd(interaction: discord.Interaction):
+    await sync_roles_cmd(interaction)
+
 
 # -------- Web Dashboard & HTTP API Server -------- #
 async def start_health_server():
@@ -8020,28 +8168,7 @@ async def start_health_server():
 
     # Guild Roles Endpoint
     async def guilds_roles_handler(request):
-        user = get_session_user(request)
-        if not user or not user.get("is_admin"):
-            return web.json_response({"error": "Admin required"}, status=403)
-        roles = []
-        for guild in bot.guilds:
-            for role in guild.roles:
-                if role.name == "@everyone":
-                    roles.append({
-                        "id": "@everyone",
-                        "name": "@everyone",
-                        "guild_name": guild.name,
-                        "guild_id": str(guild.id),
-                        "mention": "@everyone"
-                    })
-                    continue
-                roles.append({
-                    "id": str(role.id),
-                    "name": role.name,
-                    "guild_name": guild.name,
-                    "guild_id": str(guild.id),
-                    "mention": f"<@&{role.id}>"
-                })
+        roles = await sync_server_roles_to_firebase()
         return web.json_response(roles)
 
     async def search_members_handler(request):
@@ -9131,6 +9258,7 @@ async def start_health_server():
     app.router.add_post("/api/auth/password-login", auth_password_login_handler)
     app.router.add_get("/api/guilds", guilds_handler)
     app.router.add_get("/api/guilds/roles", guilds_roles_handler)
+    app.router.add_get("/api/roles", guilds_roles_handler)
     app.router.add_get("/api/members/search", search_members_handler)
     app.router.add_get("/api/tickets", get_tickets_handler)
     app.router.add_post("/api/tickets/setup-panel", post_ticket_panel_handler)
