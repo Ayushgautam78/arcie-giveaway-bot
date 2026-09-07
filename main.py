@@ -9,6 +9,8 @@ import random
 import io
 import base64
 import urllib.parse
+import urllib.request
+import urllib.error
 import unicodedata
 import traceback
 from typing import Optional, List, Dict, Set, Union, Tuple, Any, Callable, Coroutine
@@ -463,9 +465,17 @@ FIREBASE_URL = (
     "https://arcie-bot-default-rtdb.asia-southeast1.firebasedatabase.app"
 ).rstrip("/")
 
+_firebase_etag_cache: Dict[str, Tuple[Optional[str], Any]] = {}
+
 def firebase_put_sync(path: str, data):
     if not FIREBASE_URL: return
-    url = f"{FIREBASE_URL}/{path.lstrip('/')}.json"
+    norm_path = path.strip("/")
+    # Invalidate cache for this path and any sub/parent paths
+    to_del = [k for k in _firebase_etag_cache if k == norm_path or k.startswith(norm_path + "/") or norm_path.startswith(k + "/")]
+    for k in to_del:
+        _firebase_etag_cache.pop(k, None)
+
+    url = f"{FIREBASE_URL}/{norm_path}.json"
     try:
         clean_data = data
         if isinstance(data, (dict, list)):
@@ -489,26 +499,42 @@ def firebase_put_sync(path: str, data):
             req = urllib.request.Request(url, data=json.dumps(clean_data).encode('utf-8'), method='PUT')
             req.add_header('Content-Type', 'application/json')
         with urllib.request.urlopen(req, timeout=8) as resp:
-            print(f"[FIREBASE PUT SUCCESS] {path}: status {resp.status}")
+            print(f"[FIREBASE PUT SUCCESS] {norm_path}: status {resp.status}")
     except Exception as e:
-        print(f"[FIREBASE PUT ERROR] {path}: {e}")
+        print(f"[FIREBASE PUT ERROR] {norm_path}: {e}")
 
 async def firebase_get(path: str) -> Optional[dict]:
     if not FIREBASE_URL:
         return None
-    url = f"{FIREBASE_URL}/{path.lstrip('/')}.json"
+    norm_path = path.strip("/")
+    url = f"{FIREBASE_URL}/{norm_path}.json"
     try:
         loop = asyncio.get_running_loop()
         def _do_get():
+            cached_entry = _firebase_etag_cache.get(norm_path)
+            cached_etag = cached_entry[0] if cached_entry else None
+            cached_data = cached_entry[1] if cached_entry else None
             try:
                 req = urllib.request.Request(url, method='GET')
+                req.add_header('X-Firebase-ETag', 'true')
+                if cached_etag:
+                    req.add_header('If-None-Match', cached_etag)
                 with urllib.request.urlopen(req, timeout=8) as resp:
                     if resp.status == 200:
+                        etag = resp.headers.get("ETag") or resp.headers.get("etag")
                         content = resp.read().decode('utf-8')
-                        return json.loads(content)
+                        data = json.loads(content)
+                        if etag:
+                            _firebase_etag_cache[norm_path] = (etag, data)
+                        return data
+            except urllib.error.HTTPError as he:
+                if he.code == 304 and cached_entry:
+                    # 304 Not Modified - 0 bytes payload downloaded!
+                    return cached_data
+                print(f"[FIREBASE GET HTTP ERROR] {norm_path}: {he.code} {he.reason}")
             except Exception as ge:
-                print(f"[FIREBASE GET ERROR] {path}: {ge}")
-            return None
+                print(f"[FIREBASE GET ERROR] {norm_path}: {ge}")
+            return cached_data if cached_data is not None else None
         return await loop.run_in_executor(None, _do_get)
     except Exception:
         return None
@@ -4667,9 +4693,15 @@ async def cleanup_expired_giveaways_40_days():
     for gid, g in list(giveaways.items()):
         if not isinstance(g, dict):
             continue
-        created_at = int(g.get("created_at") or 0)
+        # STRICT SAFETY: Never delete or disturb active/ongoing giveaways
+        if g.get("is_active", False) or g.get("status") == "active":
+            continue
         ends_at = int(g.get("ends_at") or 0)
-        timestamp = created_at if created_at > 0 else ends_at
+        if ends_at > 0 and ends_at > now:
+            continue
+
+        created_at = int(g.get("created_at") or 0)
+        timestamp = ends_at if ends_at > 0 else created_at
 
         if timestamp > 0 and (now - timestamp) >= cutoff_age_seconds:
             title = g.get("title", gid)
@@ -7792,7 +7824,28 @@ async def bg_firebase_poster_task():
             await sync_and_post_giveaways()
         except Exception as e:
             print(f"[BG TASK ERROR] {e}")
-        await asyncio.sleep(30)
+        await asyncio.sleep(60)
+
+
+async def sync_server_channels_to_firebase() -> list:
+    """Sync all Discord server channels to Firebase Cloud DB for web dashboard fallback."""
+    channels = []
+    try:
+        for guild in bot.guilds:
+            for ch in guild.text_channels:
+                if ch.permissions_for(guild.me).send_messages:
+                    channels.append({
+                        "id": str(ch.id),
+                        "name": ch.name,
+                        "guild_name": guild.name,
+                        "guild_id": str(guild.id)
+                    })
+        if channels and FIREBASE_URL:
+            await firebase_put("channels", channels)
+            print(f"[CHANNELS SYNC] Successfully synced {len(channels)} Discord text channels to Firebase Cloud DB.")
+    except Exception as e:
+        print(f"[CHANNELS SYNC ERROR] Failed to sync channels: {e}")
+    return channels
 
 
 async def sync_server_roles_to_firebase() -> list:
@@ -7833,11 +7886,12 @@ async def on_ready():
 
     print(f"[READY] Logged in as {bot.user.name} ({bot.user.id})")
 
-    # 0. Sync Discord server roles immediately to Firebase Cloud DB
+    # 0. Sync Discord server roles & channels immediately to Firebase Cloud DB
     try:
         await sync_server_roles_to_firebase()
+        await sync_server_channels_to_firebase()
     except Exception as re:
-        print(f"[ON_READY ROLES SYNC ERROR] {re}")
+        print(f"[ON_READY SYNC ERROR] {re}")
 
     # 1. IMMEDIATE FIREBASE CLOUD DB SYNC (Restores Profiles, Giveaways, Entries & Reaction Roles instantly)
     if FIREBASE_URL:
@@ -8196,16 +8250,7 @@ async def start_health_server():
         user = get_session_user(request)
         if not user or not user.get("is_admin"):
             return web.json_response({"error": "Admin required"}, status=403)
-        channels = []
-        for guild in bot.guilds:
-            for ch in guild.text_channels:
-                if ch.permissions_for(guild.me).send_messages:
-                    channels.append({
-                        "id": str(ch.id),
-                        "name": ch.name,
-                        "guild_name": guild.name,
-                        "guild_id": str(guild.id)
-                    })
+        channels = await sync_server_channels_to_firebase()
         return web.json_response(channels)
 
     # Guild Roles Endpoint
@@ -8290,18 +8335,6 @@ async def start_health_server():
                     for del_id in list(deleted_giveaways):
                         fb_g.pop(del_id, None)
                     giveaways.update(fb_g)
-
-                fb_e = await firebase_get("giveaway_entries")
-                if fb_e and isinstance(fb_e, dict):
-                    for del_id in list(deleted_giveaways):
-                        fb_e.pop(del_id, None)
-                    for gid, elist in fb_e.items():
-                        if gid in deleted_giveaways:
-                            continue
-                        if isinstance(elist, dict):
-                            giveaway_entries[gid] = list(elist.values())
-                        elif isinstance(elist, list):
-                            giveaway_entries[gid] = elist
             except Exception as e:
                 print(f"[GET GIVEAWAYS SYNC ERROR] {e}")
 
@@ -8312,7 +8345,7 @@ async def start_health_server():
                 continue
             if isinstance(g_obj, dict):
                 e_list = giveaway_entries.get(gid, [])
-                g_obj["entries_count"] = len(e_list)
+                g_obj["entries_count"] = len(e_list) if e_list else g_obj.get("entries_count", 0)
                 valid_giveaways.append(g_obj)
 
         return web.json_response(valid_giveaways)
@@ -9311,6 +9344,8 @@ async def start_health_server():
     app.router.add_get("/api/auth/me", auth_me_handler)
     app.router.add_post("/api/auth/password-login", auth_password_login_handler)
     app.router.add_get("/api/guilds", guilds_handler)
+    app.router.add_get("/api/guilds/channels", guilds_handler)
+    app.router.add_get("/api/channels", guilds_handler)
     app.router.add_get("/api/guilds/roles", guilds_roles_handler)
     app.router.add_get("/api/roles", guilds_roles_handler)
     app.router.add_get("/api/members/search", search_members_handler)

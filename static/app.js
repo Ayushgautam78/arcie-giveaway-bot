@@ -18,14 +18,47 @@ let currentGiveaways = [];
 let currentFilter = 'active';
 let activeDetailGiveaway = null;
 
-// Helper: Firebase REST read
+// Helper: Firebase REST read with in-memory ETag caching (0 payload bytes on 304)
+const _fbEtagCache = {};
+
 async function firebaseGet(path) {
-  const res = await fetch(`${FIREBASE_DB}/${path}.json`);
-  return await res.json();
+  const normPath = path.replace(/^\/+|\/+$/g, '');
+  const cached = _fbEtagCache[normPath];
+  const headers = { 'X-Firebase-ETag': 'true' };
+  if (cached && cached.etag) {
+    headers['If-None-Match'] = cached.etag;
+  }
+  try {
+    const res = await fetch(`${FIREBASE_DB}/${normPath}.json`, { headers });
+    if (res.status === 304 && cached) {
+      return cached.data;
+    }
+    if (res.ok) {
+      const data = await res.json();
+      const etag = res.headers.get('ETag') || res.headers.get('etag');
+      if (etag) {
+        _fbEtagCache[normPath] = { etag, data };
+      }
+      return data;
+    }
+  } catch (err) {
+    console.warn(`Firebase GET ${normPath} failed:`, err);
+    if (cached) return cached.data;
+  }
+  return null;
 }
 
 // Helper: Firebase REST write
 async function firebasePut(path, data) {
+  const normPath = path.replace(/^\/+|\/+$/g, '');
+  delete _fbEtagCache[normPath];
+  // Invalidate any parent/child paths in cache
+  Object.keys(_fbEtagCache).forEach(k => {
+    if (k.startsWith(normPath + '/') || normPath.startsWith(k + '/')) {
+      delete _fbEtagCache[k];
+    }
+  });
+
   // Clone data to avoid mutating the original, and strip excessively large base64 banner_url
   // strings (>500KB) from Firebase to prevent quota abuse, but preserve smaller images
   // so the bot can convert them to local files on sync.
@@ -46,7 +79,7 @@ async function firebasePut(path, data) {
     sanitizeLargeBlobs(cleanData);
   }
 
-  await fetch(`${FIREBASE_DB}/${path}.json`, {
+  await fetch(`${FIREBASE_DB}/${normPath}.json`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(cleanData)
@@ -140,13 +173,30 @@ function setupEventListeners() {
   }
 }
 
-// Load Guild Channels for Channel Selector from Firebase
+// Load Guild Channels for Channel Selector from API or Firebase
 async function loadGuildChannels() {
   try {
-    const channels = await firebaseGet('channels');
     let channelArray = [];
-    if (channels && typeof channels === 'object') {
-      channelArray = Array.isArray(channels) ? channels : Object.values(channels);
+
+    // 1. Try Backend API first (always returns latest live discord server channels)
+    try {
+      const res = await fetch(apiUrl('/api/guilds/channels'), { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          channelArray = data;
+        }
+      }
+    } catch (apiErr) {
+      console.warn('Backend API channels fetch failed, trying Firebase:', apiErr);
+    }
+
+    // 2. Fallback to Firebase Cloud DB
+    if (!channelArray || channelArray.length === 0) {
+      const channels = await firebaseGet('channels');
+      if (channels && typeof channels === 'object') {
+        channelArray = Array.isArray(channels) ? channels : Object.values(channels);
+      }
     }
 
     if (channelArray.length > 0) {
@@ -675,31 +725,32 @@ function adminLogout() {
   }
 }
 
-// Load Giveaways directly from Firebase with API fallback
+// Load Giveaways from API first with Firebase fallback
 async function loadGiveaways() {
   try {
     let data = null;
+
+    // 1. Try backend API first (zero Firebase bandwidth)
+    try {
+      const res = await fetch(apiUrl('/api/giveaways'), { credentials: 'include' });
+      if (res.ok) {
+        const apiData = await res.json();
+        if (Array.isArray(apiData) && apiData.length > 0) {
+          currentGiveaways = apiData;
+          updateHeroStats();
+          renderGiveaways();
+          return;
+        }
+      }
+    } catch (apiErr) {
+      console.warn('Backend API giveaways fetch failed, attempting Firebase fallback:', apiErr);
+    }
+
+    // 2. Fallback to Firebase Cloud DB
     try {
       data = await firebaseGet('giveaways');
     } catch (e) {
-      console.warn('Firebase giveaways fetch failed, attempting API fallback:', e);
-    }
-
-    if (!data || typeof data !== 'object' || Object.keys(data).length === 0) {
-      try {
-        const res = await fetch(apiUrl('/api/giveaways'), { credentials: 'include' });
-        if (res.ok) {
-          const apiData = await res.json();
-          if (Array.isArray(apiData) && apiData.length > 0) {
-            currentGiveaways = apiData;
-            updateHeroStats();
-            renderGiveaways();
-            return;
-          }
-        }
-      } catch (apiErr) {
-        console.warn('Backend API giveaways fallback failed:', apiErr);
-      }
+      console.warn('Firebase giveaways fetch failed:', e);
     }
 
     if (data && typeof data === 'object') {
