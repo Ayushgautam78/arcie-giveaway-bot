@@ -7832,17 +7832,20 @@ async def sync_server_channels_to_firebase() -> list:
     channels = []
     try:
         for guild in bot.guilds:
-            for ch in guild.text_channels:
-                if ch.permissions_for(guild.me).send_messages:
-                    channels.append({
-                        "id": str(ch.id),
-                        "name": ch.name,
-                        "guild_name": guild.name,
-                        "guild_id": str(guild.id)
-                    })
+            for ch in guild.channels:
+                if isinstance(ch, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel)):
+                    perms = ch.permissions_for(guild.me)
+                    if perms.view_channel:
+                        channels.append({
+                            "id": str(ch.id),
+                            "name": ch.name,
+                            "guild_name": guild.name,
+                            "guild_id": str(guild.id),
+                            "can_send": perms.send_messages
+                        })
         if channels and FIREBASE_URL:
             await firebase_put("channels", channels)
-            print(f"[CHANNELS SYNC] Successfully synced {len(channels)} Discord text channels to Firebase Cloud DB.")
+            print(f"[CHANNELS SYNC] Successfully synced {len(channels)} Discord channels to Firebase Cloud DB.")
     except Exception as e:
         print(f"[CHANNELS SYNC ERROR] Failed to sync channels: {e}")
     return channels
@@ -8036,6 +8039,48 @@ async def on_guild_role_update(before: discord.Role, after: discord.Role):
 async def on_guild_role_delete(role: discord.Role):
     print(f"[ROLE EVENT] Role deleted: {role.name} ({role.id}) in {role.guild.name}")
     await sync_server_roles_to_firebase()
+
+
+@bot.event
+async def on_guild_channel_create(channel: discord.abc.GuildChannel):
+    print(f"[CHANNEL EVENT] Channel created: {channel.name} ({channel.id}) in {channel.guild.name}")
+    await sync_server_channels_to_firebase()
+
+
+@bot.event
+async def on_guild_channel_update(before: discord.abc.GuildChannel, after: discord.abc.GuildChannel):
+    if before.name != after.name:
+        print(f"[CHANNEL EVENT] Channel updated: {before.name} -> {after.name} ({after.id})")
+        await sync_server_channels_to_firebase()
+
+
+@bot.event
+async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
+    print(f"[CHANNEL EVENT] Channel deleted: {channel.name} ({channel.id}) in {channel.guild.name}")
+    await sync_server_channels_to_firebase()
+
+
+@bot.tree.command(name="sync-channels", description="Admin: Sync latest Discord server channels to the Web Dashboard and Cloud DB.")
+async def sync_channels_cmd(interaction: discord.Interaction):
+    uid = str(interaction.user.id)
+    is_admin = is_bot_admin_by_id(uid)
+    has_perm = interaction.permissions and (interaction.permissions.manage_guild or interaction.permissions.administrator)
+    if not (is_admin or has_perm):
+        await safe_respond(interaction, "❌ You do not have permission to sync server channels (Admin / Manage Guild required).", ephemeral=True)
+        return
+
+    channels = await sync_server_channels_to_firebase()
+    guild_name = interaction.guild.name if interaction.guild else "Server"
+    await interaction.response.send_message(
+        f"✅ **Channels Synced Successfully!**\n"
+        f"Synced **{len(channels)}** channels from **{guild_name}** to the Web Dashboard and Cloud Database.",
+        ephemeral=True
+    )
+
+
+@bot.tree.command(name="sync_channels", description="Admin: Sync latest Discord server channels (alias).")
+async def sync_channels_underscore_cmd(interaction: discord.Interaction):
+    await sync_channels_cmd(interaction)
 
 
 @bot.tree.command(name="sync-roles", description="Admin: Sync latest Discord server roles to the Web Dashboard and Cloud DB.")
