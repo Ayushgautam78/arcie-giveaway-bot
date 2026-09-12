@@ -4326,7 +4326,7 @@ class GiveawayView(discord.ui.View):
         web_clean = web_url.rstrip("/")
         if web_clean.startswith(("http://", "https://")):
             view_site_btn = discord.ui.Button(
-                label="🌐 View on Website",
+                label="🌐 Track Giveaway on Website",
                 style=discord.ButtonStyle.link,
                 url=f"{web_clean}/?g={giveaway_id}",
                 row=0
