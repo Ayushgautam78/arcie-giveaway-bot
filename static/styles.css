@@ -5,34 +5,38 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
 :root {
-  --bg-obsidian: #050506;
-  --bg-surface: #0a0a0d;
-  --bg-card: rgba(255, 255, 255, 0.018);
-  --bg-card-hover: rgba(255, 255, 255, 0.038);
-  --bg-card-elevated: #0f0f14;
-  --bg-card-border: rgba(255, 255, 255, 0.09);
-  --bg-glass: rgba(5, 5, 6, 0.82);
+  --bg-obsidian: #040504;
+  --bg-surface: #080a08;
+  --bg-card: rgba(168, 255, 26, 0.015);
+  --bg-card-hover: rgba(168, 255, 26, 0.035);
+  --bg-card-elevated: #0b0e0b;
+  --bg-card-border: rgba(168, 255, 26, 0.12);
+  --bg-glass: rgba(4, 5, 4, 0.88);
 
   --border-subtle: rgba(255, 255, 255, 0.08);
   --border-medium: rgba(255, 255, 255, 0.14);
-  --border-hover: rgba(255, 255, 255, 0.28);
-  --border-accent: rgba(139, 92, 246, 0.5);
+  --border-hover: rgba(168, 255, 26, 0.45);
+  --border-accent: rgba(168, 255, 26, 0.6);
 
-  --accent-violet: #8b5cf6;
-  --accent-violet-rgb: 139, 92, 246;
-  --accent-violet-glow: rgba(139, 92, 246, 0.25);
-  --accent-blue: #3b82f6;
+  --accent-primary: #a8ff1a; /* Exact Logo Electric Cyber Lime */
+  --accent-primary-hover: #bef264;
+  --accent-primary-glow: rgba(168, 255, 26, 0.35);
+  --accent-violet: #a8ff1a;
+  --accent-violet-rgb: 168, 255, 26;
+  --accent-violet-glow: rgba(168, 255, 26, 0.28);
+  --accent-blue: #38bdf8;
   --accent-emerald: #10b981;
   --accent-emerald-glow: rgba(16, 185, 129, 0.25);
-  --accent-gold: #f59e0b;
-  --accent-gold-glow: rgba(245, 158, 11, 0.2);
+  --accent-gold: #facc15;
+  --accent-gold-glow: rgba(250, 204, 21, 0.2);
   --accent-rose: #f43f5e;
 
   --text-pure: #ffffff;
-  --text-main: rgba(255, 255, 255, 0.92);
-  --text-secondary: rgba(255, 255, 255, 0.65);
-  --text-muted: rgba(255, 255, 255, 0.42);
+  --text-main: rgba(255, 255, 255, 0.94);
+  --text-secondary: rgba(255, 255, 255, 0.68);
+  --text-muted: rgba(255, 255, 255, 0.44);
   --text-faint: rgba(255, 255, 255, 0.22);
+  --text-accent: #a8ff1a;
 
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', 'Space Mono', monospace;
@@ -44,8 +48,8 @@
 
   --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
   --transition-smooth: 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-  --shadow-subtle: 0 16px 40px -10px rgba(0, 0, 0, 0.6);
-  --shadow-glow: 0 0 25px rgba(139, 92, 246, 0.18);
+  --shadow-subtle: 0 16px 40px -10px rgba(0, 0, 0, 0.7);
+  --shadow-glow: 0 0 25px rgba(168, 255, 26, 0.25);
 }
 
 /* ==========================================================================
@@ -79,7 +83,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Ambient Background Canvas (Tessera Technical Matrix) */
+/* Ambient Background Canvas (Cyber Alpha Matrix) */
 body::before {
   content: '';
   position: fixed;
@@ -87,8 +91,8 @@ body::before {
   pointer-events: none;
   z-index: 0;
   background-image: 
-    linear-gradient(rgba(255, 255, 255, 0.016) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.016) 1px, transparent 1px);
+    linear-gradient(rgba(168, 255, 26, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(168, 255, 26, 0.02) 1px, transparent 1px);
   background-size: 32px 32px;
 }
 
@@ -99,9 +103,9 @@ body::after {
   pointer-events: none;
   z-index: 0;
   background: 
-    radial-gradient(circle at 85% -10%, rgba(139, 92, 246, 0.14) 0%, rgba(139, 92, 246, 0.03) 40%, transparent 65%),
-    radial-gradient(circle at 10% 90%, rgba(59, 130, 246, 0.08) 0%, transparent 45%),
-    radial-gradient(ellipse 80% 80% at 50% 25%, transparent 0%, rgba(5, 5, 6, 0.85) 100%);
+    radial-gradient(circle at 85% -10%, rgba(168, 255, 26, 0.13) 0%, rgba(168, 255, 26, 0.02) 40%, transparent 65%),
+    radial-gradient(circle at 12% 85%, rgba(16, 185, 129, 0.06) 0%, transparent 45%),
+    radial-gradient(ellipse 80% 80% at 50% 25%, transparent 0%, rgba(4, 5, 4, 0.88) 100%);
 }
 
 /* Scrollbar */
@@ -113,11 +117,11 @@ body::after {
   background: var(--bg-obsidian);
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(168, 255, 26, 0.2);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(168, 255, 26, 0.45);
 }
 
 /* Utility font-mono classes */
@@ -163,23 +167,30 @@ body::after {
   transition: opacity var(--transition-fast);
 }
 .brand:hover {
-  opacity: 0.85;
+  opacity: 0.9;
 }
 
 .brand-icon {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--border-medium);
+  background: transparent;
   border-radius: var(--radius-sm);
-  color: var(--text-pure);
+  overflow: hidden;
+  flex-shrink: 0;
 }
-.brand-icon svg {
-  width: 16px;
-  height: 16px;
+.brand-logo-img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 6px rgba(168, 255, 26, 0.5));
+  transition: transform var(--transition-fast), filter var(--transition-fast);
+}
+.brand:hover .brand-logo-img {
+  transform: scale(1.08);
+  filter: drop-shadow(0 0 14px rgba(168, 255, 26, 0.85));
 }
 
 .brand-text-wrap {
@@ -196,18 +207,23 @@ body::after {
   text-transform: uppercase;
   color: var(--text-pure);
 }
+.brand-alpha-highlight {
+  color: var(--accent-primary);
+  font-weight: 800;
+  text-shadow: 0 0 10px rgba(168, 255, 26, 0.4);
+}
 
 .brand-tag {
   font-family: var(--font-mono);
   font-size: 0.65rem;
-  font-weight: 500;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.2em;
-  color: var(--text-muted);
-  border: 1px solid var(--border-subtle);
+  color: var(--accent-primary);
+  border: 1px solid rgba(168, 255, 26, 0.35);
   padding: 1px 5px;
   border-radius: var(--radius-xs);
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(168, 255, 26, 0.08);
 }
 
 /* Nav Links */
@@ -272,7 +288,7 @@ body::after {
   position: absolute;
   inset: -2px;
   border-radius: 50%;
-  background: var(--accent-emerald);
+  background: var(--accent-primary);
   opacity: 0.5;
   animation: pulsePing 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
@@ -282,8 +298,8 @@ body::after {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent-emerald);
-  box-shadow: 0 0 8px var(--accent-emerald);
+  background: var(--accent-primary);
+  box-shadow: 0 0 10px var(--accent-primary);
 }
 
 @keyframes pulsePing {
@@ -343,30 +359,32 @@ body::after {
   height: 12px;
 }
 
-/* Primary Button */
+/* Primary Button (Electric Cyber Lime from Logo) */
 .btn-primary {
-  background: var(--text-pure);
-  color: #050506;
-  border-color: var(--text-pure);
+  background: var(--accent-primary);
+  color: #000000;
+  border-color: var(--accent-primary);
   font-weight: 700;
+  box-shadow: 0 0 14px rgba(168, 255, 26, 0.28);
 }
 .btn-primary:hover {
-  background: rgba(255, 255, 255, 0.88);
-  border-color: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 0 14px rgba(255, 255, 255, 0.2);
+  background: var(--accent-primary-hover);
+  border-color: var(--accent-primary-hover);
+  box-shadow: 0 0 22px rgba(168, 255, 26, 0.55);
+  color: #000000;
 }
 
-/* Violet Accent Button (Discord / Special Actions) */
+/* Violet / Purple Accent Button (Adapted to Cyber-Lime Glow) */
 .btn-violet, .btn-purple {
-  background: rgba(139, 92, 246, 0.12);
-  border-color: rgba(139, 92, 246, 0.35);
-  color: #ddd6fe;
+  background: rgba(168, 255, 26, 0.08);
+  border-color: rgba(168, 255, 26, 0.35);
+  color: #bef264;
 }
 .btn-violet:hover, .btn-purple:hover {
-  background: rgba(139, 92, 246, 0.22);
-  border-color: rgba(139, 92, 246, 0.6);
+  background: rgba(168, 255, 26, 0.2);
+  border-color: rgba(168, 255, 26, 0.7);
   color: #ffffff;
-  box-shadow: var(--shadow-glow);
+  box-shadow: 0 0 18px rgba(168, 255, 26, 0.35);
 }
 
 /* Outline Button */
@@ -552,7 +570,7 @@ body::after {
 }
 .tracker-search-box:focus-within {
   border-color: var(--border-accent);
-  box-shadow: 0 0 20px rgba(139, 92, 246, 0.12);
+  box-shadow: 0 0 20px rgba(168, 255, 26, 0.2);
 }
 
 /* Corner brackets on tracker box */
@@ -560,7 +578,7 @@ body::after {
   position: absolute;
   width: 8px;
   height: 8px;
-  border-color: rgba(255, 255, 255, 0.25);
+  border-color: var(--accent-primary);
   pointer-events: none;
 }
 .corner-tl { top: -1px; left: -1px; border-top: 1px solid; border-left: 1px solid; }
@@ -806,15 +824,17 @@ body::after {
   color: var(--text-pure);
 }
 .tab-btn.active {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text-pure);
-  font-weight: 600;
+  background: var(--accent-primary);
+  color: #000000;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 14px rgba(168, 255, 26, 0.35);
+  font-weight: 700;
 }
 
 /* Direct Giveaway Banner */
 #singleGiveawayBanner {
-  border: 1px solid var(--border-accent) !important;
-  background: rgba(139, 92, 246, 0.06) !important;
+  border: 1px solid var(--accent-primary) !important;
+  background: rgba(168, 255, 26, 0.05) !important;
   border-radius: var(--radius-sm) !important;
 }
 
@@ -841,6 +861,7 @@ body::after {
   border-color: var(--border-hover);
   background: var(--bg-card-hover);
   transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.5), 0 0 20px rgba(168, 255, 26, 0.08);
 }
 
 /* Tessera 4-corner accents on card hover */
@@ -857,14 +878,14 @@ body::after {
 .g-card::before {
   top: -1px;
   left: -1px;
-  border-top: 1px solid rgba(255, 255, 255, 0.7);
-  border-left: 1px solid rgba(255, 255, 255, 0.7);
+  border-top: 1px solid var(--accent-primary);
+  border-left: 1px solid var(--accent-primary);
 }
 .g-card::after {
   bottom: -1px;
   right: -1px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.7);
-  border-right: 1px solid rgba(255, 255, 255, 0.7);
+  border-bottom: 1px solid var(--accent-primary);
+  border-right: 1px solid var(--accent-primary);
 }
 .g-card:hover::before, .g-card:hover::after {
   opacity: 1;
