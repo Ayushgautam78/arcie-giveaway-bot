@@ -152,6 +152,8 @@ function resetCreateForm() {
   if (spotContainer) spotContainer.innerHTML = '';
   const taskContainer = document.getElementById('dynamicTasksContainer');
   if (taskContainer) taskContainer.innerHTML = '';
+  const createManualFields = document.getElementById('gHostManualFields');
+  if (createManualFields) createManualFields.style.display = 'none';
 }
 
 function escapeHtml(str) {
@@ -1087,7 +1089,7 @@ function renderGiveaways(highlightedGiveaway = null) {
       <div class="g-card">
         <div class="g-card-banner-wrap">
           ${statusHtml}
-          ${g.banner_url ? `<img src="${escapeHtml(g.banner_url)}" class="g-card-banner" alt="banner" onerror="this.parentElement.style.display='none'">` : '<div class="g-card-banner-fallback"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect width="18" height="18" x="3" y="3" rx="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path></svg></div>'}
+          <img src="${escapeHtml(g.banner_url || '/static/banners/kredoos_banner.jpg')}" class="g-card-banner" alt="banner" onerror="this.src='/static/banners/kredoos_banner.jpg'">
           <div class="g-card-banner-overlay"></div>
         </div>
 
@@ -1330,6 +1332,97 @@ function toggleHostSearch(show, modalType = 'create') {
   }
 }
 
+function toggleManualHostInputs(modalType = 'create') {
+  const prefix = modalType === 'edit' ? 'editG' : 'g';
+  const wrap = document.getElementById(`${prefix}HostManualWrap`);
+  if (!wrap) return;
+  const isHidden = wrap.style.display === 'none';
+  wrap.style.display = isHidden ? 'block' : 'none';
+  if (isHidden) {
+    const idInput = document.getElementById(`${prefix}HostId`);
+    const nameInput = document.getElementById(`${prefix}HostName`);
+    const avatarInput = document.getElementById(`${prefix}HostAvatar`);
+    
+    const manName = document.getElementById(`${prefix}HostNameManualInput`);
+    const manId = document.getElementById(`${prefix}HostIdManualInput`);
+    const manAvatar = document.getElementById(`${prefix}HostAvatarManualInput`);
+    
+    if (manName && nameInput) manName.value = nameInput.value || '';
+    if (manId && idInput) manId.value = idInput.value || '';
+    if (manAvatar && avatarInput) manAvatar.value = avatarInput.value || '';
+  }
+}
+
+function updateManualHost(modalType = 'create') {
+  const prefix = modalType === 'edit' ? 'editG' : 'g';
+  const manName = document.getElementById(`${prefix}HostNameManualInput`)?.value.trim() || 'Admin';
+  const manId = document.getElementById(`${prefix}HostIdManualInput`)?.value.trim() || '';
+  const manAvatar = document.getElementById(`${prefix}HostAvatarManualInput`)?.value.trim() || getDiscordAvatar(manId, null, manName);
+
+  const avatarEl = document.getElementById(`${prefix}HostSelectedAvatar`);
+  const nameEl = document.getElementById(`${prefix}HostSelectedName`);
+  const subEl = document.getElementById(`${prefix}HostSelectedSub`);
+  const idInput = document.getElementById(`${prefix}HostId`);
+  const nameInput = document.getElementById(`${prefix}HostName`);
+  const avatarInput = document.getElementById(`${prefix}HostAvatar`);
+
+  if (avatarEl) avatarEl.src = manAvatar;
+  if (nameEl) nameEl.textContent = manName;
+  if (subEl) subEl.textContent = manId ? `ID: ${manId}` : 'Discord Host';
+
+  if (idInput) idInput.value = manId;
+  if (nameInput) nameInput.value = manName;
+  if (avatarInput) avatarInput.value = manAvatar;
+}
+
+async function fetchAvatarByUserId(modalType = 'create') {
+  const prefix = modalType === 'edit' ? 'editG' : 'g';
+  const manId = document.getElementById(`${prefix}HostIdManualInput`)?.value.trim() || '';
+  const manName = document.getElementById(`${prefix}HostNameManualInput`)?.value.trim() || '';
+  if (!manId && !manName) {
+    showToast('Please enter a Discord User ID or Username first', 'info');
+    return;
+  }
+  
+  if (manName.toLowerCase().includes('zeno')) {
+    const manAvatarInp = document.getElementById(`${prefix}HostAvatarManualInput`);
+    if (manAvatarInp) manAvatarInp.value = '/static/zeno.png';
+    updateManualHost(modalType);
+    showToast('Attached Zeno profile photo!', 'success');
+    return;
+  }
+
+  // 1. Check if user is in Firebase user_profiles
+  try {
+    const profs = await firebaseGet('user_profiles');
+    if (profs && typeof profs === 'object') {
+      let matched = manId ? profs[manId] : null;
+      if (!matched && manName) {
+        matched = Object.values(profs).find(p => (p.username && p.username.toLowerCase() === manName.toLowerCase()) || (p.display_name && p.display_name.toLowerCase() === manName.toLowerCase()));
+      }
+      if (matched && matched.avatar) {
+        const fullAvatar = getDiscordAvatar(matched.user_id || manId, matched.avatar, matched.username || manName);
+        const manAvatarInp = document.getElementById(`${prefix}HostAvatarManualInput`);
+        if (manAvatarInp) manAvatarInp.value = fullAvatar;
+        if (matched.display_name) {
+          const manNameInp = document.getElementById(`${prefix}HostNameManualInput`);
+          if (manNameInp && !manNameInp.value) manNameInp.value = matched.display_name;
+        }
+        updateManualHost(modalType);
+        showToast('Found user profile photo from Discord data!', 'success');
+        return;
+      }
+    }
+  } catch (e) {}
+
+  // 2. Fallback to Discord CDN avatar
+  const defaultAv = getDiscordAvatar(manId, null, manName);
+  const manAvatarInp = document.getElementById(`${prefix}HostAvatarManualInput`);
+  if (manAvatarInp) manAvatarInp.value = defaultAv;
+  updateManualHost(modalType);
+  showToast('Generated Discord avatar for user!', 'success');
+}
+
 function searchHostMembers(query, modalType = 'create') {
   clearTimeout(hostSearchDebounceTimer);
   const prefix = modalType === 'edit' ? 'editG' : 'g';
@@ -1342,38 +1435,86 @@ function searchHostMembers(query, modalType = 'create') {
   }
 
   hostSearchDebounceTimer = setTimeout(async () => {
+    const q = query.trim();
+    const qLower = q.toLowerCase();
+    let members = [];
+
+    // 1. Try backend API first (if reachable)
     try {
-      const res = await fetch(apiUrl(`/api/members/search?q=${encodeURIComponent(query.trim())}`), { credentials: 'include' });
-      if (!res.ok) return;
-      const members = await res.json();
-      if (!members || members.length === 0) {
-        container.innerHTML = `<div style="padding: 10px; color: var(--text-muted); font-size: 0.82rem; text-align: center;">No matching members found</div>`;
-      } else {
-        container.innerHTML = members.map(m => {
-          const avatarUrl = m.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png';
-          const dName = m.display_name || m.username;
-          return `
-            <div class="host-search-item" onclick='selectHostMember(${JSON.stringify(m)}, "${modalType}")'>
-              <img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(dName)}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
-              <div class="host-search-item-info">
-                <span class="host-search-item-name">${escapeHtml(dName)}</span>
-                <span class="host-search-item-sub">@${escapeHtml(m.username)} &bull; ID: ${escapeHtml(m.id)}</span>
-              </div>
-            </div>
-          `;
-        }).join('');
+      const url = apiUrl(`/api/members/search?q=${encodeURIComponent(q)}`);
+      if (url && (url.startsWith('http') || (typeof window !== 'undefined' && window.location && window.location.protocol !== 'https:'))) {
+        const res = await fetch(url, { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) members = data;
+        }
       }
-      container.style.display = 'block';
-    } catch (err) {
-      console.error('Host member search error:', err);
+    } catch (err) {}
+
+    // 2. Query Firebase user_profiles (contains all 249 synced members)
+    if (!members || members.length === 0) {
+      try {
+        const profs = await firebaseGet('user_profiles');
+        if (profs && typeof profs === 'object') {
+          Object.entries(profs).forEach(([uid, p]) => {
+            const uName = (p.username || '').toLowerCase();
+            const dName = (p.display_name || '').toLowerCase();
+            if (uName.includes(qLower) || dName.includes(qLower) || uid.includes(qLower)) {
+              let avatarUrl = getDiscordAvatar(uid, p.avatar, p.username);
+              if (uName.includes('zeno') || dName.includes('zeno')) avatarUrl = '/static/zeno.png';
+              members.push({
+                id: uid,
+                username: p.username || uid,
+                display_name: p.display_name || p.username || 'Member',
+                avatar: avatarUrl
+              });
+            }
+          });
+        }
+      } catch (err) {}
     }
-  }, 180);
+
+    // 3. Always include direct custom option for the typed query
+    const isNumericId = /^\d{16,21}$/.test(q);
+    const cleanUser = q.replace(/^@/, '');
+    const customAvatar = cleanUser.toLowerCase().includes('zeno') ? '/static/zeno.png' : (isNumericId ? getDiscordAvatar(q, null, q) : getDiscordAvatar(null, null, cleanUser));
+    
+    if (!members.some(m => (m.username && m.username.toLowerCase() === cleanUser.toLowerCase()) || (m.id && m.id === q))) {
+      members.push({
+        id: isNumericId ? q : '',
+        username: cleanUser,
+        display_name: cleanUser,
+        avatar: customAvatar,
+        isCustom: true
+      });
+    }
+
+    if (!members || members.length === 0) {
+      container.innerHTML = `<div style="padding: 10px; color: var(--text-muted); font-size: 0.82rem; text-align: center;">No matching members found</div>`;
+    } else {
+      container.innerHTML = members.slice(0, 15).map(m => {
+        const avatarUrl = m.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png';
+        const dName = m.display_name || m.username;
+        const subLabel = m.isCustom ? `Custom Host &bull; Click to apply` : `@${escapeHtml(m.username)} &bull; ID: ${escapeHtml(m.id || 'N/A')}`;
+        return `
+          <div class="host-search-item" onclick='selectHostMember(${JSON.stringify(m)}, "${modalType}")'>
+            <img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(dName)}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
+            <div class="host-search-item-info">
+              <span class="host-search-item-name">${escapeHtml(dName)}</span>
+              <span class="host-search-item-sub">${subLabel}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+    container.style.display = 'block';
+  }, 150);
 }
 
 function selectHostMember(member, modalType = 'create') {
   if (!member) return;
   const prefix = modalType === 'edit' ? 'editG' : 'g';
-  const avatarUrl = member.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png';
+  const avatarUrl = member.avatar || (member.username && member.username.toLowerCase().includes('zeno') ? '/static/zeno.png' : getDiscordAvatar(member.id, null, member.username || member.display_name));
   const hostName = member.display_name || member.username || 'Admin';
   const hostId = member.id || '';
 
@@ -1386,11 +1527,18 @@ function selectHostMember(member, modalType = 'create') {
 
   if (avatarEl) avatarEl.src = avatarUrl;
   if (nameEl) nameEl.textContent = hostName;
-  if (subEl) subEl.textContent = member.username ? `@${member.username} (ID: ${hostId})` : 'Discord Host';
+  if (subEl) subEl.textContent = member.username ? `@${member.username} (ID: ${hostId})` : (hostId ? `ID: ${hostId}` : 'Discord Host');
 
   if (idInput) idInput.value = hostId;
   if (nameInput) nameInput.value = hostName;
   if (avatarInput) avatarInput.value = avatarUrl;
+
+  const manName = document.getElementById(`${prefix}HostNameManualInput`);
+  const manId = document.getElementById(`${prefix}HostIdManualInput`);
+  const manAvatar = document.getElementById(`${prefix}HostAvatarManualInput`);
+  if (manName) manName.value = hostName;
+  if (manId) manId.value = hostId;
+  if (manAvatar) manAvatar.value = avatarUrl;
 
   toggleHostSearch(false, modalType);
 }
@@ -1644,6 +1792,9 @@ function openEditModal(giveawayId) {
   filterRoleSelect('editGMentionRole', '');
   filterRoleSelect('editGReqRoleSelect', '');
   filterRoleSelect('editGRoleMultSelect', '');
+
+  const editManualFields = document.getElementById('editGHostManualFields');
+  if (editManualFields) editManualFields.style.display = 'none';
 
   document.getElementById('editGId').value = g.id;
   document.getElementById('editGTitle').value = g.title || '';
@@ -2041,12 +2192,10 @@ async function openDetailModal(giveawayId) {
   content.innerHTML = `
     <div style="display: flex; flex-direction: column; gap: 1rem;">
       <div class="tessera-detail-hero">
-        ${g.banner_url ? `
-          <div class="tessera-banner-wrap">
-            <img src="${escapeHtml(g.banner_url)}" class="tessera-banner-img" alt="banner" onerror="this.parentElement.style.display='none'">
-            <div class="tessera-banner-overlay"></div>
-          </div>
-        ` : ''}
+        <div class="tessera-banner-wrap">
+          <img src="${escapeHtml(g.banner_url || '/static/banners/kredoos_banner.jpg')}" class="tessera-banner-img" alt="banner" onerror="this.src='/static/banners/kredoos_banner.jpg'">
+          <div class="tessera-banner-overlay"></div>
+        </div>
         
         <div class="tessera-header-content">
           <div class="tessera-project-row">

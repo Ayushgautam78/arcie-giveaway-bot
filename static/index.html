@@ -338,13 +338,38 @@
                     <div id="gHostSelectedSub" class="host-search-item-sub">Discord Host</div>
                   </div>
                 </div>
-                <button type="button" class="btn btn-outline btn-sm" onclick="toggleHostSearch(true, 'create')" style="padding: 3px 8px; font-size: 0.75rem;">Change</button>
+                <div style="display: flex; gap: 6px;">
+                  <button type="button" class="btn btn-outline btn-sm" onclick="toggleHostSearch(true, 'create')" style="padding: 3px 8px; font-size: 0.75rem;">Search Member</button>
+                  <button type="button" class="btn btn-outline btn-sm" onclick="toggleManualHostInputs('create')" style="padding: 3px 8px; font-size: 0.75rem;">Manual Edit</button>
+                </div>
+              </div>
+
+              <!-- Manual Host Edit Inputs (Name, ID, Avatar URL) -->
+              <div id="gHostManualWrap" style="display: none; background: rgba(0,0,0,0.3); border: 1px dashed var(--border-medium); border-radius: var(--radius-xs); padding: 10px; margin-top: 6px;">
+                <div style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--accent-primary); margin-bottom: 6px; text-transform: uppercase; font-weight: 700;">Edit Host Info Manually</div>
+                <div class="form-row" style="margin-bottom: 6px;">
+                  <div style="flex: 1;">
+                    <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 2px;">Host Name</label>
+                    <input type="text" id="gHostNameManualInput" class="form-input" placeholder="Host Display Name (e.g. Zeno)" oninput="updateManualHost('create')">
+                  </div>
+                  <div style="flex: 1;">
+                    <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 2px;">Host Discord ID</label>
+                    <input type="text" id="gHostIdManualInput" class="form-input" placeholder="Discord User ID (e.g. 1211280163225215067)" oninput="updateManualHost('create')">
+                  </div>
+                </div>
+                <div>
+                  <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 2px;">Host Profile Photo URL</label>
+                  <div style="display: flex; gap: 6px;">
+                    <input type="url" id="gHostAvatarManualInput" class="form-input" placeholder="https://cdn.discordapp.com/avatars/... or image URL" oninput="updateManualHost('create')">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="fetchAvatarByUserId('create')" style="white-space: nowrap;">Fetch PFP</button>
+                  </div>
+                </div>
               </div>
 
               <!-- Search Input & Dropdown -->
               <div id="gHostSearchWrap" style="display: none; position: relative;">
                 <div style="display: flex; gap: 6px; margin-bottom: 6px;">
-                  <input type="text" id="gHostSearchInput" class="form-input" placeholder="Search server members (e.g. Zeno, Shreya, Ayush)..." oninput="searchHostMembers(this.value, 'create')">
+                  <input type="text" id="gHostSearchInput" class="form-input" placeholder="Search server members by username or ID (e.g. Zeno, zeno_05415)..." oninput="searchHostMembers(this.value, 'create')">
                   <button type="button" class="btn btn-outline btn-sm" onclick="toggleHostSearch(false, 'create')">Cancel</button>
                 </div>
                 <div id="gHostSearchResults" class="member-search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: #080a08; border: 1px solid var(--border-medium); border-radius: var(--radius-xs); max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 8px 24px rgba(0,0,0,0.8);"></div>
@@ -635,13 +660,38 @@
                     <div id="editGHostSelectedSub" class="host-search-item-sub">Discord Host</div>
                   </div>
                 </div>
-                <button type="button" class="btn btn-outline btn-sm" onclick="toggleHostSearch(true, 'edit')" style="padding: 3px 8px; font-size: 0.75rem;">Change</button>
+                <div style="display: flex; gap: 6px;">
+                  <button type="button" class="btn btn-outline btn-sm" onclick="toggleHostSearch(true, 'edit')" style="padding: 3px 8px; font-size: 0.75rem;">Search Member</button>
+                  <button type="button" class="btn btn-outline btn-sm" onclick="toggleManualHostInputs('edit')" style="padding: 3px 8px; font-size: 0.75rem;">Manual Edit</button>
+                </div>
+              </div>
+
+              <!-- Manual Host Edit Inputs (Name, ID, Avatar URL) -->
+              <div id="editGHostManualWrap" style="display: none; background: rgba(0,0,0,0.3); border: 1px dashed var(--border-medium); border-radius: var(--radius-xs); padding: 10px; margin-top: 6px;">
+                <div style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--accent-primary); margin-bottom: 6px; text-transform: uppercase; font-weight: 700;">Edit Host Info Manually</div>
+                <div class="form-row" style="margin-bottom: 6px;">
+                  <div style="flex: 1;">
+                    <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 2px;">Host Name</label>
+                    <input type="text" id="editGHostNameManualInput" class="form-input" placeholder="Host Display Name (e.g. Zeno)" oninput="updateManualHost('edit')">
+                  </div>
+                  <div style="flex: 1;">
+                    <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 2px;">Host Discord ID</label>
+                    <input type="text" id="editGHostIdManualInput" class="form-input" placeholder="Discord User ID (e.g. 1211280163225215067)" oninput="updateManualHost('edit')">
+                  </div>
+                </div>
+                <div>
+                  <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 2px;">Host Profile Photo URL</label>
+                  <div style="display: flex; gap: 6px;">
+                    <input type="url" id="editGHostAvatarManualInput" class="form-input" placeholder="https://cdn.discordapp.com/avatars/... or image URL" oninput="updateManualHost('edit')">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="fetchAvatarByUserId('edit')" style="white-space: nowrap;">Fetch PFP</button>
+                  </div>
+                </div>
               </div>
 
               <!-- Search Input & Dropdown -->
               <div id="editGHostSearchWrap" style="display: none; position: relative;">
                 <div style="display: flex; gap: 6px; margin-bottom: 6px;">
-                  <input type="text" id="editGHostSearchInput" class="form-input" placeholder="Search server members (e.g. Zeno, Shreya, Ayush)..." oninput="searchHostMembers(this.value, 'edit')">
+                  <input type="text" id="editGHostSearchInput" class="form-input" placeholder="Search server members by username or ID (e.g. Zeno, zeno_05415)..." oninput="searchHostMembers(this.value, 'edit')">
                   <button type="button" class="btn btn-outline btn-sm" onclick="toggleHostSearch(false, 'edit')">Cancel</button>
                 </div>
                 <div id="editGHostSearchResults" class="member-search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: #080a08; border: 1px solid var(--border-medium); border-radius: var(--radius-xs); max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 8px 24px rgba(0,0,0,0.8);"></div>
