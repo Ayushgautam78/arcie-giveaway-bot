@@ -2608,25 +2608,27 @@ async def handle_component_interactions(interaction: discord.Interaction):
                     pass
                 return
 
-        # ---- Fallback handling for Giveaway buttons (join_giveaway_, view_entry_, gtask_) ----
+        # ---- Fallback handling for Giveaway buttons (join_giveaway_, view_entry_, apply_bonus_, gtask_) ----
         # Only fires if the persistent GiveawayView callback did NOT already handle it.
-        if custom_id and (custom_id.startswith("join_giveaway_") or custom_id.startswith("view_entry_") or custom_id.startswith("gtask_")):
+        if custom_id and (custom_id.startswith("join_giveaway_") or custom_id.startswith("view_entry_") or custom_id.startswith("apply_bonus_") or custom_id.startswith("gtask_")):
             # Wait for persistent view callback to execute first (it's dispatched in parallel)
             await asyncio.sleep(1.5)
             # If the persistent view already responded, do nothing — avoid duplicate messages
             if interaction.response.is_done():
                 return
             try:
+                port = os.getenv("PORT", "2025")
+                web_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
                 if custom_id.startswith("join_giveaway_"):
                     g_id = custom_id.replace("join_giveaway_", "")
-                    port = os.getenv("PORT", "2025")
-                    web_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
                     v = GiveawayView(g_id, web_url)
                     await v.join_giveaway_callback(interaction)
+                elif custom_id.startswith("apply_bonus_"):
+                    g_id = custom_id.replace("apply_bonus_", "")
+                    v = GiveawayView(g_id, web_url)
+                    await v.apply_bonus_callback(interaction)
                 elif custom_id.startswith("view_entry_"):
                     g_id = custom_id.replace("view_entry_", "")
-                    port = os.getenv("PORT", "2025")
-                    web_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
                     v = GiveawayView(g_id, web_url)
                     await v.view_entry_callback(interaction)
                 elif custom_id.startswith("gtask_"):
@@ -4298,7 +4300,11 @@ class GiveawayView(discord.ui.View):
         super().__init__(timeout=None)
         self.giveaway_id = giveaway_id
 
-        # Row 0: Join + View Entry
+        if not web_url:
+            port = os.getenv("PORT", "2025")
+            web_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
+
+        # Row 0: Join Giveaway + Apply Bonus Entries + View on Website
         join_btn = discord.ui.Button(
             label="Join Giveaway",
             style=discord.ButtonStyle.primary,
@@ -4308,14 +4314,24 @@ class GiveawayView(discord.ui.View):
         join_btn.callback = self.join_giveaway_callback
         self.add_item(join_btn)
 
-        view_btn = discord.ui.Button(
-            label="View Your Entry",
+        apply_btn = discord.ui.Button(
+            label="Apply Bonus Entries 🎟️",
             style=discord.ButtonStyle.secondary,
-            custom_id=f"view_entry_{giveaway_id}",
+            custom_id=f"apply_bonus_{giveaway_id}",
             row=0
         )
-        view_btn.callback = self.view_entry_callback
-        self.add_item(view_btn)
+        apply_btn.callback = self.apply_bonus_callback
+        self.add_item(apply_btn)
+
+        web_clean = web_url.rstrip("/")
+        if web_clean.startswith(("http://", "https://")):
+            view_site_btn = discord.ui.Button(
+                label="🌐 View on Website",
+                style=discord.ButtonStyle.link,
+                url=f"{web_clean}/?g={giveaway_id}",
+                row=0
+            )
+            self.add_item(view_site_btn)
 
         # Row 1: Task buttons — interactive (track clicks) + show link
         g_obj = giveaways.get(giveaway_id)
@@ -4505,6 +4521,35 @@ class GiveawayView(discord.ui.View):
             return
 
         await register_giveaway_entry(interaction, g_id)
+
+    async def apply_bonus_callback(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
+        g_id = self.giveaway_id
+        g = giveaways.get(g_id)
+        if not g:
+            await safe_respond(interaction, "❌ Giveaway not found or has been removed.", ephemeral=True)
+            return
+
+        entries = giveaway_entries.get(g_id, [])
+        entry = next((e for e in entries if isinstance(e, dict) and str(e.get("user_id")) == uid), None)
+        if not entry:
+            await safe_respond(
+                interaction,
+                "❌ You must join this giveaway first! Click **[Join Giveaway]** to enter before applying bonus entries.",
+                ephemeral=True
+            )
+            return
+
+        avail = int(user_profiles.get(uid, {}).get("bonus_entries", 0))
+        if avail <= 0:
+            await safe_respond(
+                interaction,
+                "❌ You currently hold **0** bonus entries to apply.\n\nEarn bonus entries through server events, roles, or raffles!",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_modal(ApplyBonusEntriesModal(g_id, avail))
 
     async def view_entry_callback(self, interaction: discord.Interaction):
         g_id = self.giveaway_id
@@ -7328,6 +7373,23 @@ def build_giveaway_embed(g_data: dict):
         description=formatted_desc,
         color=discord.Color.gold()
     )
+
+    host_name = g_data.get("host_name") or g_data.get("hosted_by") or "Admin"
+    host_avatar = str(g_data.get("host_avatar", "")).strip()
+    host_id = str(g_data.get("host_id", "")).strip()
+
+    if not host_avatar and host_id and host_id.isdigit():
+        try:
+            u_obj = bot.get_user(int(host_id))
+            if u_obj and u_obj.display_avatar:
+                host_avatar = u_obj.display_avatar.url
+        except Exception:
+            pass
+
+    if host_avatar and host_avatar.startswith(("http://", "https://")):
+        embed.set_author(name=f"Hosted by {host_name}", icon_url=host_avatar)
+    elif host_name:
+        embed.set_author(name=f"Hosted by {host_name}")
     
     banner_url = str(g_data.get("banner_url", "")).strip()
     file_to_send = None
@@ -7356,6 +7418,10 @@ def build_giveaway_embed(g_data: dict):
             elif (banner_url.startswith("http://") or banner_url.startswith("https://")) and not ("localhost" in banner_url or "127.0.0.1" in banner_url):
                 embed.set_image(url=banner_url)
 
+    if host_id and host_id.isdigit():
+        embed.add_field(name="🎙️ Hosted By", value=f"<@{host_id}>", inline=True)
+    elif host_name:
+        embed.add_field(name="🎙️ Hosted By", value=f"**{host_name}**", inline=True)
     embed.add_field(name="Network", value=g_data.get("network", "Ethereum"), inline=True)
     embed.add_field(name="Ends At", value=f"<t:{int(g_data.get('ends_at', time.time()))}:R>", inline=True)
 
@@ -8463,18 +8529,20 @@ async def start_health_server():
                 "twitter": prof.get("twitter", ""),
             })
 
-        leaderboard.sort(key=lambda x: (x["total_bonus"], x["available_bonus"], x["giveaways_entered"]), reverse=True)
+        leaderboard.sort(key=lambda x: (x["available_bonus"], x["giveaways_entered"]), reverse=True)
 
         for idx, item in enumerate(leaderboard):
             item["rank"] = idx + 1
 
-        total_bonus_sum = sum(x["total_bonus"] for x in leaderboard)
+        current_bonus_sum = sum(x["available_bonus"] for x in leaderboard)
+        top_holder = leaderboard[0]["display_name"] if (leaderboard and leaderboard[0]["available_bonus"] > 0) else "None"
 
         return web.json_response({
             "success": True,
             "total_users": len(leaderboard),
-            "total_bonus_sum": total_bonus_sum,
-            "top_holder": leaderboard[0]["display_name"] if leaderboard else "None",
+            "total_bonus_sum": current_bonus_sum,
+            "current_bonus_sum": current_bonus_sum,
+            "top_holder": top_holder,
             "leaderboard": leaderboard[:limit]
         })
 
@@ -8766,7 +8834,10 @@ async def start_health_server():
             "duration_unit": duration_unit,
             "created_at": created_at,
             "ends_at": ends_at,
-            "hosted_by": user.get("username", "Admin"),
+            "hosted_by": body.get("host_name") or body.get("hosted_by") or user.get("display_name") or user.get("username", "Admin"),
+            "host_name": body.get("host_name") or body.get("hosted_by") or user.get("display_name") or user.get("username", "Admin"),
+            "host_id": str(body.get("host_id") or user.get("id", "")),
+            "host_avatar": body.get("host_avatar") or user.get("avatar", ""),
             "network": body.get("network", "Ethereum"),
             "tasks": tasks,
             "social_links": social_links,
@@ -8829,6 +8900,14 @@ async def start_health_server():
                 "telegram_link": str(body.get("telegram_link", "")).strip(),
                 "website_link": str(body.get("website_link", "")).strip()
             })
+        if "host_name" in body or "hosted_by" in body:
+            h_name = body.get("host_name") or body.get("hosted_by")
+            g["host_name"] = h_name
+            g["hosted_by"] = h_name
+        if "host_id" in body:
+            g["host_id"] = str(body["host_id"])
+        if "host_avatar" in body:
+            g["host_avatar"] = body["host_avatar"]
 
         # Handle channel change: if new channel_id given and different, delete old msg + re-post
         new_channel_id = str(body.get("channel_id", "")).strip()

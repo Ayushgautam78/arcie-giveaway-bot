@@ -213,7 +213,7 @@
         <!-- Leaderboard 4-Cell Metric Bar -->
         <div class="leaderboard-metric-grid">
           <div class="leaderboard-metric-cell">
-            <span class="metric-cell-label">Total Bonus Tickets</span>
+            <span class="metric-cell-label">Current Bonus Tickets</span>
             <span class="metric-cell-val" id="lbTotalBonusVal">--</span>
           </div>
           <div class="leaderboard-metric-cell">
@@ -243,7 +243,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
             Track Your Bonus Position
           </span>
-          <span class="tracker-hint">Search your Discord username or ID to see your exact rank and entries</span>
+          <span class="tracker-hint">Search your Discord username or ID to see your current bonus entries</span>
         </div>
 
         <div class="tracker-input-group">
@@ -275,10 +275,9 @@
             <thead>
               <tr>
                 <th style="width: 80px;"># Rank</th>
-                <th>Participant</th>
-                <th style="width: 140px; text-align: center;">Available Bonus</th>
-                <th style="width: 140px; text-align: center;">Boosted in Raffles</th>
-                <th style="width: 150px; text-align: center;">Total Bonus Entries</th>
+                <th>Community Member</th>
+                <th style="width: 170px; text-align: center;">Current Bonus (Held)</th>
+                <th style="width: 150px; text-align: center;">Used in Raffles</th>
                 <th>Registered Wallets</th>
               </tr>
             </thead>
@@ -321,6 +320,39 @@
             <div class="form-group">
               <label class="form-label">Giveaway Title *</label>
               <input type="text" id="gTitle" class="form-input" placeholder="e.g. Shinka NFT Whitelist" required>
+            </div>
+
+            <!-- Launched By / Giveaway Host Selector -->
+            <div class="form-group" style="position: relative; margin-bottom: 16px;">
+              <label class="form-label" style="display: flex; justify-content: space-between; align-items: center;">
+                <span>Launched By / Giveaway Host *</span>
+                <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: normal;">Contact person for this raffle</span>
+              </label>
+              
+              <!-- Selected Host Card -->
+              <div id="gHostSelectedCard" class="host-selected-preview">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <img id="gHostSelectedAvatar" src="https://cdn.discordapp.com/embed/avatars/0.png" class="g-host-avatar" style="width: 32px; height: 32px;" alt="host">
+                  <div>
+                    <div id="gHostSelectedName" class="g-host-name" style="font-size: 0.95rem;">Admin</div>
+                    <div id="gHostSelectedSub" class="host-search-item-sub">Discord Host</div>
+                  </div>
+                </div>
+                <button type="button" class="btn btn-outline btn-sm" onclick="toggleHostSearch(true, 'create')" style="padding: 3px 8px; font-size: 0.75rem;">Change</button>
+              </div>
+
+              <!-- Search Input & Dropdown -->
+              <div id="gHostSearchWrap" style="display: none; position: relative;">
+                <div style="display: flex; gap: 6px; margin-bottom: 6px;">
+                  <input type="text" id="gHostSearchInput" class="form-input" placeholder="Search server members (e.g. Zeno, Shreya, Ayush)..." oninput="searchHostMembers(this.value, 'create')">
+                  <button type="button" class="btn btn-outline btn-sm" onclick="toggleHostSearch(false, 'create')">Cancel</button>
+                </div>
+                <div id="gHostSearchResults" class="member-search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: #080a08; border: 1px solid var(--border-medium); border-radius: var(--radius-xs); max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 8px 24px rgba(0,0,0,0.8);"></div>
+              </div>
+
+              <input type="hidden" id="gHostId" value="">
+              <input type="hidden" id="gHostName" value="">
+              <input type="hidden" id="gHostAvatar" value="">
             </div>
 
             <div class="form-group">
@@ -585,6 +617,39 @@
             <div class="form-group">
               <label class="form-label">Giveaway Title *</label>
               <input type="text" id="editGTitle" class="form-input" required>
+            </div>
+
+            <!-- Edit Host / Launched By Selector -->
+            <div class="form-group" style="position: relative; margin-bottom: 16px;">
+              <label class="form-label" style="display: flex; justify-content: space-between; align-items: center;">
+                <span>Launched By / Giveaway Host *</span>
+                <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: normal;">Contact person for this raffle</span>
+              </label>
+              
+              <!-- Selected Host Card -->
+              <div id="editGHostSelectedCard" class="host-selected-preview">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <img id="editGHostSelectedAvatar" src="https://cdn.discordapp.com/embed/avatars/0.png" class="g-host-avatar" style="width: 32px; height: 32px;" alt="host">
+                  <div>
+                    <div id="editGHostSelectedName" class="g-host-name" style="font-size: 0.95rem;">Admin</div>
+                    <div id="editGHostSelectedSub" class="host-search-item-sub">Discord Host</div>
+                  </div>
+                </div>
+                <button type="button" class="btn btn-outline btn-sm" onclick="toggleHostSearch(true, 'edit')" style="padding: 3px 8px; font-size: 0.75rem;">Change</button>
+              </div>
+
+              <!-- Search Input & Dropdown -->
+              <div id="editGHostSearchWrap" style="display: none; position: relative;">
+                <div style="display: flex; gap: 6px; margin-bottom: 6px;">
+                  <input type="text" id="editGHostSearchInput" class="form-input" placeholder="Search server members (e.g. Zeno, Shreya, Ayush)..." oninput="searchHostMembers(this.value, 'edit')">
+                  <button type="button" class="btn btn-outline btn-sm" onclick="toggleHostSearch(false, 'edit')">Cancel</button>
+                </div>
+                <div id="editGHostSearchResults" class="member-search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: #080a08; border: 1px solid var(--border-medium); border-radius: var(--radius-xs); max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 8px 24px rgba(0,0,0,0.8);"></div>
+              </div>
+
+              <input type="hidden" id="editGHostId" value="">
+              <input type="hidden" id="editGHostName" value="">
+              <input type="hidden" id="editGHostAvatar" value="">
             </div>
 
             <div class="form-group">

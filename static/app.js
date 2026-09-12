@@ -898,6 +898,8 @@ function renderGiveaways(highlightedGiveaway = null) {
   grid.innerHTML = filtered.map(g => {
     const isEnded = !g.is_active || g.ends_at <= now;
     const timeLeft = getTimeLeftString(g.ends_at);
+    const hostName = g.host_name || g.hosted_by || 'Admin';
+    const hostAvatar = g.host_avatar || g.author_avatar || getDiscordAvatar(g.host_id, null, hostName);
 
     // Calculate spots
     let spotCount = 0;
@@ -942,7 +944,10 @@ function renderGiveaways(highlightedGiveaway = null) {
 
         <div class="g-card-body">
           <div class="g-card-host-row">
-            <span class="g-card-host">by <strong>${escapeHtml(g.hosted_by || 'Admin')}</strong></span>
+            <div class="g-card-host-chip" title="Launched by ${escapeHtml(hostName)}">
+              <img src="${escapeHtml(hostAvatar)}" class="g-host-avatar" alt="${escapeHtml(hostName)}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
+              <span class="g-host-name">${escapeHtml(hostName)}</span>
+            </div>
             <span class="g-card-network-badge">${escapeHtml(g.network || 'Ethereum')}</span>
           </div>
 
@@ -1152,6 +1157,95 @@ async function handleBannerFileUpload(inputElement, targetUrlInputId, previewCon
   reader.readAsDataURL(file);
 }
 
+// Giveaway Host Search & Selection Engine
+let hostSearchDebounceTimer = null;
+
+function toggleHostSearch(show, modalType = 'create') {
+  const prefix = modalType === 'edit' ? 'editG' : 'g';
+  const wrap = document.getElementById(`${prefix}HostSearchWrap`);
+  const card = document.getElementById(`${prefix}HostSelectedCard`);
+  const input = document.getElementById(`${prefix}HostSearchInput`);
+  const results = document.getElementById(`${prefix}HostSearchResults`);
+  
+  if (show) {
+    if (wrap) wrap.style.display = 'block';
+    if (card) card.style.display = 'none';
+    if (input) {
+      input.value = '';
+      input.focus();
+    }
+  } else {
+    if (wrap) wrap.style.display = 'none';
+    if (card) card.style.display = 'flex';
+    if (results) results.style.display = 'none';
+  }
+}
+
+function searchHostMembers(query, modalType = 'create') {
+  clearTimeout(hostSearchDebounceTimer);
+  const prefix = modalType === 'edit' ? 'editG' : 'g';
+  const container = document.getElementById(`${prefix}HostSearchResults`);
+  if (!container) return;
+
+  if (!query.trim()) {
+    container.style.display = 'none';
+    return;
+  }
+
+  hostSearchDebounceTimer = setTimeout(async () => {
+    try {
+      const res = await fetch(apiUrl(`/api/members/search?q=${encodeURIComponent(query.trim())}`), { credentials: 'include' });
+      if (!res.ok) return;
+      const members = await res.json();
+      if (!members || members.length === 0) {
+        container.innerHTML = `<div style="padding: 10px; color: var(--text-muted); font-size: 0.82rem; text-align: center;">No matching members found</div>`;
+      } else {
+        container.innerHTML = members.map(m => {
+          const avatarUrl = m.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png';
+          const dName = m.display_name || m.username;
+          return `
+            <div class="host-search-item" onclick='selectHostMember(${JSON.stringify(m)}, "${modalType}")'>
+              <img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(dName)}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
+              <div class="host-search-item-info">
+                <span class="host-search-item-name">${escapeHtml(dName)}</span>
+                <span class="host-search-item-sub">@${escapeHtml(m.username)} &bull; ID: ${escapeHtml(m.id)}</span>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+      container.style.display = 'block';
+    } catch (err) {
+      console.error('Host member search error:', err);
+    }
+  }, 180);
+}
+
+function selectHostMember(member, modalType = 'create') {
+  if (!member) return;
+  const prefix = modalType === 'edit' ? 'editG' : 'g';
+  const avatarUrl = member.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png';
+  const hostName = member.display_name || member.username || 'Admin';
+  const hostId = member.id || '';
+
+  const avatarEl = document.getElementById(`${prefix}HostSelectedAvatar`);
+  const nameEl = document.getElementById(`${prefix}HostSelectedName`);
+  const subEl = document.getElementById(`${prefix}HostSelectedSub`);
+  const idInput = document.getElementById(`${prefix}HostId`);
+  const nameInput = document.getElementById(`${prefix}HostName`);
+  const avatarInput = document.getElementById(`${prefix}HostAvatar`);
+
+  if (avatarEl) avatarEl.src = avatarUrl;
+  if (nameEl) nameEl.textContent = hostName;
+  if (subEl) subEl.textContent = member.username ? `@${member.username} (ID: ${hostId})` : 'Discord Host';
+
+  if (idInput) idInput.value = hostId;
+  if (nameInput) nameInput.value = hostName;
+  if (avatarInput) avatarInput.value = avatarUrl;
+
+  toggleHostSearch(false, modalType);
+}
+
 // Submit Create Giveaway (Calls backend API so Discord announcement embed posts IMMEDIATELY)
 let isSubmittingCreate = false;
 async function submitCreateGiveaway() {
@@ -1206,6 +1300,10 @@ async function submitCreateGiveaway() {
 
     const selectedRoles = createRequiredRoles.map(r => r.id);
 
+    const host_id = document.getElementById('gHostId')?.value || (currentUser ? currentUser.id : '');
+    const host_name = document.getElementById('gHostName')?.value || (currentUser ? (currentUser.display_name || currentUser.username) : 'Admin');
+    const host_avatar = document.getElementById('gHostAvatar')?.value || (currentUser ? currentUser.avatar : '');
+
     const giveawayObj = {
       id: giveawayId,
       title,
@@ -1225,7 +1323,10 @@ async function submitCreateGiveaway() {
       is_active: true,
       created_at: Math.floor(Date.now() / 1000),
       ends_at: Math.floor(Date.now() / 1000) + durationInSeconds,
-      hosted_by: currentUser ? currentUser.username : 'Admin',
+      host_id,
+      host_name,
+      host_avatar,
+      hosted_by: host_name,
       guaranteed_spots: (spot_tiers.find(t => t.name?.toLowerCase().includes('guarantee') || t.name === 'GTD') || {}).count || 0,
       fcfs_spots: (spot_tiers.find(t => t.name?.toLowerCase().includes('fcfs')) || {}).count || 0,
       entries_count: 0,
@@ -1400,6 +1501,16 @@ function openEditModal(giveawayId) {
   document.getElementById('editGDesc').value = g.description || '';
   document.getElementById('editGBanner').value = g.banner_url || '';
   document.getElementById('editGNetwork').value = g.network || 'Ethereum';
+
+  const editHostName = g.host_name || g.hosted_by || (currentUser ? (currentUser.display_name || currentUser.username) : 'Admin');
+  const editHostAvatar = g.host_avatar || (currentUser ? currentUser.avatar : 'https://cdn.discordapp.com/embed/avatars/0.png');
+  const editHostId = g.host_id || (currentUser ? currentUser.id : '');
+  selectHostMember({
+    id: editHostId,
+    display_name: editHostName,
+    username: editHostName,
+    avatar: editHostAvatar
+  }, 'edit');
   // Set select values after channels/roles are loaded
   const mentionRoleSel = document.getElementById('editGMentionRole');
   if (mentionRoleSel) {
@@ -1550,6 +1661,14 @@ async function submitEditGiveaway() {
     g.winner_channel_id = winner_channel_id;
     g.channel_id = channel_id;
     g.social_links = social_links;
+
+    const editHostId = document.getElementById('editGHostId')?.value || g.host_id || '';
+    const editHostName = document.getElementById('editGHostName')?.value || g.host_name || g.hosted_by || 'Admin';
+    const editHostAvatar = document.getElementById('editGHostAvatar')?.value || g.host_avatar || '';
+    g.host_id = editHostId;
+    g.host_name = editHostName;
+    g.host_avatar = editHostAvatar;
+    g.hosted_by = editHostName;
 
     const editSelectedRoles = editRequiredRoles.map(r => r.id);
 
@@ -1767,6 +1886,9 @@ async function openDetailModal(giveawayId) {
   }
   if (!totalWinnersCount) totalWinnersCount = 1;
 
+  const detailHostName = g.host_name || g.hosted_by || 'Admin';
+  const detailHostAvatar = g.host_avatar || g.author_avatar || getDiscordAvatar(g.host_id, null, detailHostName);
+
   content.innerHTML = `
     <div style="display: flex; flex-direction: column; gap: 1rem;">
       <div class="tessera-detail-hero">
@@ -1779,10 +1901,19 @@ async function openDetailModal(giveawayId) {
         
         <div class="tessera-header-content">
           <div class="tessera-project-row">
-            <div class="tessera-chip">
-              <span class="tessera-chip-label">Hosted by</span>
-              <span class="tessera-chip-val">${escapeHtml(g.hosted_by || 'Admin')}</span>
+            <div class="tessera-chip" style="display: inline-flex; align-items: center; gap: 8px;">
+              <img src="${escapeHtml(detailHostAvatar)}" class="g-host-avatar" alt="${escapeHtml(detailHostName)}" style="width: 22px; height: 22px;" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
+              <div>
+                <span class="tessera-chip-label" style="display: block; font-size: 0.62rem; line-height: 1;">Hosted by</span>
+                <span class="tessera-chip-val" style="font-weight: 700; color: #ffffff;">${escapeHtml(detailHostName)}</span>
+              </div>
             </div>
+            ${g.host_id ? `
+              <div class="tessera-chip">
+                <span class="tessera-chip-label">Host Discord ID</span>
+                <span class="tessera-chip-val font-mono">${escapeHtml(g.host_id)}</span>
+              </div>
+            ` : ''}
             <div class="tessera-chip">
               <span class="tessera-chip-label">Network</span>
               <span class="tessera-chip-val">${escapeHtml(g.network || 'Ethereum')}</span>
@@ -2701,12 +2832,23 @@ function openModal(id) {
       filterRoleSelect('gMentionRole', '');
       filterRoleSelect('gReqRoleSelect', '');
       filterRoleSelect('gRoleMultSelect', '');
+      toggleHostSearch(false, 'create');
+      const curName = currentUser ? (currentUser.display_name || currentUser.username) : 'Admin';
+      const curAvatar = currentUser ? currentUser.avatar : 'https://cdn.discordapp.com/embed/avatars/0.png';
+      const curId = currentUser ? currentUser.id : '';
+      selectHostMember({
+        id: curId,
+        display_name: curName,
+        username: currentUser ? currentUser.username : 'admin',
+        avatar: curAvatar
+      }, 'create');
     } else if (id === 'editModal') {
       filterChannelSelect('editGChannel', '');
       filterChannelSelect('editGWinnerChannel', '');
       filterRoleSelect('editGMentionRole', '');
       filterRoleSelect('editGReqRoleSelect', '');
       filterRoleSelect('editGRoleMultSelect', '');
+      toggleHostSearch(false, 'edit');
     }
   }
 }
@@ -2778,7 +2920,7 @@ async function loadBonusLeaderboard(forceRefresh = false) {
         const data = await res.json();
         if (data && data.success && Array.isArray(data.leaderboard)) {
           list = data.leaderboard;
-          totalSum = data.total_bonus_sum || 0;
+          totalSum = data.current_bonus_sum || data.total_bonus_sum || 0;
           topHolder = data.top_holder || 'None';
         }
       }
@@ -2826,7 +2968,7 @@ async function loadBonusLeaderboard(forceRefresh = false) {
         const totalBonus = availBonus + usedBonus;
         const gwCount = gwCountByUser[uid] || 0;
 
-        if (totalBonus <= 0 && gwCount <= 0) return;
+        if (availBonus <= 0 && gwCount <= 0 && totalBonus <= 0) return;
 
         const uName = (prof.username || `user_${uid.slice(-4)}`).trim();
         const dName = (prof.display_name || uName).trim();
@@ -2848,7 +2990,6 @@ async function loadBonusLeaderboard(forceRefresh = false) {
       });
 
       list.sort((a, b) => {
-        if (b.total_bonus !== a.total_bonus) return b.total_bonus - a.total_bonus;
         if (b.available_bonus !== a.available_bonus) return b.available_bonus - a.available_bonus;
         return b.giveaways_entered - a.giveaways_entered;
       });
@@ -2857,8 +2998,8 @@ async function loadBonusLeaderboard(forceRefresh = false) {
         item.rank = idx + 1;
       });
 
-      totalSum = list.reduce((sum, item) => sum + item.total_bonus, 0);
-      topHolder = list.length > 0 ? (list[0].display_name || list[0].username) : 'None';
+      totalSum = list.reduce((sum, item) => sum + (item.available_bonus || 0), 0);
+      topHolder = (list.length > 0 && list[0].available_bonus > 0) ? (list[0].display_name || list[0].username) : 'None';
     }
 
     cachedLeaderboardData = list;
@@ -2970,19 +3111,14 @@ function renderBonusLeaderboard(list) {
           </div>
         </td>
         <td style="text-align: center;">
-          <span style="font-family: var(--font-mono); font-weight: 700; color: #34d399; font-size: 0.95rem;">
+          <span class="bonus-val-pill" style="color: var(--accent-primary); border-color: rgba(168,255,26,0.3); background: rgba(168,255,26,0.08); font-weight: 700; font-size: 0.95rem;">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="12 6 15 11 20 11 16 14 18 19 12 16 6 19 8 14 4 11 9 11 12 6"></polygon></svg>
             ${item.available_bonus || 0}
           </span>
         </td>
         <td style="text-align: center;">
-          <span style="font-family: var(--font-mono); font-weight: 600; color: var(--text-secondary); font-size: 0.9rem;">
+          <span style="font-family: var(--font-mono); font-weight: 600; color: var(--text-secondary); font-size: 0.88rem;">
             +${item.used_bonus || 0}
-          </span>
-        </td>
-        <td style="text-align: center;">
-          <span class="bonus-val-pill">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="12 6 15 11 20 11 16 14 18 19 12 16 6 19 8 14 4 11 9 11 12 6"></polygon></svg>
-            ${item.total_bonus || 0}
           </span>
         </td>
         <td>
@@ -3038,14 +3174,14 @@ function filterBonusLeaderboard(query) {
           </span>
           <span class="tracker-bonus-badge">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="12 6 15 11 20 11 16 14 18 19 12 16 6 19 8 14 4 11 9 11 12 6"></polygon></svg>
-            ${topMatch.total_bonus} Total Bonus Entries
+            ${topMatch.available_bonus || 0} Current Bonus Entries
           </span>
         </div>
       </div>
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-top: 10px;">
-        <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); padding: 8px 12px; border-radius: var(--radius-xs);">
-          <div style="font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase;">Available Balance</div>
-          <div style="font-family: var(--font-mono); font-size: 1.15rem; font-weight: 700; color: #34d399;">${topMatch.available_bonus || 0}</div>
+        <div style="background: rgba(168,255,26,0.04); border: 1px solid rgba(168,255,26,0.25); padding: 8px 12px; border-radius: var(--radius-xs);">
+          <div style="font-family: var(--font-mono); font-size: 0.68rem; color: var(--accent-primary); text-transform: uppercase; font-weight: 600;">Current Balance (Held)</div>
+          <div style="font-family: var(--font-mono); font-size: 1.25rem; font-weight: 700; color: var(--accent-primary);">${topMatch.available_bonus || 0}</div>
         </div>
         <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); padding: 8px 12px; border-radius: var(--radius-xs);">
           <div style="font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase;">Used in Raffles</div>
@@ -3150,7 +3286,7 @@ async function handleGlobalEntrySearch(query) {
         </div>
         <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
           <span class="tracker-bonus-badge">
-            ${availBonus} Available Bonus
+            ${availBonus} Current Bonus Entries
           </span>
           <button class="btn btn-outline btn-sm" onclick="showLeaderboardView(); filterBonusLeaderboard('${escapeHtml(username)}');">
             View on Leaderboard
