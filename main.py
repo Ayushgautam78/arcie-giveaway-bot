@@ -8366,6 +8366,113 @@ async def start_health_server():
 
         return web.json_response(results)
 
+    async def get_leaderboard_handler(request):
+        try:
+            query = request.query.get("q", "").strip().lower()
+            limit = int(request.query.get("limit", 250))
+        except Exception:
+            query = ""
+            limit = 250
+
+        # Sync latest user profiles from Firebase if available
+        if FIREBASE_URL:
+            try:
+                fb_p = await firebase_get("user_profiles")
+                if fb_p and isinstance(fb_p, dict):
+                    user_profiles.update(fb_p)
+            except Exception:
+                pass
+
+        used_by_user = {}
+        entries_by_user = {}
+        for gid, entries in giveaway_entries.items():
+            if not isinstance(entries, list):
+                if isinstance(entries, dict):
+                    entries = list(entries.values())
+                else:
+                    continue
+            for e in entries:
+                if not isinstance(e, dict):
+                    continue
+                uid = str(e.get("user_id", ""))
+                if not uid:
+                    continue
+                bonus_used = int(e.get("bonus_entries_used", 0) or 0)
+                used_by_user[uid] = used_by_user.get(uid, 0) + bonus_used
+                entries_by_user[uid] = entries_by_user.get(uid, 0) + 1
+
+        leaderboard = []
+        all_uids = set(user_profiles.keys()) | set(used_by_user.keys())
+
+        for uid in all_uids:
+            prof = user_profiles.get(uid, {})
+            if not isinstance(prof, dict):
+                prof = {}
+            avail_bonus = int(prof.get("bonus_entries", 0) or 0)
+            used_bonus = used_by_user.get(uid, 0)
+            total_bonus = avail_bonus + used_bonus
+            gw_count = entries_by_user.get(uid, 0)
+
+            u_name = str(prof.get("username") or "").strip()
+            d_name = str(prof.get("display_name") or u_name).strip()
+            avatar_url = prof.get("avatar") or ""
+
+            if not u_name or not avatar_url:
+                try:
+                    uid_int = int(uid)
+                    m = bot.get_user(uid_int)
+                    if m:
+                        if not u_name:
+                            u_name = m.name
+                        if not d_name:
+                            d_name = m.display_name
+                        if not avatar_url and m.display_avatar:
+                            avatar_url = m.display_avatar.url
+                except Exception:
+                    pass
+
+            if not u_name:
+                u_name = f"user_{uid[-4:]}"
+            if not d_name:
+                d_name = u_name
+
+            if query:
+                if query not in u_name.lower() and query not in d_name.lower() and query not in uid.lower():
+                    continue
+
+            # Include users with bonus entries or at least 1 raffle entry
+            if total_bonus <= 0 and gw_count <= 0:
+                continue
+
+            leaderboard.append({
+                "user_id": uid,
+                "username": u_name,
+                "display_name": d_name,
+                "avatar": avatar_url,
+                "available_bonus": avail_bonus,
+                "used_bonus": used_bonus,
+                "total_bonus": total_bonus,
+                "giveaways_entered": gw_count,
+                "evm_wallet": prof.get("evm_wallet", ""),
+                "solana_wallet": prof.get("solana_wallet", ""),
+                "fcfs_wallet": prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", ""),
+                "twitter": prof.get("twitter", ""),
+            })
+
+        leaderboard.sort(key=lambda x: (x["total_bonus"], x["available_bonus"], x["giveaways_entered"]), reverse=True)
+
+        for idx, item in enumerate(leaderboard):
+            item["rank"] = idx + 1
+
+        total_bonus_sum = sum(x["total_bonus"] for x in leaderboard)
+
+        return web.json_response({
+            "success": True,
+            "total_users": len(leaderboard),
+            "total_bonus_sum": total_bonus_sum,
+            "top_holder": leaderboard[0]["display_name"] if leaderboard else "None",
+            "leaderboard": leaderboard[:limit]
+        })
 
     async def get_giveaways_handler(request):
         try:
@@ -9396,6 +9503,8 @@ async def start_health_server():
     app.router.add_get("/api/members/search", search_members_handler)
     app.router.add_get("/api/tickets", get_tickets_handler)
     app.router.add_post("/api/tickets/setup-panel", post_ticket_panel_handler)
+    app.router.add_get("/api/leaderboard", get_leaderboard_handler)
+    app.router.add_get("/api/bonus-leaderboard", get_leaderboard_handler)
     app.router.add_get("/api/giveaways", get_giveaways_handler)
     app.router.add_get("/api/giveaways/{id}", get_giveaway_detail_handler)
     app.router.add_post("/api/giveaways", create_giveaway_handler)

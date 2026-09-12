@@ -2,74 +2,164 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Arcie Bot | Web3 Giveaway Hub</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Arcie | Web3 Raffles & Community Giveaways</title>
   <link rel="stylesheet" href="/static/styles.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
 
-  <!-- Navbar -->
+  <!-- Top Navigation Bar (Tessera Style) -->
   <nav class="navbar">
-    <a href="/" class="brand">
-      <div class="brand-logo">🎁</div>
-      <span class="brand-title">Arcie Giveaways</span>
-    </a>
-    
-    <div class="nav-actions">
-      <!-- Admin Create & Backup Buttons (Hidden if non-admin) -->
-      <button id="createGiveawayBtn" class="btn btn-primary" style="display: none;">
-        <span>⚡ Create Giveaway</span>
-      </button>
-      <button id="downloadBackupBtn" class="btn btn-outline" style="display: none;" onclick="downloadBackup()">
-        <span>📥 Backup</span>
-      </button>
-      <button id="restoreBackupBtn" class="btn btn-purple" style="display: none;" onclick="document.getElementById('backupFileInput').click()">
-        <span>📤 Restore</span>
-      </button>
-      <input type="file" id="backupFileInput" accept=".json" style="display: none;" onchange="handleRestoreBackup(this)">
+    <div class="nav-container">
+      <div style="display: flex; align-items: center; gap: 1.5rem;">
+        <a href="/" class="brand">
+          <div class="brand-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+          </div>
+          <div class="brand-text-wrap">
+            <span class="brand-name">Arcie</span>
+            <span class="brand-tag">[Beta]</span>
+          </div>
+        </a>
 
-      <!-- User Profile / Auth Container -->
-      <div id="authContainer">
-        <button id="loginBtn" class="btn btn-purple">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
-          Sign in with Discord
+        <!-- Desktop Navigation Tabs -->
+        <div class="nav-links">
+          <a href="#" class="nav-link active" id="navRafflesBtn" onclick="showAllGiveawaysView(); return false;">
+            <span class="bracket">[</span>Raffles<span class="bracket">]</span>
+          </a>
+          <a href="#leaderboard" class="nav-link" id="navLeaderboardBtn" onclick="showLeaderboardView(); return false;">
+            <span class="bracket">[</span>Leaderboard<span class="bracket">]</span>
+          </a>
+          <a href="#tracker" class="nav-link" id="navTrackerBtn" onclick="focusEntryTracker(); return false;">
+            <span class="bracket">[</span>Tracker<span class="bracket">]</span>
+          </a>
+          <a href="#" class="nav-link" onclick="filterByMyEntries(); return false;" id="myEntriesNavBtn" style="display: none;">
+            <span class="bracket">[</span>My Entries<span class="bracket">]</span>
+          </a>
+        </div>
+      </div>
+      
+      <div class="nav-actions">
+        <!-- Live Indicator Badge -->
+        <div class="live-pill" title="Live platform status">
+          <span class="live-dot"></span>
+          <span>Live</span>
+        </div>
+
+        <!-- Admin Actions (Shown when admin is logged in) -->
+        <button id="createGiveawayBtn" class="btn btn-primary btn-sm" style="display: none;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          <span>Create</span>
         </button>
+        <button id="downloadBackupBtn" class="btn btn-outline btn-sm" style="display: none;" onclick="downloadBackup()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          <span>Backup</span>
+        </button>
+        <button id="restoreBackupBtn" class="btn btn-outline btn-sm" style="display: none;" onclick="document.getElementById('backupFileInput').click()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+          <span>Restore</span>
+        </button>
+        <input type="file" id="backupFileInput" accept=".json" style="display: none;" onchange="handleRestoreBackup(this)">
+
+        <!-- User Profile / Auth Container -->
+        <div id="authContainer">
+          <button id="loginBtn" class="btn btn-violet btn-sm">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
+            <span>Sign in with Discord</span>
+          </button>
+        </div>
       </div>
     </div>
   </nav>
 
-  <!-- Hero Section -->
-  <header class="hero-section">
-    <div class="hero-card">
-      <h1 class="hero-title">Exclusive Web3 Giveaways</h1>
-      <p class="hero-subtitle">Participate in verified community giveaways and claim exclusive rewards powered by Arcie Bot.</p>
-    </div>
-  </header>
-
-  <!-- Main Feed Section -->
+  <!-- Main Container -->
   <main class="container">
+    
+    <!-- Hero Header -->
+    <header class="hero-section">
+      <div class="hero-meta">
+        <span class="hero-label">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+          Community Platform
+        </span>
+        <span class="hero-divider"></span>
+        <span class="hero-sublabel">Arcie Ecosystem</span>
+        <span class="hero-divider"></span>
+        <span class="hero-sublabel">Gated Raffles & Whitelist</span>
+      </div>
+
+      <h1 class="hero-title">Exclusive Web3 Giveaways</h1>
+      <p class="hero-description">Participate in transparent community raffles, verify task completion, and track entries and spot allocations in real time.</p>
+
+      <!-- GLOBAL PARTICIPANT & ENTRY TRACKER -->
+      <div class="tracker-search-box" id="tracker">
+        <div class="corner-tl"></div>
+        <div class="corner-tr"></div>
+        <div class="corner-bl"></div>
+        <div class="corner-br"></div>
+
+        <div class="tracker-header">
+          <span class="tracker-heading">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            Live Entry Tracker
+          </span>
+          <span class="tracker-hint">Check your entries, tier status, and submitted wallets</span>
+        </div>
+
+        <div class="tracker-input-group">
+          <svg class="tracker-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="globalEntrySearchInput" class="tracker-search-input" placeholder="Search by Discord username, display name, or user ID (e.g. isika45, hunterzks)..." oninput="handleGlobalEntrySearch(this.value)" onkeydown="if(event.key==='Enter'){handleGlobalEntrySearch(this.value);}">
+          <button type="button" class="btn btn-primary" onclick="handleGlobalEntrySearch(document.getElementById('globalEntrySearchInput').value)">
+            <span>Track</span>
+          </button>
+        </div>
+
+        <!-- Dynamic Results Panel for Entry Tracker -->
+        <div id="trackerResultsPanel" class="tracker-results-card">
+          <!-- Populated dynamically by app.js -->
+        </div>
+      </div>
+    </header>
+
     <!-- Standalone Direct Giveaway View Banner (shown when accessed via direct share link) -->
-    <div id="singleGiveawayBanner" style="display: none; background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(168,85,247,0.1)); border: 1px solid rgba(168,85,247,0.3); border-radius: var(--radius-md); padding: 1rem 1.25rem; margin-bottom: 1.5rem; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+    <div id="singleGiveawayBanner" style="display: none; padding: 1rem 1.25rem; margin-bottom: 1.5rem; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
       <div style="display: flex; align-items: center; gap: 12px;">
-        <span style="font-size: 1.6rem;">🎁</span>
+        <div class="brand-icon" style="width: 32px; height: 32px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+        </div>
         <div>
-          <div style="font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">Direct Giveaway View</div>
+          <div style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; letter-spacing: 0.16em;">Direct View</div>
           <div id="singleGiveawayBannerTitle" style="font-size: 1.05rem; font-weight: 700; color: #fff;">Giveaway Title</div>
         </div>
       </div>
       <div style="display: flex; gap: 8px;">
-        <button class="btn btn-primary btn-sm" id="singleGiveawayOpenBtn">🔍 View Full Details & Winners</button>
-        <button class="btn btn-outline btn-sm" onclick="showAllGiveawaysView()">← View All Giveaways</button>
+        <button class="btn btn-primary btn-sm" id="singleGiveawayOpenBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <span>View Details & Entries</span>
+        </button>
+        <button class="btn btn-outline btn-sm" onclick="showAllGiveawaysView()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+          <span>View All</span>
+        </button>
       </div>
     </div>
 
-    <div class="section-header">
-      <h2 class="section-title">✨ Community Giveaways</h2>
+    <!-- Feed Section Header -->
+    <div class="feed-controls-header">
+      <div class="feed-title-wrap">
+        <h2 class="feed-title">
+          <span class="prefix">//</span>
+          <span>Community Raffles</span>
+        </h2>
+        <span id="giveawayCountBadge" class="feed-count-badge">0 active</span>
+      </div>
+
       <div class="tab-group">
-        <button class="tab-btn active" data-tab="active">Active</button>
+        <button class="tab-btn active" id="tabActiveBtn" data-tab="active">Active</button>
+        <button class="tab-btn" id="tabLeaderboardBtn" onclick="showLeaderboardView()">Bonus Leaderboard</button>
         <button class="tab-btn admin-only-tab" data-tab="ended" style="display:none;">Ended</button>
         <button class="tab-btn admin-only-tab" data-tab="all" style="display:none;">All</button>
       </div>
@@ -77,20 +167,146 @@
 
     <!-- Grid Container -->
     <div id="giveawayGrid" class="giveaway-grid">
-      <!-- Dynamic Giveaway Cards Will Be Injected Here -->
+      <!-- Dynamic Giveaway Cards Injected Here -->
       <div class="empty-state">
-        <div class="empty-icon">⏳</div>
-        <p>Loading giveaways...</p>
+        <div class="empty-icon-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        </div>
+        <p class="empty-title">Loading raffles...</p>
+        <p class="empty-hint">Connecting to network and fetching latest data.</p>
       </div>
     </div>
+
+    <!-- Dedicated Bonus Entries Leaderboard Section -->
+    <section id="leaderboardSection" class="leaderboard-section" style="display: none;">
+      <!-- Leaderboard Hero Header -->
+      <div class="leaderboard-hero">
+        <div class="leaderboard-meta">
+          <span class="leaderboard-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path><path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"></path><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"></path><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"></path></svg>
+            Community Ranking
+          </span>
+          <span class="hero-divider"></span>
+          <span class="hero-sublabel">Arcie Ecosystem</span>
+          <span class="hero-divider"></span>
+          <span class="hero-sublabel">Total Bonus Tickets</span>
+        </div>
+
+        <div class="leaderboard-title-row">
+          <div>
+            <h2 class="leaderboard-title"><span class="prefix">//</span> Total Bonus Entries Leaderboard</h2>
+            <p class="leaderboard-subtitle">Live transparent tracking of accrued bonus raffle entries, active multipliers, and community tiers.</p>
+          </div>
+          <div class="leaderboard-actions">
+            <button class="btn btn-outline btn-sm" onclick="loadBonusLeaderboard(true)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+              <span>Refresh</span>
+            </button>
+            <button class="btn btn-primary btn-sm" onclick="showAllGiveawaysView()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+              <span>Back to Raffles</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Leaderboard 4-Cell Metric Bar -->
+        <div class="leaderboard-metric-grid">
+          <div class="leaderboard-metric-cell">
+            <span class="metric-cell-label">Total Bonus Tickets</span>
+            <span class="metric-cell-val" id="lbTotalBonusVal">--</span>
+          </div>
+          <div class="leaderboard-metric-cell">
+            <span class="metric-cell-label">Ranked Members</span>
+            <span class="metric-cell-val" id="lbTotalUsersVal">--</span>
+          </div>
+          <div class="leaderboard-metric-cell">
+            <span class="metric-cell-label">Top Bonus Holder</span>
+            <span class="metric-cell-val" id="lbTopHolderVal">--</span>
+          </div>
+          <div class="leaderboard-metric-cell">
+            <span class="metric-cell-label">Active Raffles</span>
+            <span class="metric-cell-val" id="lbActiveRafflesVal">--</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Search & Personal Tracker Box inside Leaderboard -->
+      <div class="tracker-search-box" style="margin-bottom: 1.5rem;">
+        <div class="corner-tl"></div>
+        <div class="corner-tr"></div>
+        <div class="corner-bl"></div>
+        <div class="corner-br"></div>
+
+        <div class="tracker-header">
+          <span class="tracker-heading">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            Track Your Bonus Position
+          </span>
+          <span class="tracker-hint">Search your Discord username or ID to see your exact rank and entries</span>
+        </div>
+
+        <div class="tracker-input-group">
+          <svg class="tracker-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="lbUserSearchInput" class="tracker-search-input" placeholder="Search by username or user ID (e.g. isika45, hunterzks)..." oninput="filterBonusLeaderboard(this.value)" onkeydown="if(event.key==='Enter'){filterBonusLeaderboard(this.value);}">
+          <button type="button" class="btn btn-primary" onclick="filterBonusLeaderboard(document.getElementById('lbUserSearchInput').value)">
+            <span>Search</span>
+          </button>
+        </div>
+
+        <!-- Dynamic Personal Highlight Card -->
+        <div id="lbPersonalStatsCard" class="tracker-results-card" style="display: none; margin-top: 1rem;"></div>
+      </div>
+
+      <!-- Leaderboard Table Card -->
+      <div class="leaderboard-table-card">
+        <div class="leaderboard-table-header-bar">
+          <div class="table-title">
+            <span>Rankings</span>
+            <span id="lbShowingCountBadge" class="table-count-badge">Showing 0 users</span>
+          </div>
+          <div class="table-filter-wrap">
+            <input type="text" id="lbTableFilterInput" class="table-filter-input" placeholder="Filter leaderboard table..." oninput="filterBonusLeaderboard(this.value)">
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="leaderboard-table">
+            <thead>
+              <tr>
+                <th style="width: 80px;"># Rank</th>
+                <th>Participant</th>
+                <th style="width: 140px; text-align: center;">Available Bonus</th>
+                <th style="width: 140px; text-align: center;">Boosted in Raffles</th>
+                <th style="width: 150px; text-align: center;">Total Bonus Entries</th>
+                <th>Registered Wallets</th>
+              </tr>
+            </thead>
+            <tbody id="leaderboardTableBody">
+              <tr>
+                <td colspan="6" style="text-align: center; padding: 2.5rem; color: var(--text-muted); font-family: var(--font-mono); font-size: 0.85rem;">
+                  Loading bonus entries leaderboard...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   </main>
 
   <!-- Create Giveaway Modal (Admin) -->
   <div id="createModal" class="modal-overlay">
     <div class="modal-content">
       <div class="modal-header">
-        <h3 class="modal-title">⚡ Create New Giveaway</h3>
-        <button class="modal-close" onclick="closeModal('createModal')">&times;</button>
+        <div class="modal-title-wrap">
+          <div class="modal-title-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          </div>
+          <h3 class="modal-title">Create New Giveaway</h3>
+        </div>
+        <button class="modal-close" onclick="closeModal('createModal')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
       </div>
       <div class="modal-body">
         <form id="createGiveawayForm">
@@ -98,49 +314,47 @@
           <div class="form-section-card">
             <div class="form-section-header">
               <span class="form-section-number">1</span>
-              <span>📝 Basic Details</span>
+              <span>Basic Information</span>
             </div>
             
             <div class="form-group">
               <label class="form-label">Giveaway Title *</label>
-              <input type="text" id="gTitle" class="form-input" placeholder="e.g. Wizard GTD" required>
+              <input type="text" id="gTitle" class="form-input" placeholder="e.g. Shinka NFT Whitelist" required>
             </div>
 
             <div class="form-group">
               <label class="form-label">Description *</label>
-              <textarea id="gDesc" class="form-textarea" rows="3" placeholder="A web3 community for alpha calls..." required></textarea>
+              <textarea id="gDesc" class="form-textarea" rows="3" placeholder="Describe the project, supply, mint price, chain, and perks..." required></textarea>
             </div>
 
             <div class="form-row">
               <div class="form-group">
-                <label class="form-label">📷 Banner Image (Upload or Paste URL)</label>
+                <label class="form-label">Banner Image (Upload or Paste URL)</label>
                 <input type="file" id="gBannerFile" accept="image/*" class="form-input" style="padding: 6px; margin-bottom: 6px;" onchange="handleBannerFileUpload(this, 'gBanner', 'gBannerPreview')">
                 <input type="url" id="gBanner" class="form-input" placeholder="https://i.imgur.com/example.png or uploaded URL">
                 <div id="gBannerPreview" style="margin-top: 6px; display: none;">
-                  <img src="" style="max-height: 100px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);" alt="preview">
+                  <img src="" style="max-height: 100px; border-radius: var(--radius-xs); border: 1px solid var(--border-subtle);" alt="preview">
                 </div>
               </div>
               <div class="form-group">
-                <label class="form-label">🌐 Network / Blockchain Name</label>
+                <label class="form-label">Network / Blockchain Name</label>
                 <input type="text" id="gNetwork" class="form-input" placeholder="e.g. Ethereum, Solana, Base" value="Ethereum" required>
               </div>
             </div>
           </div>
 
-          <!-- Step 2: Discord Integration & Role Notifications -->
+          <!-- Step 2: Discord Target & Role Notifications -->
           <div class="discord-config-card">
             <div class="discord-config-header">
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <span class="form-section-number">2</span>
-                <span>🤖 Discord Target & Role Notifications</span>
-              </div>
+              <span class="form-section-number">2</span>
+              <span>Discord Target & Role Notifications</span>
               <div class="discord-config-header-tag">Live Server Sync</div>
             </div>
 
             <div class="form-row">
               <div class="form-group">
-                <label class="form-label">📢 Discord Target Channel *</label>
-                <input type="text" id="gChannelSearch" class="form-input select-search-input" placeholder="🔍 Search channels..." oninput="filterChannelSelect('gChannel', this.value)">
+                <label class="form-label">Discord Target Channel *</label>
+                <input type="text" id="gChannelSearch" class="form-input select-search-input" placeholder="Search channels..." oninput="filterChannelSelect('gChannel', this.value)">
                 <select id="gChannel" class="form-select">
                   <option value="">Select Channel...</option>
                 </select>
@@ -148,19 +362,19 @@
               </div>
 
               <div class="form-group">
-                <label class="form-label">🔔 Mention Role (Ping on Post)</label>
-                <input type="text" id="gMentionRoleSearch" class="form-input select-search-input" placeholder="🔍 Search roles..." oninput="filterRoleSelect('gMentionRole', this.value)">
+                <label class="form-label">Mention Role (Ping on Post)</label>
+                <input type="text" id="gMentionRoleSearch" class="form-input select-search-input" placeholder="Search roles..." oninput="filterRoleSelect('gMentionRole', this.value)">
                 <select id="gMentionRole" class="form-select">
-                  <option value="">🔕 No ping (Silent post)</option>
-                  <option value="@everyone">🌐 @everyone</option>
-                  <option value="@here">⚡ @here</option>
+                  <option value="">No ping (Silent post)</option>
+                  <option value="@everyone">@everyone</option>
+                  <option value="@here">@here</option>
                 </select>
               </div>
             </div>
 
             <div class="form-group">
-              <label class="form-label">🏆 Winner Announcement Channel (Optional)</label>
-              <input type="text" id="gWinnerChannelSearch" class="form-input select-search-input" placeholder="🔍 Search channels..." oninput="filterChannelSelect('gWinnerChannel', this.value)">
+              <label class="form-label">Winner Announcement Channel (Optional)</label>
+              <input type="text" id="gWinnerChannelSearch" class="form-input select-search-input" placeholder="Search channels..." oninput="filterChannelSelect('gWinnerChannel', this.value)">
               <select id="gWinnerChannel" class="form-select">
                 <option value="">Same as Giveaway Channel (Default)</option>
               </select>
@@ -172,16 +386,16 @@
           <div class="form-section-card">
             <div class="form-section-header">
               <span class="form-section-number">3</span>
-              <span>💎 Spot Tiers & Limits Builder</span>
+              <span>Spot Tiers & Limits Builder</span>
             </div>
-            <p class="form-hint" style="margin-bottom: 8px;">Add custom spot tiers and quantities (e.g. GTD, FCFS, VIP, WL Tier 1, etc.).</p>
+            <p class="form-hint" style="margin-bottom: 8px;">Configure spot allocations (e.g. GTD, FCFS, VIP, etc.).</p>
             
             <div id="spotTiersList" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;">
               <!-- Dynamic spot tiers rendered here -->
             </div>
 
             <div style="margin-bottom: 10px;">
-              <button type="button" class="btn btn-outline btn-sm" onclick="addSpotTier('Guaranteed', 3)">+ Add Custom Spot Tier</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addSpotTier('Guaranteed', 3)">+ Add Spot Tier</button>
             </div>
 
             <div class="form-row">
@@ -200,7 +414,7 @@
           <div class="form-section-card">
             <div class="form-section-header">
               <span class="form-section-number">4</span>
-              <span>⏳ Giveaway Duration & Timer</span>
+              <span>Duration & Schedule</span>
             </div>
 
             <div class="form-row">
@@ -223,23 +437,22 @@
           <div class="form-section-card">
             <div class="form-section-header">
               <span class="form-section-number">5</span>
-              <span>📋 Task Requirements, Roles & Wallets</span>
+              <span>Task Requirements, Roles & Wallets</span>
             </div>
-            <p class="form-hint" style="margin-bottom: 10px;">Add custom social tasks, required Discord roles, and crypto wallet collection.</p>
             
-            <div class="form-group" style="margin-bottom: 14px; padding: 14px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 8px;">
+            <div class="form-group" style="margin-bottom: 14px; padding: 12px; background: rgba(255,255,255,0.015); border: 1px solid var(--border-subtle); border-radius: var(--radius-xs);">
               <label class="form-label" style="font-weight: 600; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <span>🏷️ Discord Required Roles (Entry Requirement)</span>
-                <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-muted);">(OR Logic: Member needs ANY 1 role to enter)</span>
+                <span>Required Discord Roles</span>
+                <span style="font-size: 0.72rem; font-weight: normal; color: var(--text-muted);">(Member needs ANY 1 role to enter)</span>
               </label>
               <div style="display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
                 <div style="flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 4px;">
-                  <input type="text" id="gReqRoleSearch" class="form-input select-search-input" placeholder="🔍 Search server roles..." oninput="filterRoleSelect('gReqRoleSelect', this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();addSelectedRequiredRole();}">
+                  <input type="text" id="gReqRoleSearch" class="form-input select-search-input" placeholder="Search server roles..." oninput="filterRoleSelect('gReqRoleSelect', this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();addSelectedRequiredRole();}">
                   <div style="display: flex; gap: 6px;">
                     <select id="gReqRoleSelect" class="form-select" style="flex: 1;">
                       <option value="">Select Discord Server Role...</option>
                     </select>
-                    <button type="button" class="btn btn-primary btn-sm" onclick="addSelectedRequiredRole()" style="white-space: nowrap;">+ Add Role</button>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="addSelectedRequiredRole()" style="white-space: nowrap;">+ Add</button>
                   </div>
                 </div>
                 <div style="flex: 1; min-width: 220px; display: flex; gap: 6px; align-items: flex-end;">
@@ -248,20 +461,19 @@
                 </div>
               </div>
               <div id="gReqRolesList" class="role-badges-container" style="margin-top: 8px;">
-                <span style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">No required roles selected (Open to everyone)</span>
+                <span style="font-size: 0.75rem; color: var(--text-muted); font-style: italic;">No required roles selected (Open to everyone)</span>
               </div>
-              <p class="form-hint" style="margin-top: 6px; font-size: 0.75rem;">If no roles are added, all server members can participate in this giveaway.</p>
             </div>
 
-            <!-- Role-Based Extra Entries / Multipliers Builder -->
-            <div class="form-group" style="margin-bottom: 14px; padding: 14px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 8px;">
+            <!-- Role Multipliers -->
+            <div class="form-group" style="margin-bottom: 14px; padding: 12px; background: rgba(255,255,255,0.015); border: 1px solid var(--border-subtle); border-radius: var(--radius-xs);">
               <label class="form-label" style="font-weight: 600; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <span>🎟️ Role-Based Extra Entries / Multipliers (Optional)</span>
-                <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-muted);">(Give extra ticket entries to specific roles, e.g., 2x, 3x, 5x)</span>
+                <span>Role Entry Multipliers</span>
+                <span style="font-size: 0.72rem; font-weight: normal; color: var(--text-muted);">(Extra tickets: 2x, 3x, 5x, etc.)</span>
               </label>
               <div style="display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
                 <div style="flex: 2; min-width: 200px; display: flex; flex-direction: column; gap: 4px;">
-                  <input type="text" id="gRoleMultSearch" class="form-input select-search-input" placeholder="🔍 Search server roles..." oninput="filterRoleSelect('gRoleMultSelect', this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();addRoleMultiplier();}">
+                  <input type="text" id="gRoleMultSearch" class="form-input select-search-input" placeholder="Search server roles..." oninput="filterRoleSelect('gRoleMultSelect', this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();addRoleMultiplier();}">
                   <select id="gRoleMultSelect" class="form-select">
                     <option value="">Select Discord Server Role...</option>
                   </select>
@@ -269,42 +481,39 @@
                 <div style="flex: 1; min-width: 140px; display: flex; align-items: flex-end;">
                   <input type="text" id="gRoleMultManual" class="form-input" placeholder="Or Role ID / Name...">
                 </div>
-                <div style="width: 130px; display: flex; align-items: center; gap: 4px; align-self: flex-end;">
-                  <input type="number" id="gRoleMultCount" class="form-input" min="1" max="100" value="2" placeholder="Entries" title="Number of entries / multiplier (e.g. 2 for 2x)">
-                  <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: 600;">🎟️</span>
+                <div style="width: 110px; display: flex; align-items: center; gap: 4px; align-self: flex-end;">
+                  <input type="number" id="gRoleMultCount" class="form-input" min="1" max="100" value="2" placeholder="Multiplier">
                 </div>
                 <div style="display: flex; align-items: flex-end;">
-                  <button type="button" class="btn btn-primary btn-sm" onclick="addRoleMultiplier()" style="white-space: nowrap;">+ Add Multiplier</button>
+                  <button type="button" class="btn btn-primary btn-sm" onclick="addRoleMultiplier()" style="white-space: nowrap;">+ Add</button>
                 </div>
               </div>
               <div id="gRoleMultsList" class="role-badges-container" style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px;">
-                <span style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">No role multipliers configured (Standard 1x entry for everyone)</span>
+                <span style="font-size: 0.75rem; color: var(--text-muted); font-style: italic;">No role multipliers configured (1x standard for everyone)</span>
               </div>
-              <p class="form-hint" style="margin-top: 6px; font-size: 0.75rem;">Members with these roles receive extra ticket entries in the giveaway draw (e.g. 5x entries = 5 tickets). If a member has multiple configured roles, their highest entry multiplier applies.</p>
             </div>
 
-            <div id="dynamicTasksList" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px;">
-              <!-- Dynamic task items -->
+            <!-- Dynamic Tasks -->
+            <div id="dynamicTasksList" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;"></div>
+
+            <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px;">
+              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('twitter_follow')">+ Twitter Follow</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('twitter_like')">+ Twitter Like</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('twitter_retweet')">+ Twitter Retweet</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('twitter_comment')">+ Twitter Comment</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('discord_join')">+ Join Discord</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('tiktok_follow')">+ TikTok Follow</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('youtube_follow')">+ YouTube Subscribe</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('role_require')">+ Discord Role</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('manual_task')">+ Custom Task</button>
             </div>
 
-            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">
-              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('twitter_follow')">🐦 + Twitter Follow</button>
-              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('twitter_like')">❤️ + Twitter Like</button>
-              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('twitter_retweet')">🔄 + Twitter Retweet</button>
-              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('twitter_comment')">💬 + Twitter Comment</button>
-              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('discord_join')">💬 + Join Discord Server</button>
-              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('tiktok_follow')">🎵 + TikTok Follow</button>
-              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('youtube_follow')">▶️ + YouTube Subscribe</button>
-              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('role_require')">🏅 + Discord Role</button>
-              <button type="button" class="btn btn-outline btn-sm" onclick="addDynamicTask('manual_task')">📝 + Custom Task</button>
-            </div>
-
-            <div style="display: flex; gap: 20px; border-top: 1px dashed var(--border-color); padding-top: 10px; flex-wrap: wrap;">
-              <label style="display: flex; align-items: center; gap: 8px; font-size: 0.88rem; cursor: pointer; color: var(--text-main);">
-                <input type="checkbox" id="reqEvm" checked style="accent-color: var(--primary);"> Require EVM Wallet (0x...)
+            <div style="display: flex; gap: 20px; border-top: 1px dashed var(--border-subtle); padding-top: 10px; flex-wrap: wrap;">
+              <label style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem; cursor: pointer; color: var(--text-main);">
+                <input type="checkbox" id="reqEvm" checked style="accent-color: var(--accent-violet);"> Require EVM Wallet (0x...)
               </label>
-              <label style="display: flex; align-items: center; gap: 8px; font-size: 0.88rem; cursor: pointer; color: var(--text-main);">
-                <input type="checkbox" id="reqSolana" style="accent-color: var(--purple);"> Require Solana Wallet
+              <label style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem; cursor: pointer; color: var(--text-main);">
+                <input type="checkbox" id="reqSolana" style="accent-color: var(--accent-violet);"> Require Solana Wallet
               </label>
             </div>
           </div>
@@ -313,28 +522,27 @@
           <div class="form-section-card">
             <div class="form-section-header">
               <span class="form-section-number">6</span>
-              <span>🔗 Official Project Links (Optional)</span>
+              <span>Official Project Links (Optional)</span>
             </div>
-            <p class="form-hint" style="margin-bottom: 8px;">Add official social links to display at the bottom of the giveaway embed and website card.</p>
             
             <div class="form-row">
               <div class="form-group">
-                <label class="form-label">🐦 Twitter / X Link</label>
+                <label class="form-label">Twitter / X Link</label>
                 <input type="url" id="gTwitterLink" class="form-input" placeholder="https://x.com/yourproject">
               </div>
               <div class="form-group">
-                <label class="form-label">💬 Discord Server Link</label>
+                <label class="form-label">Discord Server Link</label>
                 <input type="url" id="gDiscordLink" class="form-input" placeholder="https://discord.gg/yourserver">
               </div>
             </div>
 
             <div class="form-row">
               <div class="form-group">
-                <label class="form-label">✈️ Telegram Channel Link</label>
+                <label class="form-label">Telegram Link</label>
                 <input type="url" id="gTelegramLink" class="form-input" placeholder="https://t.me/yourchannel">
               </div>
               <div class="form-group">
-                <label class="form-label">🌐 Official Website Link</label>
+                <label class="form-label">Official Website</label>
                 <input type="url" id="gWebsiteLink" class="form-input" placeholder="https://yourwebsite.com">
               </div>
             </div>
@@ -343,7 +551,7 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline" onclick="closeModal('createModal')">Cancel</button>
-        <button id="publishBtn" class="btn btn-primary" onclick="submitCreateGiveaway()">🚀 Publish Giveaway</button>
+        <button id="publishBtn" class="btn btn-primary" onclick="submitCreateGiveaway()">Publish Giveaway</button>
       </div>
     </div>
   </div>
@@ -352,8 +560,15 @@
   <div id="editModal" class="modal-overlay">
     <div class="modal-content">
       <div class="modal-header">
-        <h3 class="modal-title">✏️ Edit Giveaway</h3>
-        <button class="modal-close" onclick="closeModal('editModal')">&times;</button>
+        <div class="modal-title-wrap">
+          <div class="modal-title-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+          </div>
+          <h3 class="modal-title">Edit Giveaway</h3>
+        </div>
+        <button class="modal-close" onclick="closeModal('editModal')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
       </div>
       <div class="modal-body">
         <form id="editGiveawayForm">
@@ -363,7 +578,7 @@
           <div class="form-section-card">
             <div class="form-section-header">
               <span class="form-section-number">1</span>
-              <span>📝 Basic Details</span>
+              <span>Basic Details</span>
             </div>
 
             <div class="form-group">
@@ -378,15 +593,15 @@
 
             <div class="form-row">
               <div class="form-group">
-                <label class="form-label">📷 Banner Image (Upload or Paste URL)</label>
+                <label class="form-label">Banner Image (Upload or Paste URL)</label>
                 <input type="file" id="editGBannerFile" accept="image/*" class="form-input" style="padding: 6px; margin-bottom: 6px;" onchange="handleBannerFileUpload(this, 'editGBanner', 'editGBannerPreview')">
                 <input type="url" id="editGBanner" class="form-input" placeholder="https://i.imgur.com/example.png or uploaded URL">
                 <div id="editGBannerPreview" style="margin-top: 6px; display: none;">
-                  <img src="" style="max-height: 100px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);" alt="preview">
+                  <img src="" style="max-height: 100px; border-radius: var(--radius-xs); border: 1px solid var(--border-subtle);" alt="preview">
                 </div>
               </div>
               <div class="form-group">
-                <label class="form-label">🌐 Network / Blockchain Name</label>
+                <label class="form-label">Network / Blockchain Name</label>
                 <input type="text" id="editGNetwork" class="form-input" value="Ethereum" required>
               </div>
             </div>
@@ -395,36 +610,34 @@
           <!-- Step 2: Discord Target & Role Notifications -->
           <div class="discord-config-card">
             <div class="discord-config-header">
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <span class="form-section-number">2</span>
-                <span>🤖 Discord Server Channel & Mention Role Updates</span>
-              </div>
+              <span class="form-section-number">2</span>
+              <span>Discord Target & Role Notifications</span>
               <div class="discord-config-header-tag">Live Server Sync</div>
             </div>
 
             <div class="form-row">
               <div class="form-group">
-                <label class="form-label">📢 Target Discord Channel</label>
-                <input type="text" id="editGChannelSearch" class="form-input select-search-input" placeholder="🔍 Search channels..." oninput="filterChannelSelect('editGChannel', this.value)">
+                <label class="form-label">Target Discord Channel</label>
+                <input type="text" id="editGChannelSearch" class="form-input select-search-input" placeholder="Search channels..." oninput="filterChannelSelect('editGChannel', this.value)">
                 <select id="editGChannel" class="form-select">
                   <option value="">-- Same as current --</option>
                 </select>
               </div>
 
               <div class="form-group">
-                <label class="form-label">🔔 Mention Role (Ping on Post)</label>
-                <input type="text" id="editGMentionRoleSearch" class="form-input select-search-input" placeholder="🔍 Search roles..." oninput="filterRoleSelect('editGMentionRole', this.value)">
+                <label class="form-label">Mention Role (Ping on Post)</label>
+                <input type="text" id="editGMentionRoleSearch" class="form-input select-search-input" placeholder="Search roles..." oninput="filterRoleSelect('editGMentionRole', this.value)">
                 <select id="editGMentionRole" class="form-select">
-                  <option value="">🔕 No ping (Silent post)</option>
-                  <option value="@everyone">🌐 @everyone</option>
-                  <option value="@here">⚡ @here</option>
+                  <option value="">No ping (Silent post)</option>
+                  <option value="@everyone">@everyone</option>
+                  <option value="@here">@here</option>
                 </select>
               </div>
             </div>
 
             <div class="form-group">
-              <label class="form-label">🏆 Winner Announcement Channel (Optional)</label>
-              <input type="text" id="editGWinnerChannelSearch" class="form-input select-search-input" placeholder="🔍 Search channels..." oninput="filterChannelSelect('editGWinnerChannel', this.value)">
+              <label class="form-label">Winner Announcement Channel (Optional)</label>
+              <input type="text" id="editGWinnerChannelSearch" class="form-input select-search-input" placeholder="Search channels..." oninput="filterChannelSelect('editGWinnerChannel', this.value)">
               <select id="editGWinnerChannel" class="form-select">
                 <option value="">Same as Giveaway Channel (Default)</option>
               </select>
@@ -436,13 +649,13 @@
           <div class="form-section-card">
             <div class="form-section-header">
               <span class="form-section-number">3</span>
-              <span>💎 Spot Tiers & Limits Builder</span>
+              <span>Spot Tiers & Limits</span>
             </div>
             
             <div id="editSpotTiersList" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;"></div>
             
             <div style="margin-bottom: 10px;">
-              <button type="button" class="btn btn-outline btn-sm" onclick="addEditSpotTier('Guaranteed', 3)">+ Add Custom Spot Tier</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditSpotTier('Guaranteed', 3)">+ Add Spot Tier</button>
             </div>
 
             <div class="form-row">
@@ -461,7 +674,7 @@
           <div class="form-section-card">
             <div class="form-section-header">
               <span class="form-section-number">4</span>
-              <span>⏳ Duration & Time Unit</span>
+              <span>Duration & Schedule</span>
             </div>
 
             <div class="form-row">
@@ -484,22 +697,22 @@
           <div class="form-section-card">
             <div class="form-section-header">
               <span class="form-section-number">5</span>
-              <span>📋 Dynamic Tasks, Roles & Requirements</span>
+              <span>Tasks, Roles & Requirements</span>
             </div>
             
-            <div class="form-group" style="margin-bottom: 14px; padding: 14px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 8px;">
+            <div class="form-group" style="margin-bottom: 14px; padding: 12px; background: rgba(255,255,255,0.015); border: 1px solid var(--border-subtle); border-radius: var(--radius-xs);">
               <label class="form-label" style="font-weight: 600; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <span>🏷️ Discord Required Roles (Entry Requirement)</span>
-                <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-muted);">(OR Logic: Member needs ANY 1 role to enter)</span>
+                <span>Required Discord Roles</span>
+                <span style="font-size: 0.72rem; font-weight: normal; color: var(--text-muted);">(Member needs ANY 1 role to enter)</span>
               </label>
               <div style="display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
                 <div style="flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 4px;">
-                  <input type="text" id="editGReqRoleSearch" class="form-input select-search-input" placeholder="🔍 Search server roles..." oninput="filterRoleSelect('editGReqRoleSelect', this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();addEditSelectedRequiredRole();}">
+                  <input type="text" id="editGReqRoleSearch" class="form-input select-search-input" placeholder="Search server roles..." oninput="filterRoleSelect('editGReqRoleSelect', this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();addEditSelectedRequiredRole();}">
                   <div style="display: flex; gap: 6px;">
                     <select id="editGReqRoleSelect" class="form-select" style="flex: 1;">
                       <option value="">Select Discord Server Role...</option>
                     </select>
-                    <button type="button" class="btn btn-primary btn-sm" onclick="addEditSelectedRequiredRole()" style="white-space: nowrap;">+ Add Role</button>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="addEditSelectedRequiredRole()" style="white-space: nowrap;">+ Add</button>
                   </div>
                 </div>
                 <div style="flex: 1; min-width: 220px; display: flex; gap: 6px; align-items: flex-end;">
@@ -508,20 +721,19 @@
                 </div>
               </div>
               <div id="editGReqRolesList" class="role-badges-container" style="margin-top: 8px;">
-                <span style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">No required roles selected (Open to everyone)</span>
+                <span style="font-size: 0.75rem; color: var(--text-muted); font-style: italic;">No required roles selected (Open to everyone)</span>
               </div>
-              <p class="form-hint" style="margin-top: 6px; font-size: 0.75rem;">If no roles are added, all server members can participate in this giveaway.</p>
             </div>
 
-            <!-- Edit Role-Based Extra Entries / Multipliers Builder -->
-            <div class="form-group" style="margin-bottom: 14px; padding: 14px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 8px;">
+            <!-- Role Multipliers -->
+            <div class="form-group" style="margin-bottom: 14px; padding: 12px; background: rgba(255,255,255,0.015); border: 1px solid var(--border-subtle); border-radius: var(--radius-xs);">
               <label class="form-label" style="font-weight: 600; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <span>🎟️ Role-Based Extra Entries / Multipliers (Optional)</span>
-                <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-muted);">(Give extra ticket entries to specific roles, e.g., 2x, 3x, 5x)</span>
+                <span>Role Entry Multipliers</span>
+                <span style="font-size: 0.72rem; font-weight: normal; color: var(--text-muted);">(Extra ticket multipliers)</span>
               </label>
               <div style="display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
                 <div style="flex: 2; min-width: 200px; display: flex; flex-direction: column; gap: 4px;">
-                  <input type="text" id="editGRoleMultSearch" class="form-input select-search-input" placeholder="🔍 Search server roles..." oninput="filterRoleSelect('editGRoleMultSelect', this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();addEditRoleMultiplier();}">
+                  <input type="text" id="editGRoleMultSearch" class="form-input select-search-input" placeholder="Search server roles..." oninput="filterRoleSelect('editGRoleMultSelect', this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();addEditRoleMultiplier();}">
                   <select id="editGRoleMultSelect" class="form-select">
                     <option value="">Select Discord Server Role...</option>
                   </select>
@@ -529,40 +741,38 @@
                 <div style="flex: 1; min-width: 140px; display: flex; align-items: flex-end;">
                   <input type="text" id="editGRoleMultManual" class="form-input" placeholder="Or Role ID / Name...">
                 </div>
-                <div style="width: 130px; display: flex; align-items: center; gap: 4px; align-self: flex-end;">
-                  <input type="number" id="editGRoleMultCount" class="form-input" min="1" max="100" value="2" placeholder="Entries" title="Number of entries / multiplier (e.g. 2 for 2x)">
-                  <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: 600;">🎟️</span>
+                <div style="width: 110px; display: flex; align-items: center; gap: 4px; align-self: flex-end;">
+                  <input type="number" id="editGRoleMultCount" class="form-input" min="1" max="100" value="2" placeholder="Multiplier">
                 </div>
                 <div style="display: flex; align-items: flex-end;">
-                  <button type="button" class="btn btn-primary btn-sm" onclick="addEditRoleMultiplier()" style="white-space: nowrap;">+ Add Multiplier</button>
+                  <button type="button" class="btn btn-primary btn-sm" onclick="addEditRoleMultiplier()" style="white-space: nowrap;">+ Add</button>
                 </div>
               </div>
               <div id="editGRoleMultsList" class="role-badges-container" style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px;">
-                <span style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">No role multipliers configured (Standard 1x entry for everyone)</span>
+                <span style="font-size: 0.75rem; color: var(--text-muted); font-style: italic;">No role multipliers configured (1x standard for everyone)</span>
               </div>
-              <p class="form-hint" style="margin-top: 6px; font-size: 0.75rem;">Members with these roles receive extra ticket entries in the giveaway draw (e.g. 5x entries = 5 tickets). If a member has multiple configured roles, their highest entry multiplier applies.</p>
             </div>
 
-            <div id="editDynamicTasksList" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px;"></div>
+            <div id="editDynamicTasksList" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;"></div>
             
-            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">
-              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('twitter_follow')">🐦 + Twitter Follow</button>
-              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('twitter_like')">❤️ + Twitter Like</button>
-              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('twitter_retweet')">🔄 + Twitter Retweet</button>
-              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('twitter_comment')">💬 + Twitter Comment</button>
-              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('discord_join')">💬 + Join Discord Server</button>
-              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('tiktok_follow')">🎵 + TikTok Follow</button>
-              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('youtube_follow')">▶️ + YouTube Subscribe</button>
-              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('role_require')">🏅 + Discord Role</button>
-              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('manual_task')">📝 + Custom Task</button>
+            <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px;">
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('twitter_follow')">+ Twitter Follow</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('twitter_like')">+ Twitter Like</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('twitter_retweet')">+ Twitter Retweet</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('twitter_comment')">+ Twitter Comment</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('discord_join')">+ Join Discord</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('tiktok_follow')">+ TikTok Follow</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('youtube_follow')">+ YouTube Subscribe</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('role_require')">+ Discord Role</button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="addEditDynamicTask('manual_task')">+ Custom Task</button>
             </div>
 
-            <div style="display: flex; gap: 20px; border-top: 1px dashed var(--border-color); padding-top: 10px; flex-wrap: wrap;">
-              <label style="display: flex; align-items: center; gap: 8px; font-size: 0.88rem; cursor: pointer; color: var(--text-main);">
-                <input type="checkbox" id="editReqEvm" style="accent-color: var(--primary);"> Require EVM Wallet (0x...)
+            <div style="display: flex; gap: 20px; border-top: 1px dashed var(--border-subtle); padding-top: 10px; flex-wrap: wrap;">
+              <label style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem; cursor: pointer; color: var(--text-main);">
+                <input type="checkbox" id="editReqEvm" style="accent-color: var(--accent-violet);"> Require EVM Wallet (0x...)
               </label>
-              <label style="display: flex; align-items: center; gap: 8px; font-size: 0.88rem; cursor: pointer; color: var(--text-main);">
-                <input type="checkbox" id="editReqSolana" style="accent-color: var(--purple);"> Require Solana Wallet
+              <label style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem; cursor: pointer; color: var(--text-main);">
+                <input type="checkbox" id="editReqSolana" style="accent-color: var(--accent-violet);"> Require Solana Wallet
               </label>
             </div>
           </div>
@@ -571,27 +781,27 @@
           <div class="form-section-card">
             <div class="form-section-header">
               <span class="form-section-number">6</span>
-              <span>🔗 Official Project Links (Optional)</span>
+              <span>Official Project Links (Optional)</span>
             </div>
             
             <div class="form-row">
               <div class="form-group">
-                <label class="form-label">🐦 Twitter / X Link</label>
+                <label class="form-label">Twitter / X Link</label>
                 <input type="url" id="editGTwitterLink" class="form-input" placeholder="https://x.com/yourproject">
               </div>
               <div class="form-group">
-                <label class="form-label">💬 Discord Server Link</label>
+                <label class="form-label">Discord Server Link</label>
                 <input type="url" id="editGDiscordLink" class="form-input" placeholder="https://discord.gg/yourserver">
               </div>
             </div>
 
             <div class="form-row">
               <div class="form-group">
-                <label class="form-label">✈️ Telegram Channel Link</label>
+                <label class="form-label">Telegram Link</label>
                 <input type="url" id="editGTelegramLink" class="form-input" placeholder="https://t.me/yourchannel">
               </div>
               <div class="form-group">
-                <label class="form-label">🌐 Official Website Link</label>
+                <label class="form-label">Official Website</label>
                 <input type="url" id="editGWebsiteLink" class="form-input" placeholder="https://yourwebsite.com">
               </div>
             </div>
@@ -600,79 +810,88 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline" onclick="closeModal('editModal')">Cancel</button>
-        <button id="editSaveBtn" class="btn btn-primary" onclick="submitEditGiveaway()">💾 Save Changes</button>
+        <button id="editSaveBtn" class="btn btn-primary" onclick="submitEditGiveaway()">Save Changes</button>
       </div>
     </div>
   </div>
 
-  <!-- Giveaway Admin Detail / Winner Verification Modal -->
+  <!-- Giveaway Detail / Participant Verification Modal -->
   <div id="detailModal" class="modal-overlay">
-    <div class="modal-content">
+    <div class="modal-content" style="max-width: 820px;">
       <div class="modal-header">
-        <h3 class="modal-title" id="detailTitle">Giveaway Details</h3>
-        <button class="modal-close" onclick="closeModal('detailModal')">&times;</button>
+        <div class="modal-title-wrap">
+          <div class="modal-title-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+          </div>
+          <h3 class="modal-title" id="detailTitle">Raffle Details</h3>
+        </div>
+        <button class="modal-close" onclick="closeModal('detailModal')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
       </div>
       <div class="modal-body">
         <div id="detailContent"></div>
 
-        <!-- Public Participants List (visible to everyone) -->
-        <div id="publicParticipantsBox" style="border-top: 1px solid var(--border-color); padding-top: 1rem; margin-top: 1rem;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
-            <h4 style="color: var(--text-main); margin: 0; display: flex; align-items: center; gap: 6px;">
-              <span>👥 Registered Participants</span>
-              <span id="publicParticipantCountBadge" class="badge" style="background: rgba(99,102,241,0.2); color: #818cf8; font-size: 0.8rem; padding: 2px 8px; border-radius: 9999px;">0</span>
-            </h4>
-            <input type="text" id="publicParticipantSearch" class="form-input" placeholder="🔍 Search user, ID, or wallet..." style="max-width: 280px; padding: 6px 12px; font-size: 0.82rem;" oninput="filterPublicParticipants(this.value)">
+        <!-- Public Participants Feed (With Discord PFPs) -->
+        <div id="publicParticipantsBox" class="participants-section">
+          <div class="participants-header">
+            <div class="participants-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+              <span>Participants & Entries</span>
+              <span id="publicParticipantCountBadge" class="participants-count-pill">0</span>
+            </div>
+            <input type="text" id="publicParticipantSearch" class="participants-search-input" placeholder="Filter participants by user, ID, or wallet..." oninput="filterPublicParticipants(this.value)">
           </div>
+          
           <div class="table-container">
             <table class="data-table">
               <thead>
                 <tr>
+                  <th style="width: 40px;">#</th>
                   <th>Participant</th>
                   <th>Discord ID</th>
-                  <th>Entries 🎟️</th>
+                  <th>Tickets</th>
                   <th id="publicWalletHeader">Wallet Address</th>
-                  <th>Status / Spot Won</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody id="publicParticipantsBody">
-                <!-- Public participants loaded dynamically -->
+                <!-- Loaded dynamically -->
               </tbody>
             </table>
           </div>
         </div>
 
         <!-- Admin Control Box -->
-        <div id="adminControlBox" style="display: none; border-top: 1px solid var(--border-color); padding-top: 1rem;">
-          <h4 style="color: var(--primary); margin-bottom: 10px;">👑 Admin Winner Drawing & Controls</h4>
+        <div id="adminControlBox" style="display: none; border-top: 1px solid var(--border-subtle); padding-top: 1.25rem; margin-top: 1.25rem;">
+          <h4 style="font-family: var(--font-mono); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.16em; color: var(--accent-violet); margin-bottom: 10px;">Admin Actions & Winner Drawing</h4>
           
-          <div style="display: flex; gap: 10px; margin-bottom: 1rem; flex-wrap: wrap;">
-            <button id="editGiveawayAdminBtn" class="btn btn-primary btn-sm">✏️ Edit Giveaway</button>
-            <button id="setCustomWinnersAdminBtn" class="btn btn-purple btn-sm" onclick="openCustomWinnersModal()">✨ Set Fabricated / Custom Winners</button>
-            <button id="drawWinnersBtn" class="btn btn-outline btn-sm">🎲 Auto Draw Winners</button>
-            <button id="redrawWinnersBtn" class="btn btn-outline btn-sm">🔄 Re-Raffle Disqualified Spots</button>
-            <button id="announceWinnersBtn" class="btn btn-primary btn-sm">📢 Send Winners Announcement</button>
-            <button id="markDoneAdminBtn" class="btn btn-success btn-sm">✅ Done (Lock Sheet)</button>
-            <button id="exportAllEntriesBtn" class="btn btn-primary btn-sm">📥 Download All Entries (CSV)</button>
-            <button id="exportWinnersBtn" class="btn btn-outline btn-sm">🏆 Export Winners Only (CSV)</button>
-            <button id="deleteGiveawayAdminBtn" class="btn btn-danger btn-sm">🗑️ Delete Giveaway</button>
+          <div style="display: flex; gap: 8px; margin-bottom: 1rem; flex-wrap: wrap;">
+            <button id="editGiveawayAdminBtn" class="btn btn-primary btn-sm">Edit</button>
+            <button id="setCustomWinnersAdminBtn" class="btn btn-violet btn-sm" onclick="openCustomWinnersModal()">Set Winners</button>
+            <button id="drawWinnersBtn" class="btn btn-outline btn-sm">Auto Draw</button>
+            <button id="redrawWinnersBtn" class="btn btn-outline btn-sm">Re-Raffle</button>
+            <button id="announceWinnersBtn" class="btn btn-primary btn-sm">Announce to Discord</button>
+            <button id="markDoneAdminBtn" class="btn btn-success btn-sm">Lock Sheet</button>
+            <button id="exportAllEntriesBtn" class="btn btn-outline btn-sm">Export All (CSV)</button>
+            <button id="exportWinnersBtn" class="btn btn-outline btn-sm">Export Winners (CSV)</button>
+            <button id="deleteGiveawayAdminBtn" class="btn btn-danger btn-sm">Delete</button>
           </div>
 
-          <div id="lockStatusNotice" style="display: none; margin-bottom: 12px; font-size: 0.84rem; padding: 8px 12px; border-radius: 6px; font-weight: 600;"></div>
+          <div id="lockStatusNotice" style="display: none; margin-bottom: 12px; font-size: 0.82rem; padding: 8px 12px; border-radius: var(--radius-xs); font-weight: 600;"></div>
 
-          <h5 style="font-size: 0.9rem; margin-bottom: 8px;">Participants & Entries</h5>
           <div class="table-container">
             <table class="data-table">
               <thead>
                 <tr>
                   <th>Discord User</th>
                   <th>Spot Entry</th>
-                  <th>Entries 🎟️</th>
+                  <th>Tickets</th>
                   <th>Main EVM</th>
                   <th>FCFS EVM</th>
-                  <th>Solana Wallet</th>
+                  <th>Solana</th>
                   <th>Socials</th>
-                  <th>Task Verification</th>
+                  <th>Verification</th>
                 </tr>
               </thead>
               <tbody id="participantsTableBody">
@@ -692,59 +911,73 @@
   <div id="customWinnersModal" class="modal-overlay">
     <div class="modal-content" style="max-width: 650px;">
       <div class="modal-header">
-        <h3 class="modal-title">🏆 Set Fabricated / Custom Winners</h3>
-        <button class="modal-close" onclick="closeModal('customWinnersModal')">&times;</button>
+        <div class="modal-title-wrap">
+          <div class="modal-title-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="7"></circle><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"></polyline></svg>
+          </div>
+          <h3 class="modal-title">Configure Winners</h3>
+        </div>
+        <button class="modal-close" onclick="closeModal('customWinnersModal')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
       </div>
       <div class="modal-body">
-        <p class="form-hint" style="margin-bottom: 12px;">Type a member's name/username below to search server members and select winners for GTD (Guaranteed) and FCFS tiers.</p>
+        <p class="form-hint" style="margin-bottom: 12px;">Type a member's name or ID below to search server members and assign winners for Guaranteed (GTD) and FCFS tiers.</p>
         
         <!-- Live Member Search Bar -->
         <div class="form-group" style="position: relative; margin-bottom: 16px;">
-          <label class="form-label">🔍 Search Server Members by Name or ID</label>
+          <label class="form-label">Search Server Members</label>
           <input type="text" id="memberSearchInput" class="form-input" placeholder="Type username or display name (e.g. isika, bytes, ayush)..." oninput="onMemberSearchInput(this.value)">
           
-          <div id="memberSearchResults" class="member-search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; max-height: 220px; overflow-y: auto; z-index: 1000; box-shadow: 0 8px 24px rgba(0,0,0,0.4);">
-            <!-- Live member search items populated dynamically -->
+          <div id="memberSearchResults" class="member-search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: #0c0d12; border: 1px solid var(--border-medium); border-radius: var(--radius-sm); max-height: 220px; overflow-y: auto; z-index: 1000; box-shadow: 0 8px 24px rgba(0,0,0,0.6);">
+            <!-- Populated dynamically -->
           </div>
         </div>
 
-        <!-- Section 1: Guaranteed Winners (GTD) -->
+        <!-- Guaranteed Winners (GTD) -->
         <div class="form-section-card" style="margin-bottom: 14px;">
           <div class="form-section-header" style="justify-content: space-between;">
-            <span style="color: var(--primary); font-weight: 700;">🌟 Guaranteed (GTD) Winners</span>
-            <span id="gtdSelectedCount" class="g-badge g-badge-guaranteed">0 Selected</span>
+            <span style="color: var(--accent-gold); font-weight: 700;">Guaranteed (GTD) Winners</span>
+            <span id="gtdSelectedCount" class="tier-badge tier-badge-gtd">0 Selected</span>
           </div>
-          <div id="gtdWinnersTags" style="display: flex; flex-wrap: wrap; gap: 6px; min-height: 40px; border: 1px dashed var(--border-color); border-radius: 8px; padding: 8px; background: rgba(0,0,0,0.1);">
-            <span class="placeholder-text" style="color: var(--text-muted); font-size: 0.82rem;">Selected GTD winners will appear here...</span>
+          <div id="gtdWinnersTags" style="display: flex; flex-wrap: wrap; gap: 6px; min-height: 40px; border: 1px dashed var(--border-subtle); border-radius: var(--radius-xs); padding: 8px; background: rgba(0,0,0,0.15);">
+            <span class="placeholder-text" style="color: var(--text-muted); font-size: 0.78rem;">Selected GTD winners will appear here...</span>
           </div>
-          <textarea id="gtdWinnersManual" class="form-input" rows="2" placeholder="Or paste GTD winner mentions/IDs (e.g. <@123>, @username)..." style="margin-top: 8px; font-size: 0.82rem;"></textarea>
+          <textarea id="gtdWinnersManual" class="form-input" rows="2" placeholder="Or paste GTD winner mentions/IDs (e.g. <@123>, @username)..." style="margin-top: 8px; font-size: 0.8rem;"></textarea>
         </div>
 
-        <!-- Section 2: FCFS Winners -->
+        <!-- FCFS Winners -->
         <div class="form-section-card">
           <div class="form-section-header" style="justify-content: space-between;">
-            <span style="color: var(--purple); font-weight: 700;">⚡ FCFS Winners</span>
-            <span id="fcfsSelectedCount" class="g-badge g-badge-fcfs">0 Selected</span>
+            <span style="color: var(--accent-violet); font-weight: 700;">FCFS Winners</span>
+            <span id="fcfsSelectedCount" class="tier-badge tier-badge-fcfs">0 Selected</span>
           </div>
-          <div id="fcfsWinnersTags" style="display: flex; flex-wrap: wrap; gap: 6px; min-height: 40px; border: 1px dashed var(--border-color); border-radius: 8px; padding: 8px; background: rgba(0,0,0,0.1);">
-            <span class="placeholder-text" style="color: var(--text-muted); font-size: 0.82rem;">Selected FCFS winners will appear here...</span>
+          <div id="fcfsWinnersTags" style="display: flex; flex-wrap: wrap; gap: 6px; min-height: 40px; border: 1px dashed var(--border-subtle); border-radius: var(--radius-xs); padding: 8px; background: rgba(0,0,0,0.15);">
+            <span class="placeholder-text" style="color: var(--text-muted); font-size: 0.78rem;">Selected FCFS winners will appear here...</span>
           </div>
-          <textarea id="fcfsWinnersManual" class="form-input" rows="3" placeholder="Or paste FCFS winner mentions/IDs (e.g. <@123>, @username)..." style="margin-top: 8px; font-size: 0.82rem;"></textarea>
+          <textarea id="fcfsWinnersManual" class="form-input" rows="3" placeholder="Or paste FCFS winner mentions/IDs (e.g. <@123>, @username)..." style="margin-top: 8px; font-size: 0.8rem;"></textarea>
         </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline" onclick="closeModal('customWinnersModal')">Cancel</button>
-        <button class="btn btn-primary" onclick="submitCustomWinners()">🚀 Set & Publish Winners to Discord</button>
+        <button class="btn btn-primary" onclick="submitCustomWinners()">Save & Publish to Discord</button>
       </div>
     </div>
   </div>
 
   <!-- User Profile & Wallet Settings Modal -->
   <div id="profileModal" class="modal-overlay">
-    <div class="modal-content" style="max-width: 500px;">
+    <div class="modal-content" style="max-width: 480px;">
       <div class="modal-header">
-        <h3 class="modal-title">👤 Your Web3 Profile & Wallets</h3>
-        <button class="modal-close" onclick="closeModal('profileModal')">&times;</button>
+        <div class="modal-title-wrap">
+          <div class="modal-title-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+          </div>
+          <h3 class="modal-title">Web3 Profile & Wallets</h3>
+        </div>
+        <button class="modal-close" onclick="closeModal('profileModal')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
       </div>
       <div class="modal-body">
         <form id="profileForm">
@@ -757,17 +990,17 @@
             <input type="text" id="profTelegram" class="form-input" placeholder="@username">
           </div>
           <div class="form-group">
-            <label class="form-label">Main EVM Wallet Address (0x...) <span style="color: var(--danger);">*</span></label>
+            <label class="form-label">Main EVM Wallet Address (0x...) <span style="color: var(--accent-rose);">*</span></label>
             <input type="text" id="profEvm" class="form-input" placeholder="0x1234...5678" required>
           </div>
           <div class="form-group">
-            <label class="form-label">⚡ FCFS EVM Wallet (0x...) <span style="color: var(--danger);">*</span></label>
+            <label class="form-label">FCFS EVM Wallet (0x...) <span style="color: var(--accent-rose);">*</span></label>
             <input type="text" id="profBurnerEvm" class="form-input" placeholder="0xabcd...ef01" required>
-            <p class="form-hint" style="margin-top: 4px; font-size: 0.75rem;">Mandatory FCFS EVM wallet for minting / claims.</p>
+            <p class="form-hint" style="margin-top: 4px;">Mandatory FCFS wallet for fast minting and spot claims.</p>
           </div>
           <div class="form-group">
             <label class="form-label">Solana Wallet Address</label>
-            <input type="text" id="profSolana" class="form-input" placeholder="Solana Wallet Public Key">
+            <input type="text" id="profSolana" class="form-input" placeholder="Solana Public Key">
           </div>
         </form>
       </div>
@@ -780,38 +1013,44 @@
 
   <!-- Admin Password Sign-In Modal -->
   <div id="passLoginModal" class="modal-overlay">
-    <div class="modal-content" style="max-width: 420px;">
+    <div class="modal-content" style="max-width: 400px;">
       <div class="modal-header">
-        <h3 class="modal-title">🔐 Admin Password Sign-In</h3>
-        <button class="modal-close" onclick="closeModal('passLoginModal')">&times;</button>
+        <div class="modal-title-wrap">
+          <div class="modal-title-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+          </div>
+          <h3 class="modal-title">Admin Sign In</h3>
+        </div>
+        <button class="modal-close" onclick="closeModal('passLoginModal')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
       </div>
       <div class="modal-body">
         <form id="passLoginForm" onsubmit="submitPasswordLogin(event)">
           <div class="form-group">
-            <label class="form-label">Admin Username / User ID</label>
-            <input type="text" id="passUser" class="form-input" placeholder="Admin username" value="Admin" required>
+            <label class="form-label">Admin Username</label>
+            <input type="text" id="passUser" class="form-input" placeholder="Admin" value="Admin" required>
           </div>
           <div class="form-group" style="margin-top: 10px;">
-            <label class="form-label">Admin Password</label>
-            <input type="password" id="passWord" class="form-input" placeholder="Enter admin password" required>
+            <label class="form-label">Password</label>
+            <input type="password" id="passWord" class="form-input" placeholder="Enter password" required>
           </div>
-          <button type="submit" class="btn btn-purple" style="width: 100%; margin-top: 15px;">🚀 Sign In as Admin</button>
+          <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 15px;">Sign In as Admin</button>
         </form>
       </div>
     </div>
   </div>
 
-  <!-- Toast Notifications Container -->
+  <!-- Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
 
+  <!-- Footer -->
   <footer>
-    <p>Arcie Bot &copy; 2026. Built with high performance Web3 & Discord integration.</p>
+    <p>Arcie &copy; 2026. High-Performance Web3 Raffle Architecture & Discord Verification.</p>
   </footer>
 
-  <!-- API Backend Config: Set your NexCloud server URL here when hosting on Vercel -->
-  <!-- Leave empty when serving from the same server as the bot -->
+  <!-- Backend API Config: NexCloud bot server -->
   <script>
-    // NexCloud server bot backend URL for Vercel / Remote Hosting
     window.ARCIE_API_BASE = 'http://n5.nexcloud.in:2025';
   </script>
   <script src="/static/app.js"></script>
