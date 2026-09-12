@@ -53,6 +53,16 @@ giveaway_entries: Dict[str, list] = {}
 active_sessions: Dict[str, dict] = {}
 tickets_data: Dict[str, dict] = {"config": {"log_channel_id": None, "support_role_id": None, "category_id": None, "counter": 1}, "active_tickets": {}}
 
+def get_public_site_url() -> str:
+    """Returns the official public website URL (Vercel). Never exposes backend host or nexcloud."""
+    url = os.getenv("PUBLIC_SITE_URL") or os.getenv("VERCEL_URL") or os.getenv("APP_URL") or "https://arcie-giveaway-bot-lb4z.vercel.app"
+    url = str(url).strip().rstrip("/")
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+    if "nexcloud" in url:
+        url = "https://arcie-giveaway-bot-lb4z.vercel.app"
+    return url
+
 # -------- Role Multiplier Configuration (Weighted Raffle) -------- #
 # Maps Discord Role ID (string) -> weight multiplier (float).
 # Users with a matching role get higher chance of winning giveaways.
@@ -2617,8 +2627,7 @@ async def handle_component_interactions(interaction: discord.Interaction):
             if interaction.response.is_done():
                 return
             try:
-                port = os.getenv("PORT", "2025")
-                web_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
+                web_url = get_public_site_url()
                 if custom_id.startswith("join_giveaway_"):
                     g_id = custom_id.replace("join_giveaway_", "")
                     v = GiveawayView(g_id, web_url)
@@ -4300,9 +4309,8 @@ class GiveawayView(discord.ui.View):
         super().__init__(timeout=None)
         self.giveaway_id = giveaway_id
 
-        if not web_url:
-            port = os.getenv("PORT", "2025")
-            web_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
+        # Always redirect to the official Vercel website URL with giveaway ID
+        public_site = get_public_site_url()
 
         # Row 0: Join Giveaway + Apply Bonus Entries + Track Giveaway on Website
         join_btn = discord.ui.Button(
@@ -4323,15 +4331,13 @@ class GiveawayView(discord.ui.View):
         apply_btn.callback = self.apply_bonus_callback
         self.add_item(apply_btn)
 
-        web_clean = web_url.rstrip("/")
-        if web_clean.startswith(("http://", "https://")):
-            view_site_btn = discord.ui.Button(
-                label="🌐 Track Giveaway on Website",
-                style=discord.ButtonStyle.link,
-                url=f"{web_clean}/?g={giveaway_id}",
-                row=0
-            )
-            self.add_item(view_site_btn)
+        view_site_btn = discord.ui.Button(
+            label="🌐 Track Giveaway on Website",
+            style=discord.ButtonStyle.link,
+            url=f"{public_site}/?g={giveaway_id}",
+            row=0
+        )
+        self.add_item(view_site_btn)
 
         # Row 1: Task buttons — interactive (track clicks) + show link
         g_obj = giveaways.get(giveaway_id)
@@ -4851,8 +4857,7 @@ async def update_giveaway_discord_message(giveaway_id: str):
             print(f"[UPDATE EMBED FAIL] Could not find valid channel for giveaway '{giveaway_id}'")
             return
 
-        port = os.getenv("PORT", "2025")
-        domain = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
+        domain = get_public_site_url()
         embed, file_to_send = build_giveaway_embed(g)
         view = GiveawayView(giveaway_id, domain)
         mention_text = format_role_mention(g.get("mention_role")) if g.get("is_active") else None
@@ -7054,8 +7059,7 @@ async def set_socials_cmd(interaction: discord.Interaction, twitter: Optional[st
 
 @bot.tree.command(name="giveaways", description="List active giveaways and access the Web Dashboard.")
 async def giveaways_cmd(interaction: discord.Interaction):
-    port = os.getenv("PORT", "2025")
-    domain = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
+    domain = get_public_site_url()
     active_g = [g for g in giveaways.values() if g.get("is_active") and g.get("ends_at", 0) > time.time()]
 
     embed = discord.Embed(
@@ -7388,6 +7392,9 @@ def build_giveaway_embed(g_data: dict):
 
     if host_avatar and host_avatar.startswith(("http://", "https://")):
         embed.set_author(name=f"Hosted by {host_name}", icon_url=host_avatar)
+    elif host_avatar and host_avatar.startswith("/"):
+        site_url = get_public_site_url()
+        embed.set_author(name=f"Hosted by {host_name}", icon_url=f"{site_url}{host_avatar}")
     elif host_name:
         embed.set_author(name=f"Hosted by {host_name}")
     
@@ -7415,6 +7422,9 @@ def build_giveaway_embed(g_data: dict):
             if filename and os.path.exists(local_path) and os.path.isfile(local_path):
                 file_to_send = discord.File(local_path, filename=filename)
                 embed.set_image(url=f"attachment://{filename}")
+            elif banner_url.startswith("/"):
+                site_url = get_public_site_url()
+                embed.set_image(url=f"{site_url}{banner_url}")
             elif (banner_url.startswith("http://") or banner_url.startswith("https://")) and not ("localhost" in banner_url or "127.0.0.1" in banner_url):
                 embed.set_image(url=banner_url)
 
@@ -7733,8 +7743,7 @@ async def sync_and_post_giveaways():
     if _sync_giveaways_lock.locked():
         return
     async with _sync_giveaways_lock:
-        port = os.getenv("PORT", "2025")
-        web_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
+        web_url = get_public_site_url()
 
         # 1. Automatically purge any giveaways older than 40 days
         try:
@@ -8039,8 +8048,7 @@ async def on_ready():
         print(f"[RR RESTORE] Registered persistent views for {rr_restored} reaction role message(s).")
 
     # 3. Register persistent giveaway views across restarts (with message_id binding!)
-    port = os.getenv("PORT", "2025")
-    web_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
+    web_url = get_public_site_url()
     ga_restored = 0
     for g_id, g in giveaways.items():
         try:
@@ -8271,7 +8279,7 @@ async def start_health_server():
     async def auth_login_handler(request):
         client_id = os.getenv("DISCORD_CLIENT_ID")
         port = os.getenv("PORT", "2025")
-        redirect_uri = os.getenv("DISCORD_REDIRECT_URI", f"http://n5.nexcloud.in:{port}/api/auth/callback")
+        redirect_uri = os.getenv("DISCORD_REDIRECT_URI", f"http://localhost:{port}/api/auth/callback")
 
         if not client_id:
             # Fallback dev mode admin session
@@ -8296,7 +8304,7 @@ async def start_health_server():
         client_id = os.getenv("DISCORD_CLIENT_ID")
         client_secret = os.getenv("DISCORD_CLIENT_SECRET")
         port = os.getenv("PORT", "2025")
-        redirect_uri = os.getenv("DISCORD_REDIRECT_URI", f"http://n5.nexcloud.in:{port}/api/auth/callback")
+        redirect_uri = os.getenv("DISCORD_REDIRECT_URI", f"http://localhost:{port}/api/auth/callback")
 
         data = {
             "client_id": client_id,
@@ -8999,7 +9007,9 @@ async def start_health_server():
                     f.write(chunk)
 
             port = os.getenv("PORT", "2025")
-            app_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}").rstrip("/")
+            app_url = (os.getenv("PUBLIC_SITE_URL") or os.getenv("APP_URL") or f"http://localhost:{port}").rstrip("/")
+            if "nexcloud" in app_url:
+                app_url = "https://arcie-giveaway-bot-lb4z.vercel.app"
             image_url = f"{app_url}/static/uploads/{safe_name}"
             return web.json_response({"success": True, "url": image_url})
         except Exception as e:
@@ -9630,8 +9640,8 @@ async def start_health_server():
                         app_url = f"http://{public_ip}:{port}"
         except Exception:
             pass
-    if not app_url:
-        app_url = f"http://n5.nexcloud.in:{port}"
+    if not app_url or "nexcloud" in app_url:
+        app_url = get_public_site_url()
 
     print(f"\n" + "="*60)
     print(f"🌐 WEB DASHBOARD IS LIVE AT: {app_url}")
