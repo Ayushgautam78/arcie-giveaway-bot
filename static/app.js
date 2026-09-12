@@ -152,7 +152,7 @@ function resetCreateForm() {
   if (spotContainer) spotContainer.innerHTML = '';
   const taskContainer = document.getElementById('dynamicTasksContainer');
   if (taskContainer) taskContainer.innerHTML = '';
-  const createManualFields = document.getElementById('gHostManualFields');
+  const createManualFields = document.getElementById('gHostManualWrap');
   if (createManualFields) createManualFields.style.display = 'none';
 }
 
@@ -1793,7 +1793,7 @@ function openEditModal(giveawayId) {
   filterRoleSelect('editGReqRoleSelect', '');
   filterRoleSelect('editGRoleMultSelect', '');
 
-  const editManualFields = document.getElementById('editGHostManualFields');
+  const editManualFields = document.getElementById('editGHostManualWrap');
   if (editManualFields) editManualFields.style.display = 'none';
 
   document.getElementById('editGId').value = g.id;
