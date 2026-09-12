@@ -8,7 +8,13 @@ const ADMIN_PASSWORD = 'innercirclefcfs78@1';
 function apiUrl(path) {
   if (!path) return '';
   if (path.startsWith('http://') || path.startsWith('https://')) return path;
-  const base = (typeof window !== 'undefined' && window.ARCIE_API_BASE) ? window.ARCIE_API_BASE.replace(/\/+$/, '') : '';
+  let base = (typeof window !== 'undefined' && window.ARCIE_API_BASE) ? window.ARCIE_API_BASE.replace(/\/+$/, '') : '';
+  // If the web app is served over HTTPS (like Vercel) and the API base is insecure HTTP (and not localhost),
+  // browser security policies strictly block mixed content. Skip the blocked HTTP base so the app can seamlessly
+  // sync via the live secure Firebase RTDB backend without hanging or failing.
+  if (typeof window !== 'undefined' && window.location && window.location.protocol === 'https:' && base.startsWith('http://') && !base.includes('localhost') && !base.includes('127.0.0.1')) {
+    base = '';
+  }
   const cleanPath = path.startsWith('/') ? path : '/' + path;
   return base ? `${base}${cleanPath}` : cleanPath;
 }
@@ -17,6 +23,149 @@ let currentUser = null;
 let currentGiveaways = [];
 let currentFilter = 'active';
 let activeDetailGiveaway = null;
+
+// ==========================================================================
+// CORE SVG ICONS & SHARED UTILITY HELPERS
+// ==========================================================================
+function svgTwitter() {
+  return '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>';
+}
+function svgDiscord() {
+  return '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.894.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>';
+}
+function svgTelegram() {
+  return '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 0 0-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .37z"/></svg>';
+}
+function svgGlobe() {
+  return '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
+}
+function svgClock() {
+  return '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
+}
+function svgShield() {
+  return '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>';
+}
+function svgUsers() {
+  return '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
+}
+function svgTrophy() {
+  return '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>';
+}
+function svgShare() {
+  return '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>';
+}
+function svgTrash() {
+  return '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+}
+function svgCheck() {
+  return '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
+}
+function svgCopy() {
+  return '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+}
+
+function getDiscordAvatar(userId, avatarHash, username) {
+  if (avatarHash && (avatarHash.startsWith('http://') || avatarHash.startsWith('https://'))) {
+    return avatarHash;
+  }
+  if (userId && avatarHash) {
+    const isAnimated = avatarHash.startsWith('a_');
+    const ext = isAnimated ? 'gif' : 'png';
+    return `https://cdn.discordapp.com/avatars/${userId}/${avatarHash}.${ext}?size=64`;
+  }
+  if (userId) {
+    try {
+      const idx = (BigInt(userId) >> 22n) % 6n;
+      return `https://cdn.discordapp.com/embed/avatars/${idx}.png`;
+    } catch (e) {
+      return 'https://cdn.discordapp.com/embed/avatars/0.png';
+    }
+  }
+  return 'https://cdn.discordapp.com/embed/avatars/0.png';
+}
+
+function truncateAddress(addr, startChars = 6, endChars = 4) {
+  if (!addr) return '';
+  const str = String(addr);
+  if (str.length <= (startChars + endChars)) return str;
+  return `${str.slice(0, startChars)}...${str.slice(-endChars)}`;
+}
+
+function copyToClipboard(text, el) {
+  if (!text) return;
+  if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      showToast('Copied to clipboard!', 'success');
+      if (el) {
+        el.classList.add('copied');
+        setTimeout(() => el.classList.remove('copied'), 1500);
+      }
+    }).catch(() => {
+      fallbackCopyText(text);
+    });
+  } else {
+    fallbackCopyText(text);
+  }
+}
+
+function copyText(text, label = 'Copied') {
+  if (!text) return;
+  if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      showToast(`${label} copied!`, 'success');
+    }).catch(() => {
+      fallbackCopyText(text);
+    });
+  } else {
+    fallbackCopyText(text);
+  }
+}
+
+function fallbackCopyText(text) {
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+    showToast('Copied to clipboard!', 'success');
+  } catch (e) {
+    showToast('Failed to copy', 'error');
+  }
+}
+
+function openGiveawayModal(id) {
+  return openDetailModal(id);
+}
+
+function fetchGiveaways() {
+  return loadGiveaways();
+}
+
+function resetCreateForm() {
+  const form = document.getElementById('createGiveawayForm');
+  if (form) form.reset();
+  const spotContainer = document.getElementById('spotTiersContainer');
+  if (spotContainer) spotContainer.innerHTML = '';
+  const taskContainer = document.getElementById('dynamicTasksContainer');
+  if (taskContainer) taskContainer.innerHTML = '';
+}
+
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str).replace(/[&<>"']/g, function (m) {
+    return {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#039;'
+    }[m];
+  });
+}
 
 // Helper: Firebase REST read with in-memory ETag caching (0 payload bytes on 304)
 const _fbEtagCache = {};
@@ -810,7 +959,7 @@ async function loadGiveaways() {
     }
 
     if (data && typeof data === 'object') {
-      currentGiveaways = Object.values(data);
+      currentGiveaways = Object.entries(data).map(([k, v]) => ({ id: k, ...v }));
     } else {
       currentGiveaways = [];
     }
