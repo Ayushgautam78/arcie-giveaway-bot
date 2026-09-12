@@ -1424,6 +1424,17 @@ async function fetchAvatarByUserId(modalType = 'create') {
     showToast('Attached Zeno profile photo!', 'success');
     return;
   }
+  if (manName.toLowerCase().includes('ayush') || manName.toLowerCase().includes('ayx5hhh') || manId === '1066987338204459049') {
+    const manAvatarInp = document.getElementById(`${prefix}HostAvatarManualInput`);
+    if (manAvatarInp) manAvatarInp.value = '/static/ayush.png';
+    const manNameInp = document.getElementById(`${prefix}HostNameManualInput`);
+    if (manNameInp && !manNameInp.value) manNameInp.value = 'Ayush';
+    const manIdInp = document.getElementById(`${prefix}HostIdManualInput`);
+    if (manIdInp && !manIdInp.value) manIdInp.value = '1066987338204459049';
+    updateManualHost(modalType);
+    showToast('Attached Ayush profile photo!', 'success');
+    return;
+  }
 
   // 1. Check if user is in Firebase user_profiles
   try {
@@ -1495,6 +1506,7 @@ function searchHostMembers(query, modalType = 'create') {
             if (uName.includes(qLower) || dName.includes(qLower) || uid.includes(qLower)) {
               let avatarUrl = getDiscordAvatar(uid, p.avatar, p.username);
               if (uName.includes('zeno') || dName.includes('zeno')) avatarUrl = '/static/zeno.png';
+              if (uName.includes('ayx5hhh') || dName.includes('ayush') || uid === '1066987338204459049') avatarUrl = '/static/ayush.png';
               members.push({
                 id: uid,
                 username: p.username || uid,
@@ -1547,7 +1559,14 @@ function searchHostMembers(query, modalType = 'create') {
 function selectHostMember(member, modalType = 'create') {
   if (!member) return;
   const prefix = modalType === 'edit' ? 'editG' : 'g';
-  const avatarUrl = member.avatar || (member.username && member.username.toLowerCase().includes('zeno') ? '/static/zeno.png' : getDiscordAvatar(member.id, null, member.username || member.display_name));
+  const uName = (member.username || '').toLowerCase();
+  const dName = (member.display_name || '').toLowerCase();
+  let avatarUrl = member.avatar;
+  if (!avatarUrl) {
+    if (uName.includes('zeno') || dName.includes('zeno')) avatarUrl = '/static/zeno.png';
+    else if (uName.includes('ayx5hhh') || dName.includes('ayush') || member.id === '1066987338204459049') avatarUrl = '/static/ayush.png';
+    else avatarUrl = getDiscordAvatar(member.id, null, member.username || member.display_name);
+  }
   const hostName = member.display_name || member.username || 'Admin';
   const hostId = member.id || '';
 
