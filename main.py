@@ -4304,7 +4304,7 @@ class GiveawayView(discord.ui.View):
             port = os.getenv("PORT", "2025")
             web_url = os.getenv("APP_URL", f"http://n5.nexcloud.in:{port}")
 
-        # Row 0: Join Giveaway + Apply Bonus Entries + View on Website
+        # Row 0: Join Giveaway + Apply Bonus Entries + Track Giveaway on Website
         join_btn = discord.ui.Button(
             label="Join Giveaway",
             style=discord.ButtonStyle.primary,
