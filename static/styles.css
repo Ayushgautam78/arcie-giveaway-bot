@@ -203,11 +203,11 @@ body::after {
   font-family: var(--font-mono);
   font-size: 1.05rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0.03em;
   color: var(--text-pure);
 }
-.brand-alpha-highlight {
+.brand-alpha-highlight,
+.brand-tracker-highlight {
   color: var(--accent-primary);
   font-weight: 800;
   text-shadow: 0 0 10px rgba(168, 255, 26, 0.4);
