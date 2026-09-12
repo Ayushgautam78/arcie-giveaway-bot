@@ -913,6 +913,14 @@ body::after {
   opacity: 1;
 }
 
+.g-card-banner.banner-is-logo,
+.tessera-banner-img.banner-is-logo {
+  object-fit: contain !important;
+  padding: 16px !important;
+  background: radial-gradient(circle at center, rgba(168, 255, 26, 0.12) 0%, rgba(5, 7, 5, 0.96) 75%) !important;
+  opacity: 0.95 !important;
+}
+
 .g-card-banner-overlay {
   position: absolute;
   inset: 0;

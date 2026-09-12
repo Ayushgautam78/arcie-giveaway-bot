@@ -4877,6 +4877,10 @@ async def update_giveaway_discord_message(giveaway_id: str):
                 if file_to_send:
                     kwargs["attachments"] = [file_to_send]
                 await msg.edit(**kwargs)
+                if msg.attachments and file_to_send and getattr(file_to_send, 'filename', '') == 'banner.png':
+                    g["banner_url"] = msg.attachments[0].url
+                    save_giveaways()
+                    await firebase_put(f"giveaways/{giveaway_id}/banner_url", g["banner_url"])
                 print(f"[UPDATE EMBED SUCCESS] In-place edited Discord embed for '{g.get('title')}' in #{channel.name} (preserved sent timestamp)")
                 return
             except Exception as edit_err:
@@ -4891,6 +4895,8 @@ async def update_giveaway_discord_message(giveaway_id: str):
 
             g["message_id"] = str(new_msg.id)
             g["channel_id"] = str(channel.id)
+            if new_msg.attachments and file_to_send and getattr(file_to_send, 'filename', '') == 'banner.png':
+                g["banner_url"] = new_msg.attachments[0].url
             giveaways[giveaway_id] = g
             save_giveaways()
             await firebase_put(f"giveaways/{giveaway_id}", g)
@@ -7427,6 +7433,16 @@ def build_giveaway_embed(g_data: dict):
                 embed.set_image(url=f"{site_url}{banner_url}")
             elif (banner_url.startswith("http://") or banner_url.startswith("https://")) and not ("localhost" in banner_url or "127.0.0.1" in banner_url):
                 embed.set_image(url=banner_url)
+    else:
+        # User has NOT attached any image: use our official logo!
+        site_url = get_public_site_url()
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        logo_path = os.path.join(base_dir, "static", "logo.png")
+        if os.path.exists(logo_path):
+            file_to_send = discord.File(logo_path, filename="logo.png")
+            embed.set_thumbnail(url="attachment://logo.png")
+        else:
+            embed.set_thumbnail(url=f"{site_url}/static/logo.png")
 
     if host_id and host_id.isdigit():
         embed.add_field(name="🎙️ Hosted By", value=f"<@{host_id}>", inline=True)

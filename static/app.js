@@ -219,8 +219,8 @@ async function firebasePut(path, data) {
     const sanitizeLargeBlobs = (obj) => {
       if (!obj || typeof obj !== 'object') return;
       for (const k in obj) {
-        if (k === 'banner_url' && typeof obj[k] === 'string' && obj[k].startsWith('data:image') && obj[k].length > 500000) {
-          // Only strip if >500KB (extremely large base64) — smaller ones are kept for bot processing
+        if (k === 'banner_url' && typeof obj[k] === 'string' && obj[k].startsWith('data:image') && obj[k].length > 1500000) {
+          // Only strip if >1.5MB (excessively large base64) — optimized images are preserved for display
           obj[k] = '';
         } else if (typeof obj[k] === 'object') {
           sanitizeLargeBlobs(obj[k]);
@@ -1085,11 +1085,16 @@ function renderGiveaways(highlightedGiveaway = null) {
       statusHtml = `<span class="g-card-status-tag status-live"><span class="live-dot" style="margin-right:2px;"></span>Live</span>`;
     }
 
+    const hasBanner = g.banner_url && typeof g.banner_url === 'string' && g.banner_url.trim() && !g.banner_url.includes('undefined') && !g.banner_url.startsWith('/static/uploads/') && g.banner_url.trim() !== '/static/banners/kredoos_banner.jpg';
+    const isKredoos = g.id === 'g_1789137936158' || (g.title && g.title.toLowerCase().includes('kredoos'));
+    const bannerSrc = isKredoos ? '/static/banners/kredoos_banner.jpg' : (hasBanner ? g.banner_url.trim() : '/static/logo.png');
+    const isLogo = !isKredoos && !hasBanner;
+
     return `
       <div class="g-card">
         <div class="g-card-banner-wrap">
           ${statusHtml}
-          <img src="${escapeHtml(g.banner_url || '/static/banners/kredoos_banner.jpg')}" class="g-card-banner" alt="banner" onerror="this.src='/static/banners/kredoos_banner.jpg'">
+          <img src="${escapeHtml(bannerSrc)}" class="g-card-banner ${isLogo ? 'banner-is-logo' : ''}" alt="banner" onerror="this.src='/static/logo.png'; this.classList.add('banner-is-logo');">
           <div class="g-card-banner-overlay"></div>
         </div>
 
@@ -1293,17 +1298,45 @@ async function handleBannerFileUpload(inputElement, targetUrlInputId, previewCon
     console.warn('Backend upload API unavailable, using local file reader preview:', err);
   }
 
-  // Local fallback: read file as Data URL
+  // Local fallback: read file & optimize on canvas as Data URL
   const reader = new FileReader();
   reader.onload = (e) => {
-    const dataUrl = e.target.result;
-    document.getElementById(targetUrlInputId).value = dataUrl;
-    const previewBox = document.getElementById(previewContainerId);
-    if (previewBox) {
-      previewBox.style.display = 'block';
-      previewBox.querySelector('img').src = dataUrl;
-    }
-    showToast('Image loaded successfully', 'success');
+    const img = new Image();
+    img.onload = () => {
+      const maxW = 1200;
+      const maxH = 675;
+      let w = img.width;
+      let h = img.height;
+      if (w > maxW || h > maxH) {
+        const ratio = Math.min(maxW / w, maxH / h);
+        w = Math.round(w * ratio);
+        h = Math.round(h * ratio);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      document.getElementById(targetUrlInputId).value = dataUrl;
+      const previewBox = document.getElementById(previewContainerId);
+      if (previewBox) {
+        previewBox.style.display = 'block';
+        previewBox.querySelector('img').src = dataUrl;
+      }
+      showToast('Banner image attached', 'success');
+    };
+    img.onerror = () => {
+      const rawDataUrl = e.target.result;
+      document.getElementById(targetUrlInputId).value = rawDataUrl;
+      const previewBox = document.getElementById(previewContainerId);
+      if (previewBox) {
+        previewBox.style.display = 'block';
+        previewBox.querySelector('img').src = rawDataUrl;
+      }
+      showToast('Image loaded successfully', 'success');
+    };
+    img.src = e.target.result;
   };
   reader.readAsDataURL(file);
 }
@@ -2189,11 +2222,16 @@ async function openDetailModal(giveawayId) {
   const detailHostName = g.host_name || g.hosted_by || 'Admin';
   const detailHostAvatar = g.host_avatar || g.author_avatar || getDiscordAvatar(g.host_id, null, detailHostName);
 
-  content.innerHTML = `
+    const hasDetailBanner = g.banner_url && typeof g.banner_url === 'string' && g.banner_url.trim() && !g.banner_url.includes('undefined') && !g.banner_url.startsWith('/static/uploads/') && g.banner_url.trim() !== '/static/banners/kredoos_banner.jpg';
+    const isKredoosDetail = g.id === 'g_1789137936158' || (g.title && g.title.toLowerCase().includes('kredoos'));
+    const detailBannerSrc = isKredoosDetail ? '/static/banners/kredoos_banner.jpg' : (hasDetailBanner ? g.banner_url.trim() : '/static/logo.png');
+    const isDetailLogo = !isKredoosDetail && !hasDetailBanner;
+
+    content.innerHTML = `
     <div style="display: flex; flex-direction: column; gap: 1rem;">
       <div class="tessera-detail-hero">
         <div class="tessera-banner-wrap">
-          <img src="${escapeHtml(g.banner_url || '/static/banners/kredoos_banner.jpg')}" class="tessera-banner-img" alt="banner" onerror="this.src='/static/banners/kredoos_banner.jpg'">
+          <img src="${escapeHtml(detailBannerSrc)}" class="tessera-banner-img ${isDetailLogo ? 'banner-is-logo' : ''}" alt="banner" onerror="this.src='/static/logo.png'; this.classList.add('banner-is-logo');">
           <div class="tessera-banner-overlay"></div>
         </div>
         
