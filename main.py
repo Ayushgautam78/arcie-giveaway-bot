@@ -112,6 +112,46 @@ def is_valid_evm_address(addr: str) -> bool:
     return bool(re.match(r"^0x[a-fA-F0-9]{40}$", addr.strip()))
 
 
+def get_eth_rpc_url() -> str:
+    """Returns the configured Ethereum Mainnet RPC URL."""
+    return os.getenv("ETH_RPC_URL") or os.getenv("ETHEREUM_RPC") or "https://lb.drpc.live/ethereum/AjLst_5h3kUWgCxBylE2TBm_LnAEsCwR8btEMrvp6PLd"
+
+
+async def query_eth_rpc(method: str, params: list = None) -> Any:
+    """Sends a JSON-RPC request to the configured Ethereum RPC provider."""
+    rpc_url = get_eth_rpc_url()
+    payload = {
+        "jsonrpc": "2.0",
+        "id": int(time.time()),
+        "method": method,
+        "params": params or []
+    }
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(rpc_url, json=payload, timeout=aiohttp.ClientTimeout(total=8)) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    return data.get("result")
+    except Exception as e:
+        print(f"[ETH RPC ERROR] {method}: {e}")
+    return None
+
+
+async def get_eth_balance(address: str) -> Optional[float]:
+    """Fetches real-time ETH balance in Ether for a given address using the paid drpc endpoint."""
+    if not is_valid_evm_address(address):
+        return None
+    res = await query_eth_rpc("eth_getBalance", [address, "latest"])
+    if res and isinstance(res, str) and res.startswith("0x"):
+        try:
+            wei = int(res, 16)
+            return round(wei / 1e18, 5)
+        except Exception:
+            pass
+    return None
+
+
+
 def get_entry_weights(entries: list, guild=None, g: Optional[dict] = None) -> list:
     """Calculate weight for each giveaway entry based on role multipliers and bonus entries.
     
