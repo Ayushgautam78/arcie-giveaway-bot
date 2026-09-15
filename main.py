@@ -6705,14 +6705,14 @@ class UserWalletsModal(discord.ui.Modal, title="Update Web3 Wallets"):
         await sync_user_profile_to_unlocked_giveaways(uid)
 
         embed = discord.Embed(
-            title="👛 Web3 Wallets Successfully Updated!",
-            description="Your crypto addresses have been linked to your ArccDen profile and synced with all active giveaways.",
+            title="Web3 Wallets Updated",
+            description="Your crypto addresses have been linked to your profile and synced with active giveaways.\n",
             color=discord.Color.from_rgb(0, 255, 157)
         )
-        embed.add_field(name="💎 Main EVM Wallet", value=f"`{evm_val}`" if evm_val else "*Not set*", inline=False)
-        embed.add_field(name="⚡ FCFS EVM Wallet", value=f"`{fcfs_val}`" if fcfs_val else "*Not set*", inline=False)
-        embed.add_field(name="🪐 Solana Wallet", value=f"`{sol_val}`" if sol_val else "*Not set*", inline=False)
-        embed.set_footer(text="🔒 Private & Secure • Synced to ArccDen Giveaway System")
+        embed.add_field(name="Main EVM Wallet", value=f"`{evm_val}`" if evm_val else "*Not set*", inline=False)
+        embed.add_field(name="FCFS EVM Wallet", value=f"`{fcfs_val}`" if fcfs_val else "*Not set*", inline=False)
+        embed.add_field(name="Solana Wallet", value=f"`{sol_val}`" if sol_val else "*Not set*", inline=False)
+        embed.set_footer(text="All actions are private — only you can see your data")
         await safe_respond(interaction, embed=embed, ephemeral=True)
 
 
@@ -6767,13 +6767,13 @@ class UserSocialsModal(discord.ui.Modal, title="Connect Social Accounts"):
         await sync_user_profile_to_unlocked_giveaways(uid)
 
         embed = discord.Embed(
-            title="🐦 Socials Successfully Connected!",
-            description="Your social handles have been linked to your ArccDen profile and synced with active giveaways.",
+            title="Socials Connected",
+            description="Your social handles have been linked to your profile and synced with active giveaways.\n",
             color=discord.Color.from_rgb(0, 255, 157)
         )
-        embed.add_field(name="🐦 Twitter / X", value=f"**{tw_clean}**" if tw_clean else "*Not set*", inline=True)
-        embed.add_field(name="✈️ Telegram", value=f"**{tg_clean}**" if tg_clean else "*Not set*", inline=True)
-        embed.set_footer(text="🔒 Private & Secure • Powered by Arcie Bot")
+        embed.add_field(name="Twitter / X", value=f"**{tw_clean}**" if tw_clean else "*Not set*", inline=True)
+        embed.add_field(name="Telegram", value=f"**{tg_clean}**" if tg_clean else "*Not set*", inline=True)
+        embed.set_footer(text="All actions are private — only you can see your data")
         await safe_respond(interaction, embed=embed, ephemeral=True)
 
 
@@ -6793,7 +6793,7 @@ def get_user_role_multiplier(guild: Optional[discord.Guild], member: Optional[Un
 
 
 async def render_user_profile_card(interaction: discord.Interaction, target_user: Optional[Union[discord.Member, discord.User]] = None) -> discord.Embed:
-    """Renders the comprehensive, private ArccDen user profile embed card."""
+    """Renders the clean, well-spaced ArccDen user profile embed card with minimal emojis."""
     usr = target_user or interaction.user
     uid = str(usr.id)
     prof = get_user_profile_fast(uid, usr)
@@ -6823,14 +6823,12 @@ async def render_user_profile_card(interaction: discord.Interaction, target_user
     role_mult = get_user_role_multiplier(guild, member)
 
     embed = discord.Embed(
-        title=f"🛡️ {usr.display_name}'s ArccDen Profile",
+        title="Your Profile",
         description=(
-            f"**Member Identity & Giveaway Status**\n"
-            f"• **Discord:** {usr.mention} (`{usr.name}`)\n"
-            f"• **Discord ID:** `{uid}`\n"
-            f"• **Available Bonus Tickets:** **`{bonus_bal}`** 🎟️\n"
-            f"• **Role Boost:** **`{role_mult:g}x`** Multiplier\n"
-            f"• **Giveaways Entered:** **`{joined_count}`** (Active Bonus Applied: `{bonus_in_use}` 🎟️)\n"
+            f"**Member:** {usr.mention} (`{usr.name}`)\n\n"
+            f"• Available Bonus Entries: **{bonus_bal}**\n\n"
+            f"• Role Multiplier Boost: **{role_mult:g}x**\n\n"
+            f"• Giveaways Entered: **{joined_count}** (Active in live raffles: **{bonus_in_use}**)\n"
         ),
         color=discord.Color.from_rgb(0, 255, 157)
     )
@@ -6840,37 +6838,37 @@ async def render_user_profile_card(interaction: discord.Interaction, target_user
         embed.set_thumbnail(url=pfp_url)
 
     embed.add_field(
-        name="💎 Main EVM Wallet",
-        value=f"`{evm}`" if evm else "*Not Linked — Click [👛 Wallets] to set*",
+        name="Main EVM Wallet",
+        value=f"`{evm}`" if evm else "*Not linked*",
         inline=False
     )
     embed.add_field(
-        name="⚡ FCFS EVM Wallet",
-        value=f"`{fcfs}`" if fcfs else "*Not Linked — Click [👛 Wallets] to set*",
+        name="FCFS EVM Wallet",
+        value=f"`{fcfs}`" if fcfs else "*Not linked*",
         inline=False
     )
     embed.add_field(
-        name="🪐 Solana Wallet",
-        value=f"`{sol}`" if sol else "*Not Linked — Click [👛 Wallets] to set*",
+        name="Solana Wallet",
+        value=f"`{sol}`" if sol else "*Not linked*",
         inline=False
     )
     embed.add_field(
-        name="🐦 Twitter / X",
-        value=f"**{tw}**" if tw else "*Not Linked — Click [🐦 Connect Socials]*",
+        name="Twitter / X",
+        value=f"{tw}" if tw else "*Not linked*",
         inline=True
     )
     embed.add_field(
-        name="✈️ Telegram",
-        value=f"**{tg}**" if tg else "*Not Linked — Click [🐦 Connect Socials]*",
+        name="Telegram",
+        value=f"{tg}" if tg else "*Not linked*",
         inline=True
     )
 
-    embed.set_footer(text="🔒 All actions are private — only you can see your data | ArccDen")
+    embed.set_footer(text="All actions are private — only you can see your data")
     return embed
 
 
 async def render_user_bonus_balance(interaction: discord.Interaction, target_user: Optional[Union[discord.Member, discord.User]] = None) -> discord.Embed:
-    """Renders the bonus tickets balance and odds boost breakdown embed."""
+    """Renders the bonus tickets balance and odds boost breakdown embed with generous spacing."""
     usr = target_user or interaction.user
     uid = str(usr.id)
     prof = get_user_profile_fast(uid, usr)
@@ -6894,30 +6892,29 @@ async def render_user_bonus_balance(interaction: discord.Interaction, target_use
                         active_bonus_used += used
 
     embed = discord.Embed(
-        title="🎟️ Your ArccDen Bonus Balance & Multipliers",
+        title="Bonus Balance & Boosts",
         description=(
-            f"**Current Giveaway Power for {usr.mention}:**\n\n"
-            f"• 🎟️ **Available Bonus Entries:** **`{bonus_bal}`** 🎟️\n"
-            f"• 🎯 **Bonus Entries in Active Raffles:** **`{active_bonus_used}`** 🎟️\n"
-            f"• 🚀 **Base Role Multiplier:** **`{role_mult:g}x`** Boost\n"
-            f"• 📊 **Lifetime Bonus Entries Used:** **`{total_bonus_used_lifetime}`** 🎟️\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💡 **How Bonus Entries Work:**\n"
-            f"Bonus entries provide direct **+1x winning ticket weight** per bonus ticket applied.\n"
-            f"For example, with a **{role_mult:g}x** role multiplier and **3 bonus entries**, your winning ticket weight becomes **`{role_mult + 3:g}x`**!\n\n"
-            f"✨ *Apply your bonus entries on any active giveaway via **[View Your Entry] ➔ [Apply Bonus Entries]** or `/use-bonus-entries`!*"
+            f"**Member:** {usr.mention} (`{usr.name}`)\n\n"
+            f"• Available Bonus Entries: **{bonus_bal}**\n\n"
+            f"• Active in Live Raffles: **{active_bonus_used}**\n\n"
+            f"• Base Role Multiplier: **{role_mult:g}x**\n\n"
+            f"• Total Lifetime Used: **{total_bonus_used_lifetime}**\n\n"
+            f"**How It Works**\n\n"
+            f"Each bonus entry adds +1 ticket to your raffle entry weight. "
+            f"For example, with a **{role_mult:g}x** multiplier and **3 bonus entries**, your winning weight becomes **{role_mult + 3:g}x**.\n\n"
+            f"Apply bonus entries inside any active giveaway via [View Your Entry] or `/use-bonus-entries`."
         ),
-        color=discord.Color.gold()
+        color=discord.Color.from_rgb(0, 255, 157)
     )
     pfp_url = usr.display_avatar.url if usr.display_avatar else None
     if pfp_url:
         embed.set_thumbnail(url=pfp_url)
-    embed.set_footer(text="🔒 Private Balance Sheet | Powered by Arcie Bot")
+    embed.set_footer(text="All actions are private — only you can see your data")
     return embed
 
 
 async def render_user_bonus_history(interaction: discord.Interaction, target_user: Optional[Union[discord.Member, discord.User]] = None) -> discord.Embed:
-    """Renders the last 10 bonus entries transactions with timestamps, types, reasons, and balances."""
+    """Renders the last 10 bonus transactions with clean spacing and minimal emojis."""
     usr = target_user or interaction.user
     uid = str(usr.id)
     prof = get_user_profile_fast(uid, usr)
@@ -6928,8 +6925,8 @@ async def render_user_bonus_history(interaction: discord.Interaction, target_use
         history = []
 
     embed = discord.Embed(
-        title="📜 Bonus Entries Transaction History",
-        color=discord.Color.from_rgb(0, 229, 255)
+        title="Transaction History",
+        color=discord.Color.from_rgb(0, 255, 157)
     )
     pfp_url = usr.display_avatar.url if usr.display_avatar else None
     if pfp_url:
@@ -6937,61 +6934,56 @@ async def render_user_bonus_history(interaction: discord.Interaction, target_use
 
     if not history:
         embed.description = (
-            f"**User:** {usr.mention} (`{usr.name}`)\n"
-            f"• **Current Available Balance:** **`{bonus_bal}`** 🎟️\n\n"
-            f"*(No bonus entry transactions recorded yet.)*\n\n"
-            f"💡 *Earn bonus entries by participating in server events, winning mini-games, or receiving moderator grants!*"
+            f"**Member:** {usr.mention} (`{usr.name}`)\n\n"
+            f"Current Available Balance: **{bonus_bal}**\n\n"
+            f"*No bonus transactions recorded yet.*\n\n"
+            f"Earn bonus entries through server events, roles, or moderator rewards."
         )
     else:
         last_10 = list(reversed(history[-10:]))
         lines = [
-            f"**User:** {usr.mention} (`{usr.name}`)\n"
-            f"• **Current Available Balance:** **`{bonus_bal}`** 🎟️\n\n"
-            f"**Last {len(last_10)} Transactions (Most Recent First):**\n"
+            f"**Member:** {usr.mention}  •  Current Balance: **{bonus_bal}**\n"
         ]
         for idx, tx in enumerate(last_10, 1):
             ts = tx.get("timestamp", "Recent")
             t_type = tx.get("type", "tx")
             amt = tx.get("amount", 0)
             bal_after = tx.get("balance_after", 0)
-            reason = tx.get("reason", "No reason provided")
+            reason = tx.get("reason", "No details")
             by = tx.get("by", "System")
 
             if t_type == "grant":
-                badge = f"🟢 **+{abs(amt)} Granted**"
+                badge = f"+{abs(amt)} Granted"
             elif t_type == "used":
-                badge = f"🔴 **-{abs(amt)} Used**"
+                badge = f"-{abs(amt)} Used"
             elif t_type == "refund":
-                badge = f"🔵 **+{abs(amt)} Refunded**"
+                badge = f"+{abs(amt)} Refunded"
             elif t_type == "reduce":
-                badge = f"🟠 **-{abs(amt)} Reduced**"
+                badge = f"-{abs(amt)} Reduced"
             else:
-                badge = f"⚪ **{amt:+d}**"
+                badge = f"{amt:+d}"
 
             lines.append(
-                f"`{idx:02d}.` `{ts}` — {badge}\n"
-                f"    ↳ *{reason}* | By: `{by}` | Balance: `{bal_after}` 🎟️"
+                f"**{idx}.** `{ts}` — **{badge}**\n"
+                f"↳ *{reason}* (By: {by}) • Balance: {bal_after}"
             )
 
-        embed.description = "\n".join(lines)
+        embed.description = "\n\n".join(lines)
 
-    embed.set_footer(text="🔒 All actions are private — only you can see your data | ArccDen")
+    embed.set_footer(text="All actions are private — only you can see your data")
     return embed
 
 
 def create_profile_panel_embed(bot_instance: commands.Bot, title: Optional[str] = None, description: Optional[str] = None) -> discord.Embed:
-    """Constructs the high-fidelity ArccDen Profile embed with bot avatar thumbnail and electric cyber-lime styling."""
-    embed_title = title or "🛡️ Your ArccDen Profile"
+    """Constructs the clean, spacious ArccDen Profile panel with minimal emojis and proper layout."""
+    embed_title = title or "Your ArccDen Profile"
     embed_desc = description or (
-        "Welcome to the **ArccDen Web3 Profile & Giveaway Hub**!\n"
-        "Manage your crypto addresses, connect your social handles, and check your raffle stats below.\n\n"
-        "• 🛡️ **View Profile:** View your profile, balance & history\n"
-        "• 👛 **Wallets:** Link your Main EVM, FCFS EVM & SOL wallets\n"
-        "• 🐦 **Connect Socials:** Connect your Twitter/X & Telegram handles\n"
-        "• 🎟️ **Bonus Balance:** Check your bonus tickets & role multipliers\n"
-        "• 📜 **Transaction History:** Review your last 10 bonus entry records\n"
-        "• 🌐 **ArccDen Tracker:** Live on-chain giveaway telemetry & entries\n\n"
-        "⚠️ **All actions are private — only you can see your data!**"
+        "• View your profile, balance & history\n\n"
+        "• Link your Main EVM, FCFS & Solana wallets\n\n"
+        "• Connect your Twitter/X & Telegram accounts\n\n"
+        "• Check your bonus entries & raffle multipliers\n\n"
+        "• Review your recent bonus transaction history\n\n"
+        "All actions are private — only you can see your data."
     )
     embed = discord.Embed(
         title=embed_title,
@@ -7000,7 +6992,7 @@ def create_profile_panel_embed(bot_instance: commands.Bot, title: Optional[str] 
     )
     if bot_instance.user and bot_instance.user.display_avatar:
         embed.set_thumbnail(url=bot_instance.user.display_avatar.url)
-    embed.set_footer(text="Powered by Arcie Bot • ArccDen Web3 Ecosystem")
+    embed.set_footer(text="Powered by Arcie Bot")
     return embed
 
 
@@ -7014,7 +7006,7 @@ class PersistentProfilePanelView(discord.ui.View):
         # Tracker Link Button
         self.add_item(discord.ui.Button(
             label="ArccDen Tracker",
-            emoji="🌐",
+            style=discord.ButtonStyle.link,
             url="https://arcie-giveaway-bot-lb4z.vercel.app/",
             row=2
         ))
@@ -7022,7 +7014,6 @@ class PersistentProfilePanelView(discord.ui.View):
     @discord.ui.button(
         label="View Profile",
         style=discord.ButtonStyle.primary,
-        emoji="🛡️",
         custom_id="arcc_profile_view_btn",
         row=0
     )
@@ -7037,7 +7028,6 @@ class PersistentProfilePanelView(discord.ui.View):
     @discord.ui.button(
         label="Bonus Balance",
         style=discord.ButtonStyle.secondary,
-        emoji="🎟️",
         custom_id="arcc_profile_bonus_btn",
         row=0
     )
@@ -7052,7 +7042,6 @@ class PersistentProfilePanelView(discord.ui.View):
     @discord.ui.button(
         label="Transaction History",
         style=discord.ButtonStyle.secondary,
-        emoji="📜",
         custom_id="arcc_profile_tx_btn",
         row=1
     )
@@ -7067,7 +7056,6 @@ class PersistentProfilePanelView(discord.ui.View):
     @discord.ui.button(
         label="Wallets",
         style=discord.ButtonStyle.secondary,
-        emoji="👛",
         custom_id="arcc_profile_wallets_btn",
         row=1
     )
@@ -7093,7 +7081,6 @@ class PersistentProfilePanelView(discord.ui.View):
     @discord.ui.button(
         label="Connect Socials",
         style=discord.ButtonStyle.secondary,
-        emoji="🐦",
         custom_id="arcc_profile_socials_btn",
         row=2
     )
