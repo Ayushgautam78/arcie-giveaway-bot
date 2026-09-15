@@ -37,6 +37,9 @@
           <a href="#tracker" class="nav-link" id="navTrackerBtn" onclick="focusEntryTracker(); return false;">
             <span class="bracket">[</span>Tracker<span class="bracket">]</span>
           </a>
+          <a href="#" class="nav-link" id="navChainsBtn" onclick="openChainLatencyModal(); return false;">
+            <span class="bracket">[</span>Chains (ms)<span class="bracket">]</span>
+          </a>
           <a href="#" class="nav-link" onclick="filterByMyEntries(); return false;" id="myEntriesNavBtn" style="display: none;">
             <span class="bracket">[</span>My Entries<span class="bracket">]</span>
           </a>
@@ -44,6 +47,12 @@
       </div>
       
       <div class="nav-actions">
+        <!-- Chain Telemetry Latency Badge -->
+        <div class="live-pill chain-speed-pill" id="navChainSpeedBadge" onclick="openChainLatencyModal()" title="Click to view real-time completion time across all chains" style="cursor: pointer; border-color: rgba(0, 255, 157, 0.4); background: rgba(0, 255, 157, 0.08); display: flex; align-items: center; gap: 6px;">
+          <span class="live-dot" style="background: #00ff9d; box-shadow: 0 0 8px #00ff9d;"></span>
+          <span id="navChainSpeedText" style="font-family: var(--font-mono); font-weight: 600; font-size: 0.74rem; color: #00ff9d;">Chains: -- ms</span>
+        </div>
+
         <!-- Live Indicator Badge -->
         <div class="live-pill" title="Live platform status">
           <span class="live-dot"></span>
@@ -1094,6 +1103,66 @@
           </div>
           <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 15px;">Sign In as Admin</button>
         </form>
+      </div>
+    </div>
+  <!-- Multi-Chain Telemetry & Latency Modal -->
+  <div id="chainLatencyModal" class="modal-overlay">
+    <div class="modal-content" style="max-width: 840px;">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <div class="modal-title-icon" style="background: rgba(0, 255, 157, 0.12); color: #00ff9d;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+          </div>
+          <div>
+            <h3 class="modal-title">⚡ Multi-Chain Telemetry & Latency Monitor</h3>
+            <p style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">Live round-trip RPC completion time benchmark across all supported networks</p>
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeModal('chainLatencyModal')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Telemetry Stat Grid -->
+        <div class="tessera-metric-grid" style="margin-bottom: 1.25rem;">
+          <div class="tessera-grid-cell">
+            <span class="metric-cell-label">Average Response</span>
+            <span class="metric-cell-val" id="telemetryAvgPing">-- ms</span>
+            <span class="metric-cell-sub">Across all chains</span>
+          </div>
+          <div class="tessera-grid-cell">
+            <span class="metric-cell-label">Fastest Network</span>
+            <span class="metric-cell-val" id="telemetryFastestChain" style="color: #00ff9d; font-size: 1.15rem;">--</span>
+            <span class="metric-cell-sub" id="telemetryFastestTime">-- ms</span>
+          </div>
+          <div class="tessera-grid-cell">
+            <span class="metric-cell-label">Ethereum (dRPC Tunnel)</span>
+            <span class="metric-cell-val" id="telemetryEthPing" style="color: #38bdf8;">-- ms</span>
+            <span class="metric-cell-sub">Paid Tunnel Height: <span id="telemetryEthBlock">--</span></span>
+          </div>
+          <div class="tessera-grid-cell">
+            <span class="metric-cell-label">Network Health</span>
+            <span class="metric-cell-val" id="telemetryStatus" style="color: #00ff9d; font-size: 1.15rem;">Operational</span>
+            <span class="metric-cell-sub" id="telemetryOnlineRatio">7/7 Chains Synced</span>
+          </div>
+        </div>
+
+        <!-- Chain Cards Grid -->
+        <div id="chainLatencyGrid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px;">
+          <!-- Loaded dynamically by app.js -->
+        </div>
+      </div>
+
+      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+        <span style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-faint);" id="telemetryTimestamp">Last Checked: Just now</span>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-primary btn-sm" id="retestChainsBtn" onclick="runChainLatencyBenchmark(true)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            <span id="retestChainsBtnText">Re-Run Benchmark</span>
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="closeModal('chainLatencyModal')">Close</button>
+        </div>
       </div>
     </div>
   </div>

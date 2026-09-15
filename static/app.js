@@ -299,6 +299,7 @@ async function initApp() {
   await loadGuildChannels();
   await loadGuildRoles();
   await checkUrlDirectGiveaway();
+  setTimeout(() => runChainLatencyBenchmark(false), 600);
 }
 
 function setupEventListeners() {
@@ -2355,12 +2356,26 @@ async function openDetailModal(giveawayId) {
               <div style="font-weight: 700; color: #fbbf24; font-size: 0.9rem;">Your Entries: ${myEntry.multiplier || 1}x ${myEntry.bonus_entries_used ? `(+${myEntry.bonus_entries_used} Bonus = ${(myEntry.multiplier || 1) + myEntry.bonus_entries_used}x Total)` : ''}</div>
               <div style="font-size: 0.8rem; color: var(--text-muted);">Available Bonus Entries in Profile: <b>${availBonus}</b></div>
             </div>
-            ${availBonus > 0 ? `
-              <div style="display: flex; gap: 6px; align-items: center;">
-                <input type="number" id="detailBonusAmount" class="form-input" min="1" max="${availBonus}" value="1" style="width: 70px; padding: 4px 8px; font-size: 0.85rem;">
-                <button class="btn btn-primary btn-sm" onclick="submitApplyBonusEntries('${g.id}')">Apply Bonus Entries</button>
-              </div>
-            ` : ''}
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              ${availBonus > 0 ? `
+                <div style="display: flex; gap: 6px; align-items: center;">
+                  <input type="number" id="detailBonusAmount" class="form-input" min="1" max="${availBonus}" value="1" style="width: 70px; padding: 4px 8px; font-size: 0.85rem;">
+                  <button class="btn btn-primary btn-sm" onclick="submitApplyBonusEntries('${g.id}')">Apply Bonus</button>
+                </div>
+              ` : ''}
+              ${myEntry.bonus_entries_used > 0 ? `
+                <button class="btn btn-outline btn-sm" style="color: #f43f5e; border-color: rgba(244, 63, 94, 0.4);" onclick="submitRemoveBonusEntries('${g.id}')" title="Withdraw bonus entries back to your profile balance">Withdraw Bonus (-${myEntry.bonus_entries_used})</button>
+              ` : ''}
+            </div>
+          </div>
+        `;
+      } else if (myEntry && isEnded) {
+        bonusContainer.innerHTML = `
+          <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.75rem 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <div>
+              <div style="font-weight: 700; color: var(--text-main); font-size: 0.9rem;">Your Final Entries: ${myEntry.multiplier || 1}x ${myEntry.bonus_entries_used ? `(+${myEntry.bonus_entries_used} Bonus = ${(myEntry.multiplier || 1) + myEntry.bonus_entries_used}x Total)` : ''}</div>
+              <div style="font-size: 0.8rem; color: var(--accent-gold); font-family: var(--font-mono);">🔒 Giveaway Ended — Bonus entries locked</div>
+            </div>
           </div>
         `;
       } else {
@@ -3168,6 +3183,228 @@ async function submitApplyBonusEntries(giveawayId) {
     }
   } catch (err) {
     showToast('Error applying bonus entries', 'error');
+  }
+}
+
+async function submitRemoveBonusEntries(giveawayId) {
+  if (!confirm('Withdraw all your bonus entries from this giveaway back to your available balance?')) return;
+  try {
+    const res = await fetch(apiUrl(`/api/giveaways/${giveawayId}/remove-bonus-entries`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({})
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`Withdrawn ${data.removed} bonus entries back to your balance!`, 'success');
+      if (currentUser) currentUser.bonus_entries = data.remaining_bonus_entries;
+      await openDetailModal(giveawayId);
+    } else {
+      showToast(data.error || 'Failed to withdraw bonus entries', 'error');
+    }
+  } catch (err) {
+    showToast('Error withdrawing bonus entries', 'error');
+  }
+}
+
+
+// ==========================================================================
+// MULTI-CHAIN TELEMETRY & MILLISECOND LATENCY ENGINE
+// ==========================================================================
+const CHAIN_CONFIGS_FALLBACK = [
+  { id: 'ethereum', name: 'Ethereum Mainnet', symbol: 'ETH', icon: '💎', provider: 'dRPC Paid Tunnel', rpc: 'https://lb.drpc.live/ethereum/AjLst_5h3kUWgCxBylE2TBm_LnAEsCwR8btEMrvp6PLd', method: 'eth_blockNumber', params: [] },
+  { id: 'solana', name: 'Solana Mainnet', symbol: 'SOL', icon: '🟣', provider: 'Solana Labs Mainnet-Beta', rpc: 'https://api.mainnet-beta.solana.com', method: 'getSlot', params: [] },
+  { id: 'base', name: 'Base Mainnet', symbol: 'BASE', icon: '🔵', provider: 'Base / Coinbase Cloud', rpc: 'https://mainnet.base.org', method: 'eth_blockNumber', params: [] },
+  { id: 'arbitrum', name: 'Arbitrum One', symbol: 'ARB', icon: '🔷', provider: 'Offchain Labs', rpc: 'https://arb1.arbitrum.io/rpc', method: 'eth_blockNumber', params: [] },
+  { id: 'polygon', name: 'Polygon PoS', symbol: 'POL', icon: '💜', provider: 'PublicNode Bor', rpc: 'https://polygon-bor-rpc.publicnode.com', method: 'eth_blockNumber', params: [] },
+  { id: 'bsc', name: 'BNB Smart Chain', symbol: 'BNB', icon: '🟡', provider: 'Binance Official DataSeed', rpc: 'https://bsc-dataseed.binance.org', method: 'eth_blockNumber', params: [] },
+  { id: 'optimism', name: 'Optimism Mainnet', symbol: 'OP', icon: '🔴', provider: 'OP Mainnet Official', rpc: 'https://mainnet.optimism.io', method: 'eth_blockNumber', params: [] }
+];
+
+let lastChainTelemetryData = null;
+let isBenchmarkingChains = false;
+
+async function runChainLatencyBenchmark(forceRefresh = false) {
+  if (isBenchmarkingChains) return;
+  isBenchmarkingChains = true;
+
+  const btn = document.getElementById('retestChainsBtn');
+  const btnText = document.getElementById('retestChainsBtnText');
+  if (btnText) btnText.textContent = 'Benchmarking...';
+  if (btn) btn.disabled = true;
+
+  let benchmarkData = null;
+
+  // 1. Try server-side benchmark API first
+  try {
+    const res = await fetch(apiUrl('/api/chain-latency'), { credentials: 'omit' });
+    if (res.ok) {
+      benchmarkData = await res.json();
+    }
+  } catch (apiErr) {
+    console.warn('[Telemetry] Server-side telemetry failed, running client-side fallback:', apiErr);
+  }
+
+  // 2. Client-side fallback if server is offline or returned error
+  if (!benchmarkData || !benchmarkData.chains || benchmarkData.chains.length === 0) {
+    const results = await Promise.all(CHAIN_CONFIGS_FALLBACK.map(async (chain) => {
+      const t0 = performance.now();
+      try {
+        const resp = await fetch(chain.rpc, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: chain.method, params: chain.params })
+        });
+        const data = await resp.json();
+        const t1 = performance.now();
+        const elapsed_ms = Math.round((t1 - t0) * 100) / 100;
+        let block_num = data.result;
+        if (typeof block_num === 'string' && block_num.startsWith('0x')) {
+          block_num = parseInt(block_num, 16);
+        }
+        return {
+          id: chain.id,
+          name: chain.name,
+          symbol: chain.symbol,
+          icon: chain.icon,
+          provider: chain.provider,
+          latency_ms: elapsed_ms,
+          block_height: block_num,
+          status: 'online',
+          ok: true
+        };
+      } catch (err) {
+        const t1 = performance.now();
+        const elapsed_ms = Math.round((t1 - t0) * 100) / 100;
+        return {
+          id: chain.id,
+          name: chain.name,
+          symbol: chain.symbol,
+          icon: chain.icon,
+          provider: chain.provider,
+          latency_ms: elapsed_ms,
+          block_height: null,
+          status: 'offline',
+          ok: false,
+          error: err.message
+        };
+      }
+    }));
+
+    const valids = results.filter(r => r.ok);
+    const avg = valids.length ? Math.round((valids.reduce((sum, r) => sum + r.latency_ms, 0) / valids.length) * 100) / 100 : 0;
+    const fastest = valids.length ? [...valids].sort((a, b) => a.latency_ms - b.latency_ms)[0] : null;
+
+    benchmarkData = {
+      timestamp: Math.floor(Date.now() / 1000),
+      total_chains: results.length,
+      online_chains: valids.length,
+      average_latency_ms: avg,
+      fastest: fastest ? { name: fastest.name, symbol: fastest.symbol, latency_ms: fastest.latency_ms } : null,
+      chains: results
+    };
+  }
+
+  lastChainTelemetryData = benchmarkData;
+  renderChainTelemetry(benchmarkData);
+
+  if (btnText) btnText.textContent = 'Re-Run Benchmark';
+  if (btn) btn.disabled = false;
+  isBenchmarkingChains = false;
+}
+
+function renderChainTelemetry(data) {
+  if (!data) return;
+
+  // Update top navigation badge
+  const navText = document.getElementById('navChainSpeedText');
+  const avgMs = data.average_latency_ms || 0;
+  if (navText) {
+    if (data.fastest) {
+      navText.textContent = `${data.fastest.symbol}: ${data.fastest.latency_ms} ms`;
+    } else {
+      navText.textContent = `Chains: ${avgMs} ms`;
+    }
+  }
+
+  // Update modal metrics
+  const avgEl = document.getElementById('telemetryAvgPing');
+  if (avgEl) avgEl.textContent = `${avgMs} ms`;
+
+  const fastestEl = document.getElementById('telemetryFastestChain');
+  const fastestTimeEl = document.getElementById('telemetryFastestTime');
+  if (fastestEl && data.fastest) {
+    fastestEl.textContent = `${data.fastest.name} (${data.fastest.symbol})`;
+    if (fastestTimeEl) fastestTimeEl.textContent = `⚡ ${data.fastest.latency_ms} ms`;
+  }
+
+  const ethData = (data.chains || []).find(c => c.id === 'ethereum' || c.symbol === 'ETH');
+  const ethPingEl = document.getElementById('telemetryEthPing');
+  const ethBlockEl = document.getElementById('telemetryEthBlock');
+  if (ethData) {
+    if (ethPingEl) ethPingEl.textContent = `${ethData.latency_ms} ms`;
+    if (ethBlockEl) ethBlockEl.textContent = ethData.block_height ? `#${ethData.block_height.toLocaleString()}` : 'Connected';
+  }
+
+  const statusEl = document.getElementById('telemetryStatus');
+  const ratioEl = document.getElementById('telemetryOnlineRatio');
+  if (statusEl) statusEl.textContent = data.online_chains === data.total_chains ? 'Operational' : 'Degraded';
+  if (ratioEl) ratioEl.textContent = `${data.online_chains}/${data.total_chains} Chains Synced`;
+
+  const timeEl = document.getElementById('telemetryTimestamp');
+  if (timeEl) timeEl.textContent = `Last Checked: ${new Date(data.timestamp * 1000).toLocaleTimeString()}`;
+
+  // Render Chain Grid Cards
+  const grid = document.getElementById('chainLatencyGrid');
+  if (grid) {
+    grid.innerHTML = (data.chains || []).map(c => {
+      let speedColor = '#00ff9d';
+      if (c.latency_ms > 1500 || !c.ok) {
+        speedColor = '#f43f5e';
+      } else if (c.latency_ms > 900) {
+        speedColor = '#fb923c';
+      } else if (c.latency_ms > 500) {
+        speedColor = '#facc15';
+      }
+
+      const blockStr = c.block_height ? `#${c.block_height.toLocaleString()}` : (c.ok ? 'Synced' : 'Unavailable');
+
+      return `
+        <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: var(--radius-sm); padding: 0.9rem 1rem; display: flex; flex-direction: column; gap: 6px; position: relative; overflow: hidden;">
+          <div style="position: absolute; top: 0; left: 0; height: 2px; width: 100%; background: ${speedColor};"></div>
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 1.1rem;">${c.icon || '⛓️'}</span>
+              <div>
+                <div style="font-weight: 700; color: #fff; font-size: 0.88rem;">${c.name}</div>
+                <div style="font-size: 0.7rem; color: var(--text-muted);">${c.provider || 'RPC'}</div>
+              </div>
+            </div>
+            <span class="badge" style="background: ${c.ok ? 'rgba(0, 255, 157, 0.12)' : 'rgba(244, 63, 94, 0.12)'}; color: ${c.ok ? '#00ff9d' : '#f43f5e'}; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700;">
+              ${c.ok ? 'ONLINE' : 'ERROR'}
+            </span>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 4px;">
+            <span style="font-size: 0.74rem; color: var(--text-faint); font-family: var(--font-mono);">Round-Trip:</span>
+            <span style="font-family: var(--font-mono); font-size: 1.15rem; font-weight: 800; color: ${speedColor};">
+              ${c.latency_ms} <span style="font-size: 0.72rem; font-weight: 600;">ms</span>
+            </span>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--text-muted); font-family: var(--font-mono); border-top: 1px solid rgba(255,255,255,0.04); padding-top: 4px;">
+            <span>Block / Slot:</span>
+            <span style="color: var(--text-main); font-weight: 600;">${blockStr}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+}
+
+function openChainLatencyModal() {
+  openModal('chainLatencyModal');
+  if (!lastChainTelemetryData || (Date.now() / 1000 - lastChainTelemetryData.timestamp > 30)) {
+    runChainLatencyBenchmark(false);
   }
 }
 

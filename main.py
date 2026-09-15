@@ -83,26 +83,64 @@ if _env_rm:
 
 
 def weighted_sample_without_replacement(population: list, weights: list, k: int) -> list:
-    """Weighted random sampling WITHOUT replacement.
+    """Weighted random sampling WITHOUT replacement using exact index selection.
     
-    Uses iterative weighted selection: pick one item at a time using random.choices,
-    remove it from the pool, and repeat until k items are selected or pool is exhausted.
+    Guarantees that an entry with 10 bonus entries has 10x+ higher probability of being chosen
+    on every spot draw compared to an entry with 0 bonus entries.
     """
     if not population or k <= 0:
         return []
     k = min(k, len(population))
     pool = list(population)
-    pool_weights = list(weights)
+    pool_weights = [max(0.01, float(w)) for w in weights]
     selected = []
     for _ in range(k):
         if not pool:
             break
-        chosen = random.choices(pool, weights=pool_weights, k=1)[0]
-        idx = pool.index(chosen)
-        selected.append(chosen)
-        pool.pop(idx)
-        pool_weights.pop(idx)
+        # Pick index directly by weight so there is ZERO object-equality comparison ambiguity
+        chosen_idx = random.choices(range(len(pool)), weights=pool_weights, k=1)[0]
+        selected.append(pool.pop(chosen_idx))
+        pool_weights.pop(chosen_idx)
     return selected
+
+
+def merge_giveaway_entries(local_list: list, fb_list: list) -> list:
+    """Intelligently merges local memory entries with Firebase entries.
+    
+    Guarantees that bonus_entries_used is NEVER lost, zeroed out, or overwritten
+    by taking the maximum bonus entries recorded across both sources.
+    """
+    merged_map = {}
+    for e in (fb_list or []):
+        if isinstance(e, dict) and e.get("user_id"):
+            uid = str(e["user_id"])
+            merged_map[uid] = dict(e)
+            try:
+                merged_map[uid]["bonus_entries_used"] = int(e.get("bonus_entries_used") or 0)
+            except Exception:
+                merged_map[uid]["bonus_entries_used"] = 0
+
+    for e in (local_list or []):
+        if isinstance(e, dict) and e.get("user_id"):
+            uid = str(e["user_id"])
+            try:
+                local_bonus = int(e.get("bonus_entries_used") or 0)
+            except Exception:
+                local_bonus = 0
+
+            if uid in merged_map:
+                fb_bonus = int(merged_map[uid].get("bonus_entries_used") or 0)
+                merged_map[uid]["bonus_entries_used"] = max(local_bonus, fb_bonus)
+                # Preserve wallets, socials, multipliers, and verification status
+                for k in ["evm_wallet", "burner_evm_wallet", "fcfs_evm_wallet", "solana_wallet", "twitter", "telegram", "multiplier", "task_status", "winner_type"]:
+                    if e.get(k) and not merged_map[uid].get(k):
+                        merged_map[uid][k] = e[k]
+            else:
+                merged_map[uid] = dict(e)
+                merged_map[uid]["bonus_entries_used"] = local_bonus
+
+    return list(merged_map.values())
+
 
 
 def is_valid_evm_address(addr: str) -> bool:
@@ -151,12 +189,265 @@ async def get_eth_balance(address: str) -> Optional[float]:
     return None
 
 
+# -------- Multi-Chain Latency & Telemetry Engine -------- #
+SUPPORTED_CHAINS_CONFIG = [
+    {
+        "id": "ethereum",
+        "name": "Ethereum Mainnet",
+        "symbol": "ETH",
+        "rpc_env": "ETH_RPC_URL",
+        "default_rpc": "https://lb.drpc.live/ethereum/AjLst_5h3kUWgCxBylE2TBm_LnAEsCwR8btEMrvp6PLd",
+        "method": "eth_blockNumber",
+        "params": [],
+        "provider": "dRPC Premium Paid Tunnel",
+        "explorer": "https://etherscan.io",
+        "icon": "💎",
+        "type": "EVM"
+    },
+    {
+        "id": "solana",
+        "name": "Solana Mainnet",
+        "symbol": "SOL",
+        "rpc_env": "SOLANA_RPC_URL",
+        "default_rpc": "https://api.mainnet-beta.solana.com",
+        "method": "getSlot",
+        "params": [],
+        "provider": "Solana Labs Mainnet-Beta",
+        "explorer": "https://solscan.io",
+        "icon": "🟣",
+        "type": "SVM"
+    },
+    {
+        "id": "base",
+        "name": "Base Mainnet",
+        "symbol": "BASE",
+        "rpc_env": "BASE_RPC_URL",
+        "default_rpc": "https://mainnet.base.org",
+        "method": "eth_blockNumber",
+        "params": [],
+        "provider": "Base / Coinbase Cloud",
+        "explorer": "https://basescan.org",
+        "icon": "🔵",
+        "type": "EVM (L2)"
+    },
+    {
+        "id": "arbitrum",
+        "name": "Arbitrum One",
+        "symbol": "ARB",
+        "rpc_env": "ARBITRUM_RPC_URL",
+        "default_rpc": "https://arb1.arbitrum.io/rpc",
+        "method": "eth_blockNumber",
+        "params": [],
+        "provider": "Offchain Labs",
+        "explorer": "https://arbiscan.io",
+        "icon": "🔷",
+        "type": "EVM (L2)"
+    },
+    {
+        "id": "polygon",
+        "name": "Polygon PoS",
+        "symbol": "POL",
+        "rpc_env": "POLYGON_RPC_URL",
+        "default_rpc": "https://polygon-bor-rpc.publicnode.com",
+        "method": "eth_blockNumber",
+        "params": [],
+        "provider": "PublicNode Bor",
+        "explorer": "https://polygonscan.com",
+        "icon": "💜",
+        "type": "EVM"
+    },
+    {
+        "id": "bsc",
+        "name": "BNB Smart Chain",
+        "symbol": "BNB",
+        "rpc_env": "BSC_RPC_URL",
+        "default_rpc": "https://bsc-dataseed.binance.org",
+        "method": "eth_blockNumber",
+        "params": [],
+        "provider": "Binance Official DataSeed",
+        "explorer": "https://bscscan.com",
+        "icon": "🟡",
+        "type": "EVM"
+    },
+    {
+        "id": "optimism",
+        "name": "Optimism Mainnet",
+        "symbol": "OP",
+        "rpc_env": "OPTIMISM_RPC_URL",
+        "default_rpc": "https://mainnet.optimism.io",
+        "method": "eth_blockNumber",
+        "params": [],
+        "provider": "OP Mainnet Official",
+        "explorer": "https://optimistic.etherscan.io",
+        "icon": "🔴",
+        "type": "EVM (L2)"
+    }
+]
+
+
+def mask_rpc_url(url: str) -> str:
+    """Mask sensitive RPC URL keys while retaining provider host readability."""
+    if not url:
+        return ""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        path = parsed.path
+        if len(path) > 12:
+            masked_path = path[:6] + "..." + path[-4:]
+        else:
+            masked_path = path
+        return f"{parsed.scheme}://{parsed.netloc}{masked_path}"
+    except Exception:
+        return url[:24] + "..."
+
+
+async def benchmark_single_chain(session: aiohttp.ClientSession, chain: dict) -> dict:
+    """Benchmarks a single blockchain RPC endpoint and calculates exact completion time in milliseconds."""
+    rpc_url = os.getenv(chain.get("rpc_env", "")) or chain.get("default_rpc")
+    if chain["id"] == "ethereum":
+        rpc_url = get_eth_rpc_url()
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": chain["method"],
+        "params": chain["params"]
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "ArccDen-MultiChain-Monitor/2.0"
+    }
+
+    t0 = time.perf_counter()
+    try:
+        async with session.post(rpc_url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=5.5), ssl=False) as resp:
+            data = await resp.json()
+            t1 = time.perf_counter()
+            elapsed_ms = round((t1 - t0) * 1000, 2)
+
+            res = data.get("result")
+            block_num = None
+            if isinstance(res, str) and res.startswith("0x"):
+                try:
+                    block_num = int(res, 16)
+                except Exception:
+                    block_num = res
+            elif isinstance(res, int):
+                block_num = res
+
+            is_ok = (resp.status == 200 and res is not None)
+            
+            if elapsed_ms < 500:
+                speed_tier = "ultra"
+                status_text = "Ultra Fast"
+            elif elapsed_ms < 900:
+                speed_tier = "fast"
+                status_text = "Fast"
+            elif elapsed_ms < 1500:
+                speed_tier = "moderate"
+                status_text = "Moderate"
+            else:
+                speed_tier = "slow"
+                status_text = "High Latency"
+
+            return {
+                "id": chain["id"],
+                "name": chain["name"],
+                "symbol": chain["symbol"],
+                "icon": chain["icon"],
+                "type": chain["type"],
+                "provider": chain["provider"],
+                "masked_rpc": mask_rpc_url(rpc_url),
+                "latency_ms": elapsed_ms,
+                "block_height": block_num,
+                "status": "online" if is_ok else "degraded",
+                "speed_tier": speed_tier,
+                "status_text": status_text if is_ok else "Degraded",
+                "ok": is_ok,
+                "http_status": resp.status
+            }
+    except asyncio.TimeoutError:
+        t1 = time.perf_counter()
+        elapsed_ms = round((t1 - t0) * 1000, 2)
+        return {
+            "id": chain["id"],
+            "name": chain["name"],
+            "symbol": chain["symbol"],
+            "icon": chain["icon"],
+            "type": chain["type"],
+            "provider": chain["provider"],
+            "masked_rpc": mask_rpc_url(rpc_url),
+            "latency_ms": elapsed_ms,
+            "block_height": None,
+            "status": "timeout",
+            "speed_tier": "timeout",
+            "status_text": "Timeout (>5.5s)",
+            "ok": False,
+            "error": "Request timed out (>5.5s)"
+        }
+    except Exception as e:
+        t1 = time.perf_counter()
+        elapsed_ms = round((t1 - t0) * 1000, 2)
+        return {
+            "id": chain["id"],
+            "name": chain["name"],
+            "symbol": chain["symbol"],
+            "icon": chain["icon"],
+            "type": chain["type"],
+            "provider": chain["provider"],
+            "masked_rpc": mask_rpc_url(rpc_url),
+            "latency_ms": elapsed_ms,
+            "block_height": None,
+            "status": "offline",
+            "speed_tier": "offline",
+            "status_text": "Connection Error",
+            "ok": False,
+            "error": str(e)
+        }
+
+
+async def benchmark_all_chains() -> dict:
+    """Executes parallel latency benchmarks across all supported EVM and SVM networks."""
+    connector = aiohttp.TCPConnector(ssl=False)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        results = await asyncio.gather(*(benchmark_single_chain(session, c) for c in SUPPORTED_CHAINS_CONFIG))
+
+    valid_latencies = [r["latency_ms"] for r in results if r.get("ok")]
+    avg_latency = round(sum(valid_latencies) / len(valid_latencies), 2) if valid_latencies else 0.0
+
+    online_results = [r for r in results if r.get("ok")]
+    fastest = min(online_results, key=lambda x: x["latency_ms"], default=None)
+    slowest = max(online_results, key=lambda x: x["latency_ms"], default=None)
+
+    return {
+        "timestamp": int(time.time()),
+        "iso_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "total_chains": len(results),
+        "online_chains": len(online_results),
+        "average_latency_ms": avg_latency,
+        "fastest": {
+            "name": fastest["name"],
+            "symbol": fastest["symbol"],
+            "latency_ms": fastest["latency_ms"]
+        } if fastest else None,
+        "slowest": {
+            "name": slowest["name"],
+            "symbol": slowest["symbol"],
+            "latency_ms": slowest["latency_ms"]
+        } if slowest else None,
+        "chains": results
+    }
+
+
+
+
 
 def get_entry_weights(entries: list, guild=None, g: Optional[dict] = None) -> list:
     """Calculate weight for each giveaway entry based on role multipliers and bonus entries.
     
-    Total Entry Weight = (Role Multiplier) + (Bonus Entries Applied).
-    Default weight = 1.0.
+    Total Entry Weight = max(1.0, Role Multiplier) + Bonus Entries Applied.
+    Each bonus entry adds +1 full ticket weight.
+    Example: 0 bonus entries = 1 ticket (1x). 10 bonus entries = 11 tickets (11x chance).
     """
     giveaway_role_mults = {}
     if g and isinstance(g, dict):
@@ -176,9 +467,16 @@ def get_entry_weights(entries: list, guild=None, g: Optional[dict] = None) -> li
 
     weights = []
     for entry in entries:
-        uid = entry.get("user_id")
-        base_mult = float(entry.get("multiplier", 1.0))
-        bonus = float(entry.get("bonus_entries_used", 0.0))
+        uid = str(entry.get("user_id") or "")
+        try:
+            base_mult = float(entry.get("multiplier") or 1.0)
+        except Exception:
+            base_mult = 1.0
+
+        try:
+            bonus = float(entry.get("bonus_entries_used") or 0.0)
+        except Exception:
+            bonus = 0.0
 
         if guild and uid and giveaway_role_mults:
             try:
@@ -190,7 +488,8 @@ def get_entry_weights(entries: list, guild=None, g: Optional[dict] = None) -> li
             except Exception:
                 pass
         
-        weights.append(max(1.0, base_mult) + max(0.0, bonus))
+        total_weight = max(1.0, base_mult) + max(0.0, bonus)
+        weights.append(total_weight)
     return weights
 
 
@@ -249,15 +548,8 @@ def select_giveaway_winners(entries: list, g: dict, guild=None) -> Tuple[List[di
     random.shuffle(p2_pool)
 
     # Weighted sampling for regular participants based on Discord role multipliers + bonus entries
-    if guild:
-        reg_weights = get_entry_weights(reg_pool, guild, g)
-        reg_pool = weighted_sample_without_replacement(reg_pool, reg_weights, len(reg_pool))
-    else:
-        reg_weights = get_entry_weights(reg_pool, None, g)
-        if any(w != 1.0 for w in reg_weights):
-            reg_pool = weighted_sample_without_replacement(reg_pool, reg_weights, len(reg_pool))
-        else:
-            random.shuffle(reg_pool)
+    reg_weights = get_entry_weights(reg_pool, guild, g)
+    reg_pool = weighted_sample_without_replacement(reg_pool, reg_weights, len(reg_pool))
 
     spot_tiers = g.get("spot_tiers", [])
     winner_summary_lines = []
@@ -389,11 +681,10 @@ def redraw_giveaway_winners(entries: list, g: dict, guild=None) -> Tuple[int, Li
     random.shuffle(p1_pool)
     random.shuffle(p2_pool)
 
-    if guild:
-        reg_weights = get_entry_weights(reg_pool, guild)
-        reg_pool = weighted_sample_without_replacement(reg_pool, reg_weights, len(reg_pool))
-    else:
-        random.shuffle(reg_pool)
+    # Weighted sampling for regular participants based on Discord role multipliers + bonus entries
+    reg_weights = get_entry_weights(reg_pool, guild, g)
+    reg_pool = weighted_sample_without_replacement(reg_pool, reg_weights, len(reg_pool))
+
 
     spot_tiers = g.get("spot_tiers", [])
     winner_summary_lines = []
@@ -4162,6 +4453,10 @@ class ApplyBonusEntriesModal(discord.ui.Modal, title="Apply Bonus Giveaway Entri
             return
         
         g = giveaways.get(self.giveaway_id)
+        if not g or not g.get("is_active") or g.get("winners_drawn") or g.get("is_done"):
+            await safe_respond(interaction, "❌ This giveaway has ended! Bonus entries cannot be used on an ended giveaway.", ephemeral=True)
+            return
+
         entries = giveaway_entries.get(self.giveaway_id, [])
         entry = next((e for e in entries if e.get("user_id") == uid), None)
         if not entry:
@@ -4574,6 +4869,10 @@ class GiveawayView(discord.ui.View):
         g = giveaways.get(g_id)
         if not g:
             await safe_respond(interaction, "❌ Giveaway not found or has been removed.", ephemeral=True)
+            return
+
+        if not g.get("is_active") or g.get("winners_drawn") or g.get("is_done"):
+            await safe_respond(interaction, "❌ This giveaway has ended! Bonus entries cannot be used on an ended giveaway.", ephemeral=True)
             return
 
         entries = giveaway_entries.get(g_id, [])
@@ -6525,6 +6824,10 @@ async def use_bonus_entries_cmd(interaction: discord.Interaction, amount: int, g
         await safe_respond(interaction, "❌ Active giveaway not found. Please specify the Giveaway ID or run this command in the giveaway channel.", ephemeral=True)
         return
 
+    if not g.get("is_active") or g.get("winners_drawn") or g.get("is_done"):
+        await safe_respond(interaction, "❌ This giveaway has ended! Bonus entries can only be used on active giveaways.", ephemeral=True)
+        return
+
     g_id = g.get("id")
     entries = giveaway_entries.get(g_id, [])
     entry = next((e for e in entries if e.get("user_id") == uid), None)
@@ -6554,6 +6857,113 @@ async def use_bonus_entries_cmd(interaction: discord.Interaction, amount: int, g
         color=discord.Color.green()
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+async def _handle_remove_bonus_entries(interaction: discord.Interaction, amount: Optional[int] = None, giveaway_id: Optional[str] = None):
+    """Allows any participant to withdraw/remove their bonus entries from an active giveaway before it ends."""
+    uid = str(interaction.user.id)
+
+    # Resolve giveaway
+    g = None
+    if giveaway_id:
+        g = await resolve_giveaway_by_identifier(giveaway_id)
+    else:
+        ch_id = str(interaction.channel_id)
+        for g_obj in giveaways.values():
+            if str(g_obj.get("channel_id")) == ch_id and g_obj.get("is_active"):
+                g = g_obj
+                break
+
+    if not g:
+        await safe_respond(interaction, "❌ Giveaway not found. Please specify the Giveaway ID or run this command in the giveaway channel.", ephemeral=True)
+        return
+
+    # Check if giveaway is over (Point 3)
+    if not g.get("is_active") or g.get("winners_drawn") or g.get("is_done"):
+        await safe_respond(interaction, "❌ This giveaway has already ended! Bonus entries cannot be removed after a giveaway concludes.", ephemeral=True)
+        return
+
+    g_id = g.get("id")
+    entries = giveaway_entries.get(g_id, [])
+    entry = next((e for e in entries if isinstance(e, dict) and str(e.get("user_id")) == uid), None)
+    if not entry:
+        await safe_respond(interaction, f"❌ You have not joined **{g.get('title', 'this giveaway')}**! You can only withdraw bonus entries from giveaways you have entered.", ephemeral=True)
+        return
+
+    used = int(entry.get("bonus_entries_used") or 0)
+    if used <= 0:
+        await safe_respond(interaction, f"❌ You currently have **0 bonus entries** applied to **{g.get('title', 'this giveaway')}**.", ephemeral=True)
+        return
+
+    if amount is None:
+        to_remove = used
+    else:
+        if amount <= 0:
+            await safe_respond(interaction, "❌ Amount to remove must be at least 1.", ephemeral=True)
+            return
+        if amount > used:
+            await safe_respond(interaction, f"❌ You only have **{used}** bonus entries applied to this giveaway. You cannot remove more than that.", ephemeral=True)
+            return
+        to_remove = amount
+
+    # Apply refund
+    entry["bonus_entries_used"] = used - to_remove
+    prof = get_user_profile_fast(uid, interaction.user)
+    current_bal = int(prof.get("bonus_entries") or 0)
+    new_bal = current_bal + to_remove
+    prof["bonus_entries"] = new_bal
+    user_profiles[uid] = prof
+
+    save_user_profiles()
+    save_giveaway_entries()
+
+    if FIREBASE_URL:
+        await firebase_put(f"user_profiles/{uid}", prof)
+        await firebase_put(f"giveaway_entries/{g_id}", entries)
+
+    base_mult = int(entry.get("multiplier") or 1)
+    new_total_tickets = base_mult + entry["bonus_entries_used"]
+
+    embed = discord.Embed(
+        title="🎟️ Bonus Entries Refunded!",
+        description=(
+            f"Successfully withdrawn **{to_remove}** bonus entries from **{g.get('title')}** and refunded them back to your account!\n\n"
+            f"• **Bonus Entries Withdrawn:** `-{to_remove}` 🎟️\n"
+            f"• **Remaining Bonus on Giveaway:** `+{entry['bonus_entries_used']}` 🎟️\n"
+            f"• **Current Winning Weight:** **{new_total_tickets}x Entries**\n"
+            f"• **Updated Available Bonus Balance:** `{new_bal}` 🎟️"
+        ),
+        color=discord.Color.from_rgb(0, 255, 157)
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="remove-bonus-entries", description="Remove your bonus entries from a giveaway and refund them back to your balance.")
+@app_commands.describe(
+    amount="Number of bonus entries to withdraw (leave empty to withdraw ALL bonus entries applied)",
+    giveaway_id="Optional Giveaway ID (defaults to active giveaway in this channel)"
+)
+async def remove_bonus_entries_cmd(interaction: discord.Interaction, amount: Optional[int] = None, giveaway_id: Optional[str] = None):
+    await _handle_remove_bonus_entries(interaction, amount, giveaway_id)
+
+
+@bot.tree.command(name="remove_bonus_entries", description="Remove your bonus entries from a giveaway (alias).")
+@app_commands.describe(
+    amount="Number of bonus entries to withdraw (leave empty to withdraw ALL bonus entries applied)",
+    giveaway_id="Optional Giveaway ID (defaults to active giveaway in this channel)"
+)
+async def remove_bonus_entries_underscore_cmd(interaction: discord.Interaction, amount: Optional[int] = None, giveaway_id: Optional[str] = None):
+    await _handle_remove_bonus_entries(interaction, amount, giveaway_id)
+
+
+@bot.tree.command(name="withdraw-bonus-entries", description="Withdraw bonus entries from a giveaway back to your balance (alias).")
+@app_commands.describe(
+    amount="Number of bonus entries to withdraw (leave empty to withdraw ALL bonus entries applied)",
+    giveaway_id="Optional Giveaway ID (defaults to active giveaway in this channel)"
+)
+async def withdraw_bonus_entries_cmd(interaction: discord.Interaction, amount: Optional[int] = None, giveaway_id: Optional[str] = None):
+    await _handle_remove_bonus_entries(interaction, amount, giveaway_id)
+
 
 
 @bot.tree.command(name="set-solana-wallet", description="Set your Solana wallet address.")
@@ -7315,6 +7725,142 @@ async def price_slash_command(interaction: discord.Interaction, token: str):
             pass
 
 
+def build_chains_latency_embed(data: dict) -> discord.Embed:
+    """Builds a rich Discord Embed showing exact millisecond completion time for every chain."""
+    avg_ms = data.get("average_latency_ms", 0.0)
+    fastest = data.get("fastest")
+    fastest_str = f"**{fastest['name']}** (`{fastest['latency_ms']} ms`)" if fastest else "N/A"
+    online_count = data.get("online_chains", 0)
+    total_count = data.get("total_chains", 0)
+
+    # Dynamic status color
+    if avg_ms < 600:
+        color = discord.Color.from_rgb(0, 255, 157)  # Cyber lime / electric green
+    elif avg_ms < 1100:
+        color = discord.Color.gold()
+    else:
+        color = discord.Color.orange()
+
+    embed = discord.Embed(
+        title="⚡ ArccDen Multi-Chain Telemetry & Latency Monitor",
+        description=(
+            f"Real-time benchmark measuring round-trip RPC completion time across all active chains.\n\n"
+            f"📊 **Global Telemetry Overview**:\n"
+            f"• **Avg Response Time**: `{avg_ms} ms`\n"
+            f"• **Fastest Network**: {fastest_str}\n"
+            f"• **Health Status**: `{online_count}/{total_count} Chains Operational` 🟢\n"
+            f"• **Measured At**: <t:{data.get('timestamp', int(time.time()))}:T> (<t:{data.get('timestamp', int(time.time()))}:R>)"
+        ),
+        color=color
+    )
+
+    for c in data.get("chains", []):
+        icon = c.get("icon", "⛓️")
+        name = c.get("name", "Unknown Chain")
+        symbol = c.get("symbol", "")
+        ms = c.get("latency_ms", 0.0)
+        ok = c.get("ok", False)
+        block = c.get("block_height")
+        provider = c.get("provider", "RPC Node")
+        tier = c.get("speed_tier", "fast")
+
+        if ok:
+            if tier == "ultra":
+                badge = f"🟢 `{ms} ms` (Ultra Fast)"
+            elif tier == "fast":
+                badge = f"🟢 `{ms} ms` (Fast)"
+            elif tier == "moderate":
+                badge = f"🟡 `{ms} ms` (Moderate)"
+            else:
+                badge = f"🟠 `{ms} ms` (High Latency)"
+
+            block_str = f"#{block:,}" if isinstance(block, int) else (f"#{block}" if block else "Synced")
+            val = (
+                f"⏱️ **Completion Time**: {badge}\n"
+                f"📦 **Current Height**: `{block_str}`\n"
+                f"📡 **Provider**: *{provider}*"
+            )
+        else:
+            err = c.get("error", "Connection failed")
+            val = (
+                f"🔴 **Completion Time**: `FAILED` ({ms} ms)\n"
+                f"⚠️ **Error**: `{err[:45]}`\n"
+                f"📡 **Provider**: *{provider}*"
+            )
+
+        embed.add_field(
+            name=f"{icon} {name} ({symbol})",
+            value=val,
+            inline=False
+        )
+
+    tracker_url = get_public_site_url()
+    embed.set_footer(text=f"ArccDen Multi-Chain Telemetry • Live Web Tracker: {tracker_url}")
+    return embed
+
+
+class ChainLatencyRefreshView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=600)
+        self.add_item(discord.ui.Button(
+            label="Open ArccDen Tracker",
+            emoji="🌐",
+            url=get_public_site_url()
+        ))
+
+    @discord.ui.button(label="Re-Test All Chains", emoji="🔄", style=discord.ButtonStyle.success, custom_id="btn_retest_chains")
+    async def retest_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        button.disabled = True
+        button.label = "Benchmarking Chains..."
+        try:
+            await interaction.message.edit(view=self)
+        except Exception:
+            pass
+
+        data = await benchmark_all_chains()
+        new_embed = build_chains_latency_embed(data)
+
+        button.disabled = False
+        button.label = "Re-Test All Chains"
+        try:
+            await interaction.message.edit(embed=new_embed, view=self)
+        except Exception as e:
+            try:
+                await interaction.followup.send(embed=new_embed, view=self)
+            except Exception:
+                pass
+
+
+@bot.tree.command(name="chains", description="Check total completion time in milliseconds (ms) across all blockchains.")
+async def chains_slash_command(interaction: discord.Interaction):
+    """Benchmarks RPC completion time in milliseconds on all supported chains."""
+    await interaction.response.defer()
+    try:
+        data = await benchmark_all_chains()
+        embed = build_chains_latency_embed(data)
+        view = ChainLatencyRefreshView()
+        await interaction.followup.send(embed=embed, view=view)
+    except Exception as e:
+        print(f"[CHAINS COMMAND ERROR] {e}")
+        traceback.print_exc()
+        try:
+            await interaction.followup.send(f"❌ Failed to benchmark chains: {e}", ephemeral=True)
+        except Exception:
+            pass
+
+
+@bot.tree.command(name="chain-latency", description="Check total completion time in milliseconds (ms) across all blockchains (alias).")
+async def chain_latency_slash_command(interaction: discord.Interaction):
+    await chains_slash_command(interaction)
+
+
+@bot.tree.command(name="rpc-status", description="Check RPC completion time in milliseconds (ms) and network health (alias).")
+async def rpc_status_slash_command(interaction: discord.Interaction):
+    await chains_slash_command(interaction)
+
+
+
 
 
 def format_task_link(ttype: str, val: str) -> str:
@@ -7905,13 +8451,15 @@ async def auto_draw_giveaway_winners(g_id: str):
         g["is_active"] = False
         g["winners_drawn"] = True
 
-        # Fetch entries from Firebase if missing locally
+        # Fetch and intelligently merge entries from local memory & Firebase (preserving bonus entries)
+        local_entries = giveaway_entries.get(g_id, [])
         fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
         if fb_entries and isinstance(fb_entries, (dict, list)):
-            entries = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
-            giveaway_entries[g_id] = entries
+            fb_list = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+            entries = merge_giveaway_entries(local_entries, fb_list)
         else:
-            entries = giveaway_entries.get(g_id, [])
+            entries = local_entries
+        giveaway_entries[g_id] = entries
 
         if not entries:
             g["winners_text"] = "No participants joined."
@@ -9114,14 +9662,16 @@ async def start_health_server():
             g = giveaways.get(g_id)
             if not g: return web.json_response({"error": "Not found"}, status=404)
 
-            # Fetch fresh entries from Firebase Cloud DB first
+            # Fetch and merge entries from Firebase and local memory (preserving bonus entries)
+            local_entries = giveaway_entries.get(g_id, [])
             fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
             if fb_entries and isinstance(fb_entries, (dict, list)):
-                fetched = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
-                if fetched:
-                    giveaway_entries[g_id] = fetched
+                fb_list = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+                entries = merge_giveaway_entries(local_entries, fb_list)
+            else:
+                entries = local_entries
+            giveaway_entries[g_id] = entries
 
-            entries = giveaway_entries.get(g_id, [])
             if not entries:
                 return web.json_response({"error": "No entries to draw from"}, status=400)
 
@@ -9171,14 +9721,16 @@ async def start_health_server():
             g = giveaways.get(g_id)
             if not g: return web.json_response({"error": "Not found"}, status=404)
 
-            # Fetch entries from Firebase to ensure we have latest data
+            # Fetch and merge entries from Firebase and local memory (preserving bonus entries)
+            local_entries = giveaway_entries.get(g_id, [])
             fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
             if fb_entries and isinstance(fb_entries, (dict, list)):
-                fetched = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
-                if fetched:
-                    giveaway_entries[g_id] = fetched
+                fb_list = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+                entries = merge_giveaway_entries(local_entries, fb_list)
+            else:
+                entries = local_entries
+            giveaway_entries[g_id] = entries
 
-            entries = giveaway_entries.get(g_id, [])
             if not entries:
                 return web.json_response({"error": "No entries available"}, status=400)
 
@@ -9319,8 +9871,8 @@ async def start_health_server():
         g = await resolve_giveaway_by_identifier(g_id)
         if not g:
             return web.json_response({"error": "Giveaway not found"}, status=404)
-        if not g.get("is_active"):
-            return web.json_response({"error": "This giveaway has already ended."}, status=400)
+        if not g.get("is_active") or g.get("winners_drawn") or g.get("is_done"):
+            return web.json_response({"error": "This giveaway has ended! Bonus entries cannot be used on an ended giveaway."}, status=400)
         
         g_id = g.get("id", g_id)
         try:
@@ -9343,14 +9895,16 @@ async def start_health_server():
         if avail < amount:
             return web.json_response({"error": f"Insufficient bonus entries. You have {avail} available."}, status=400)
 
+        # Merge local and Firebase entries to prevent data loss
         local_entries = giveaway_entries.get(g_id, [])
-        if FIREBASE_URL and not local_entries:
+        if FIREBASE_URL:
             fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
             if fb_entries and isinstance(fb_entries, (dict, list)):
-                local_entries = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
-                giveaway_entries[g_id] = local_entries
+                fb_list = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+                local_entries = merge_giveaway_entries(local_entries, fb_list)
+        giveaway_entries[g_id] = local_entries
+        entries = local_entries
 
-        entries = giveaway_entries.get(g_id, [])
         entry = next((e for e in entries if isinstance(e, dict) and str(e.get("user_id")) == uid), None)
         if not entry:
             return web.json_response({"error": "You must join this giveaway before applying bonus entries!"}, status=400)
@@ -9378,6 +9932,97 @@ async def start_health_server():
             "total_tickets": total_tickets,
             "remaining_bonus_entries": prof["bonus_entries"]
         })
+
+    async def remove_bonus_entries_handler(request):
+        user = get_session_user(request)
+        if not user:
+            return web.json_response({"error": "Authentication required. Please login first."}, status=401)
+
+        g_id = request.match_info.get("id")
+        g = await resolve_giveaway_by_identifier(g_id)
+        if not g:
+            return web.json_response({"error": "Giveaway not found"}, status=404)
+
+        if not g.get("is_active") or g.get("winners_drawn") or g.get("is_done"):
+            return web.json_response({"error": "This giveaway has already ended. Bonus entries cannot be removed or modified after a giveaway ends."}, status=400)
+
+        g_id = g.get("id", g_id)
+        uid = str(user.get("id"))
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        # Merge local and Firebase entries to prevent data loss
+        local_entries = giveaway_entries.get(g_id, [])
+        if FIREBASE_URL:
+            fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
+            if fb_entries and isinstance(fb_entries, (dict, list)):
+                fb_list = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+                local_entries = merge_giveaway_entries(local_entries, fb_list)
+        giveaway_entries[g_id] = local_entries
+        entries = local_entries
+
+        entry = next((e for e in entries if isinstance(e, dict) and str(e.get("user_id")) == uid), None)
+        if not entry:
+            return web.json_response({"error": "You must join this giveaway before withdrawing bonus entries."}, status=400)
+
+        used = int(entry.get("bonus_entries_used") or 0)
+        if used <= 0:
+            return web.json_response({"error": "You currently have 0 bonus entries applied to this giveaway."}, status=400)
+
+        amount_raw = body.get("amount")
+        if amount_raw is None or str(amount_raw).strip() == "":
+            to_remove = used
+        else:
+            try:
+                to_remove = int(amount_raw)
+            except Exception:
+                return web.json_response({"error": "Invalid amount specified"}, status=400)
+
+        if to_remove <= 0 or to_remove > used:
+            return web.json_response({"error": f"Invalid amount. You have {used} bonus entries applied."}, status=400)
+
+        # Apply removal & refund
+        entry["bonus_entries_used"] = used - to_remove
+        prof = user_profiles.get(uid, {})
+        current_bal = int(prof.get("bonus_entries") or 0)
+        prof["bonus_entries"] = current_bal + to_remove
+        user_profiles[uid] = prof
+
+        save_user_profiles()
+        save_giveaway_entries()
+
+        if FIREBASE_URL:
+            await firebase_put(f"user_profiles/{uid}", prof)
+            await firebase_put(f"giveaway_entries/{g_id}", entries)
+
+        base_mult = int(entry.get("multiplier") or 1)
+        total_tickets = base_mult + entry["bonus_entries_used"]
+
+        return web.json_response({
+            "success": True,
+            "removed": to_remove,
+            "remaining_on_giveaway": entry["bonus_entries_used"],
+            "total_tickets": total_tickets,
+            "remaining_bonus_entries": prof["bonus_entries"]
+        })
+
+    async def chain_latency_handler(request: web.Request) -> web.Response:
+        cors_headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        }
+        if request.method == "OPTIONS":
+            return web.Response(status=204, headers=cors_headers)
+        try:
+            data = await benchmark_all_chains()
+            return web.json_response(data, headers=cors_headers)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500, headers=cors_headers)
 
     async def download_backup_handler(request):
         user = get_session_user(request)
@@ -9670,10 +10315,14 @@ async def start_health_server():
     app.router.add_post("/api/giveaways/{id}/announce", send_announcement_handler)
     app.router.add_post("/api/giveaways/{id}/verify-winner", verify_winner_handler)
     app.router.add_post("/api/giveaways/{id}/apply-bonus-entries", apply_bonus_entries_handler)
+    app.router.add_post("/api/giveaways/{id}/remove-bonus-entries", remove_bonus_entries_handler)
     app.router.add_post("/api/giveaways/{id}/mark-done", mark_giveaway_done_handler)
     app.router.add_post("/api/user/profile", save_profile_handler)
     app.router.add_get("/api/admin/backup", download_backup_handler)
     app.router.add_post("/api/admin/restore", restore_backup_handler)
+    app.router.add_get("/api/chain-latency", chain_latency_handler)
+    app.router.add_get("/api/chains", chain_latency_handler)
+
 
     port_env = os.getenv("PORT") or os.getenv("SERVER_PORT") or "2025"
     port = int(port_env)
