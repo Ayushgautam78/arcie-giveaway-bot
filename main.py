@@ -13,6 +13,7 @@ import urllib.request
 import urllib.error
 import unicodedata
 import traceback
+import uuid
 from typing import Optional, List, Dict, Set, Union, Tuple, Any, Callable, Coroutine
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -148,6 +149,13 @@ def is_valid_evm_address(addr: str) -> bool:
     if not addr or not isinstance(addr, str):
         return False
     return bool(re.match(r"^0x[a-fA-F0-9]{40}$", addr.strip()))
+
+
+def is_valid_solana_address(addr: str) -> bool:
+    """Validates a Solana public key address (Base58 encoded, 32-44 characters)."""
+    if not addr or not isinstance(addr, str):
+        return False
+    return bool(re.match(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$", addr.strip()))
 
 
 def get_eth_rpc_url() -> str:
@@ -904,7 +912,18 @@ def merge_user_profiles(target: dict, source: dict):
         else:
             tgt = target[uid]
             for k, v in src_prof.items():
-                if v and (not isinstance(v, str) or v.strip()):
+                if k == "bonus_transactions" and isinstance(v, list):
+                    existing_tx = tgt.get("bonus_transactions", [])
+                    if isinstance(existing_tx, list):
+                        tx_ids = {t.get("id") for t in existing_tx if isinstance(t, dict) and t.get("id")}
+                        for t in v:
+                            if isinstance(t, dict) and t.get("id") not in tx_ids:
+                                existing_tx.append(t)
+                                tx_ids.add(t.get("id"))
+                        tgt["bonus_transactions"] = existing_tx[-50:]
+                    else:
+                        tgt["bonus_transactions"] = v[-50:]
+                elif v and (not isinstance(v, str) or v.strip()):
                     tgt[k] = v
 
 # Load persistent user profiles (long-term memory across days/weeks)
@@ -944,6 +963,39 @@ def save_user_profiles():
         print(f"[PROFILES ERROR] Failed to save user profiles: {e}")
     if FIREBASE_URL and user_profiles:
         sync_firebase_background("user_profiles", user_profiles)
+
+
+def log_bonus_transaction(user_id: str, t_type: str, amount: int, by: str = "System", reason: str = "", balance_after: int = 0):
+    """
+    Logs a bonus entry transaction (grant, used, refund, reduce) for a user.
+    Keeps up to the last 50 transactions per user.
+    """
+    try:
+        uid_str = str(user_id)
+        if uid_str not in user_profiles:
+            user_profiles[uid_str] = {
+                "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+            }
+        prof = user_profiles[uid_str]
+        history = prof.setdefault("bonus_transactions", [])
+        if not isinstance(history, list):
+            history = []
+            prof["bonus_transactions"] = history
+
+        tx_entry = {
+            "id": str(uuid.uuid4())[:8],
+            "type": str(t_type),  # 'grant', 'used', 'refund', 'reduce'
+            "amount": int(amount),
+            "balance_after": int(balance_after),
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "by": str(by or "System"),
+            "reason": str(reason or "")
+        }
+        history.append(tx_entry)
+        if len(history) > 50:
+            prof["bonus_transactions"] = history[-50:]
+    except Exception as e:
+        print(f"[BONUS TX LOG ERROR] {user_id}: {e}")
 
 # Load persistent giveaways
 if os.path.exists(GIVEAWAYS_FILE):
@@ -4465,6 +4517,15 @@ class ApplyBonusEntriesModal(discord.ui.Modal, title="Apply Bonus Giveaway Entri
 
         user_profiles[uid]["bonus_entries"] = avail - amount
         entry["bonus_entries_used"] = int(entry.get("bonus_entries_used", 0)) + amount
+        title_txt = g.get('title', 'Giveaway') if g else 'Giveaway'
+        log_bonus_transaction(
+            uid,
+            t_type="used",
+            amount=-amount,
+            by=f"User: {interaction.user.name}",
+            reason=f"Applied to Giveaway: {title_txt}",
+            balance_after=user_profiles[uid]["bonus_entries"]
+        )
         save_user_profiles()
         save_giveaway_entries()
         if FIREBASE_URL:
@@ -6479,7 +6540,7 @@ class UserProfileModal(discord.ui.Modal, title="Update Web3 Socials & Wallets"):
     )
     solana = discord.ui.TextInput(
         label="Solana Wallet Address",
-        placeholder="Public Key...",
+        placeholder="Base58 public key (32-44 characters)...",
         required=False,
         max_length=64
     )
@@ -6510,6 +6571,15 @@ class UserProfileModal(discord.ui.Modal, title="Update Web3 Socials & Wallets"):
             )
             return
 
+        # Validate Solana if provided
+        if sol_val and not is_valid_solana_address(sol_val):
+            await safe_respond(
+                interaction,
+                "❌ **Solana Wallet** must be a valid Base58 public key (32-44 characters).",
+                ephemeral=True
+            )
+            return
+
         if uid not in user_profiles:
             user_profiles[uid] = {
                 "display_name": interaction.user.display_name,
@@ -6519,17 +6589,23 @@ class UserProfileModal(discord.ui.Modal, title="Update Web3 Socials & Wallets"):
         
         prof = user_profiles[uid]
 
+        # Clean social handles
+        if tw_val:
+            tw_val = re.sub(r"^https?:\/\/(www\.)?(twitter\.com|x\.com)\/", "@", tw_val).split("?")[0].strip()
+            if not tw_val.startswith("@"):
+                tw_val = f"@{tw_val}"
+            prof["twitter"] = tw_val
+        if tg_val:
+            tg_val = re.sub(r"^https?:\/\/(www\.)?t\.me\/", "@", tg_val).split("?")[0].strip()
+            if not tg_val.startswith("@"):
+                tg_val = f"@{tg_val}"
+            prof["telegram"] = tg_val
+
         # If user entered an EVM wallet but left FCFS blank, and had no existing FCFS wallet:
-        # Default FCFS EVM to Main EVM so they're covered for both
         existing_fcfs = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet")
         if not burner_val and evm_val and not existing_fcfs:
             burner_val = evm_val
 
-        # Update fields if provided (or preserve existing if left empty and field was not explicitly cleared)
-        if tw_val:
-            prof["twitter"] = tw_val
-        if tg_val:
-            prof["telegram"] = tg_val
         if evm_val:
             prof["evm_wallet"] = evm_val
         if burner_val:
@@ -6543,7 +6619,7 @@ class UserProfileModal(discord.ui.Modal, title="Update Web3 Socials & Wallets"):
             await firebase_put(f"user_profiles/{uid}", prof)
         await sync_user_profile_to_unlocked_giveaways(uid)
 
-        embed = discord.Embed(title="👤 Profile & Wallets Saved", color=discord.Color.green())
+        embed = discord.Embed(title="👤 Profile & Wallets Saved", color=discord.Color.from_rgb(0, 255, 157))
         embed.add_field(name="Twitter", value=prof.get("twitter") or "*Not set*", inline=True)
         embed.add_field(name="Telegram", value=prof.get("telegram") or "*Not set*", inline=True)
         embed.add_field(name="Main EVM Wallet", value=f"`{prof.get('evm_wallet')}`" if prof.get('evm_wallet') else "*Not set*", inline=False)
@@ -6552,6 +6628,536 @@ class UserProfileModal(discord.ui.Modal, title="Update Web3 Socials & Wallets"):
         embed.add_field(name="Solana Wallet", value=f"`{prof.get('solana_wallet')}`" if prof.get('solana_wallet') else "*Not set*", inline=False)
         embed.set_footer(text="Edit anytime using /profile | Powered by Arcie Bot")
         await safe_respond(interaction, embed=embed, ephemeral=True)
+
+
+class UserWalletsModal(discord.ui.Modal, title="Update Web3 Wallets"):
+    evm = discord.ui.TextInput(
+        label="Main EVM Wallet (0x...)",
+        placeholder="0x1234...5678 (42 characters)",
+        required=False,
+        max_length=64
+    )
+    fcfs_evm = discord.ui.TextInput(
+        label="FCFS EVM Wallet (0x...)",
+        placeholder="0xabcd...ef01 (42 characters)",
+        required=False,
+        max_length=64
+    )
+    solana = discord.ui.TextInput(
+        label="Solana Wallet Address",
+        placeholder="Base58 public key (32-44 characters)",
+        required=False,
+        max_length=64
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
+        evm_val = self.evm.value.strip() if self.evm.value else ""
+        fcfs_val = self.fcfs_evm.value.strip() if self.fcfs_evm.value else ""
+        sol_val = self.solana.value.strip() if self.solana.value else ""
+
+        if evm_val and not is_valid_evm_address(evm_val):
+            await safe_respond(
+                interaction,
+                "❌ **Main EVM Wallet** must be a valid 42-character 0x address (e.g. `0x1234...5678`).",
+                ephemeral=True
+            )
+            return
+
+        if fcfs_val and not is_valid_evm_address(fcfs_val):
+            await safe_respond(
+                interaction,
+                "❌ **FCFS EVM Wallet** must be a valid 42-character 0x address (e.g. `0xabcd...ef01`).",
+                ephemeral=True
+            )
+            return
+
+        if sol_val and not is_valid_solana_address(sol_val):
+            await safe_respond(
+                interaction,
+                "❌ **Solana Wallet** must be a valid Base58 public key (32-44 characters).",
+                ephemeral=True
+            )
+            return
+
+        prof = get_user_profile_fast(uid, interaction.user)
+        if uid not in user_profiles:
+            user_profiles[uid] = {
+                "display_name": interaction.user.display_name,
+                "username": interaction.user.name,
+                "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+            }
+            prof = user_profiles[uid]
+
+        # Default FCFS EVM to Main EVM if blank and no previous FCFS is set
+        existing_fcfs = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet")
+        if not fcfs_val and evm_val and not existing_fcfs:
+            fcfs_val = evm_val
+
+        prof["evm_wallet"] = evm_val
+        prof["fcfs_evm_wallet"] = fcfs_val
+        prof["burner_evm_wallet"] = fcfs_val
+        prof["solana_wallet"] = sol_val
+
+        save_user_profiles()
+        if FIREBASE_URL:
+            await firebase_put(f"user_profiles/{uid}", prof)
+        await sync_user_profile_to_unlocked_giveaways(uid)
+
+        embed = discord.Embed(
+            title="👛 Web3 Wallets Successfully Updated!",
+            description="Your crypto addresses have been linked to your ArccDen profile and synced with all active giveaways.",
+            color=discord.Color.from_rgb(0, 255, 157)
+        )
+        embed.add_field(name="💎 Main EVM Wallet", value=f"`{evm_val}`" if evm_val else "*Not set*", inline=False)
+        embed.add_field(name="⚡ FCFS EVM Wallet", value=f"`{fcfs_val}`" if fcfs_val else "*Not set*", inline=False)
+        embed.add_field(name="🪐 Solana Wallet", value=f"`{sol_val}`" if sol_val else "*Not set*", inline=False)
+        embed.set_footer(text="🔒 Private & Secure • Synced to ArccDen Giveaway System")
+        await safe_respond(interaction, embed=embed, ephemeral=True)
+
+
+class UserSocialsModal(discord.ui.Modal, title="Connect Social Accounts"):
+    twitter = discord.ui.TextInput(
+        label="Twitter / X Handle",
+        placeholder="@yourhandle",
+        required=False,
+        max_length=64
+    )
+    telegram = discord.ui.TextInput(
+        label="Telegram Username",
+        placeholder="@username",
+        required=False,
+        max_length=64
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
+        tw_raw = self.twitter.value.strip() if self.twitter.value else ""
+        tg_raw = self.telegram.value.strip() if self.telegram.value else ""
+
+        # Clean Twitter handle
+        tw_clean = tw_raw
+        if tw_clean:
+            tw_clean = re.sub(r"^https?:\/\/(www\.)?(twitter\.com|x\.com)\/", "@", tw_clean).split("?")[0].strip()
+            if not tw_clean.startswith("@"):
+                tw_clean = f"@{tw_clean}"
+
+        # Clean Telegram username
+        tg_clean = tg_raw
+        if tg_clean:
+            tg_clean = re.sub(r"^https?:\/\/(www\.)?t\.me\/", "@", tg_clean).split("?")[0].strip()
+            if not tg_clean.startswith("@"):
+                tg_clean = f"@{tg_clean}"
+
+        prof = get_user_profile_fast(uid, interaction.user)
+        if uid not in user_profiles:
+            user_profiles[uid] = {
+                "display_name": interaction.user.display_name,
+                "username": interaction.user.name,
+                "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+            }
+            prof = user_profiles[uid]
+
+        prof["twitter"] = tw_clean
+        prof["telegram"] = tg_clean
+
+        save_user_profiles()
+        if FIREBASE_URL:
+            await firebase_put(f"user_profiles/{uid}", prof)
+        await sync_user_profile_to_unlocked_giveaways(uid)
+
+        embed = discord.Embed(
+            title="🐦 Socials Successfully Connected!",
+            description="Your social handles have been linked to your ArccDen profile and synced with active giveaways.",
+            color=discord.Color.from_rgb(0, 255, 157)
+        )
+        embed.add_field(name="🐦 Twitter / X", value=f"**{tw_clean}**" if tw_clean else "*Not set*", inline=True)
+        embed.add_field(name="✈️ Telegram", value=f"**{tg_clean}**" if tg_clean else "*Not set*", inline=True)
+        embed.set_footer(text="🔒 Private & Secure • Powered by Arcie Bot")
+        await safe_respond(interaction, embed=embed, ephemeral=True)
+
+
+def get_user_role_multiplier(guild: Optional[discord.Guild], member: Optional[Union[discord.Member, discord.User]]) -> float:
+    """Calculates the highest active role multiplier for a guild member."""
+    if not guild or not isinstance(member, discord.Member):
+        return 1.0
+    highest = 1.0
+    member_role_ids = {str(r.id) for r in member.roles}
+    for rid_str, mult in ROLE_MULTIPLIERS.items():
+        if rid_str in member_role_ids:
+            try:
+                highest = max(highest, float(mult))
+            except Exception:
+                pass
+    return highest
+
+
+async def render_user_profile_card(interaction: discord.Interaction, target_user: Optional[Union[discord.Member, discord.User]] = None) -> discord.Embed:
+    """Renders the comprehensive, private ArccDen user profile embed card."""
+    usr = target_user or interaction.user
+    uid = str(usr.id)
+    prof = get_user_profile_fast(uid, usr)
+
+    bonus_bal = int(prof.get("bonus_entries") or 0)
+    evm = prof.get("evm_wallet") or ""
+    fcfs = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet") or ""
+    sol = prof.get("solana_wallet") or ""
+    tw = prof.get("twitter") or ""
+    tg = prof.get("telegram") or ""
+
+    # Count giveaways joined and active bonus in use
+    joined_count = 0
+    bonus_in_use = 0
+    for g_id, g_entries in giveaway_entries.items():
+        if isinstance(g_entries, list):
+            for e in g_entries:
+                if isinstance(e, dict) and str(e.get("user_id")) == uid:
+                    joined_count += 1
+                    g_obj = giveaways.get(g_id)
+                    if g_obj and g_obj.get("is_active") and not g_obj.get("winners_drawn") and not g_obj.get("is_done"):
+                        bonus_in_use += int(e.get("bonus_entries_used") or 0)
+
+    # Multiplier
+    guild = interaction.guild
+    member = guild.get_member(usr.id) if guild else (usr if isinstance(usr, discord.Member) else None)
+    role_mult = get_user_role_multiplier(guild, member)
+
+    embed = discord.Embed(
+        title=f"🛡️ {usr.display_name}'s ArccDen Profile",
+        description=(
+            f"**Member Identity & Giveaway Status**\n"
+            f"• **Discord:** {usr.mention} (`{usr.name}`)\n"
+            f"• **Discord ID:** `{uid}`\n"
+            f"• **Available Bonus Tickets:** **`{bonus_bal}`** 🎟️\n"
+            f"• **Role Boost:** **`{role_mult:g}x`** Multiplier\n"
+            f"• **Giveaways Entered:** **`{joined_count}`** (Active Bonus Applied: `{bonus_in_use}` 🎟️)\n"
+        ),
+        color=discord.Color.from_rgb(0, 255, 157)
+    )
+
+    pfp_url = usr.display_avatar.url if usr.display_avatar else None
+    if pfp_url:
+        embed.set_thumbnail(url=pfp_url)
+
+    embed.add_field(
+        name="💎 Main EVM Wallet",
+        value=f"`{evm}`" if evm else "*Not Linked — Click [👛 Wallets] to set*",
+        inline=False
+    )
+    embed.add_field(
+        name="⚡ FCFS EVM Wallet",
+        value=f"`{fcfs}`" if fcfs else "*Not Linked — Click [👛 Wallets] to set*",
+        inline=False
+    )
+    embed.add_field(
+        name="🪐 Solana Wallet",
+        value=f"`{sol}`" if sol else "*Not Linked — Click [👛 Wallets] to set*",
+        inline=False
+    )
+    embed.add_field(
+        name="🐦 Twitter / X",
+        value=f"**{tw}**" if tw else "*Not Linked — Click [🐦 Connect Socials]*",
+        inline=True
+    )
+    embed.add_field(
+        name="✈️ Telegram",
+        value=f"**{tg}**" if tg else "*Not Linked — Click [🐦 Connect Socials]*",
+        inline=True
+    )
+
+    embed.set_footer(text="🔒 All actions are private — only you can see your data | ArccDen")
+    return embed
+
+
+async def render_user_bonus_balance(interaction: discord.Interaction, target_user: Optional[Union[discord.Member, discord.User]] = None) -> discord.Embed:
+    """Renders the bonus tickets balance and odds boost breakdown embed."""
+    usr = target_user or interaction.user
+    uid = str(usr.id)
+    prof = get_user_profile_fast(uid, usr)
+
+    bonus_bal = int(prof.get("bonus_entries") or 0)
+    guild = interaction.guild
+    member = guild.get_member(usr.id) if guild else (usr if isinstance(usr, discord.Member) else None)
+    role_mult = get_user_role_multiplier(guild, member)
+
+    # Calculate active bonus entries used across live giveaways
+    active_bonus_used = 0
+    total_bonus_used_lifetime = 0
+    for g_id, g_entries in giveaway_entries.items():
+        if isinstance(g_entries, list):
+            for e in g_entries:
+                if isinstance(e, dict) and str(e.get("user_id")) == uid:
+                    used = int(e.get("bonus_entries_used") or 0)
+                    total_bonus_used_lifetime += used
+                    g_obj = giveaways.get(g_id)
+                    if g_obj and g_obj.get("is_active") and not g_obj.get("winners_drawn") and not g_obj.get("is_done"):
+                        active_bonus_used += used
+
+    embed = discord.Embed(
+        title="🎟️ Your ArccDen Bonus Balance & Multipliers",
+        description=(
+            f"**Current Giveaway Power for {usr.mention}:**\n\n"
+            f"• 🎟️ **Available Bonus Entries:** **`{bonus_bal}`** 🎟️\n"
+            f"• 🎯 **Bonus Entries in Active Raffles:** **`{active_bonus_used}`** 🎟️\n"
+            f"• 🚀 **Base Role Multiplier:** **`{role_mult:g}x`** Boost\n"
+            f"• 📊 **Lifetime Bonus Entries Used:** **`{total_bonus_used_lifetime}`** 🎟️\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💡 **How Bonus Entries Work:**\n"
+            f"Bonus entries provide direct **+1x winning ticket weight** per bonus ticket applied.\n"
+            f"For example, with a **{role_mult:g}x** role multiplier and **3 bonus entries**, your winning ticket weight becomes **`{role_mult + 3:g}x`**!\n\n"
+            f"✨ *Apply your bonus entries on any active giveaway via **[View Your Entry] ➔ [Apply Bonus Entries]** or `/use-bonus-entries`!*"
+        ),
+        color=discord.Color.gold()
+    )
+    pfp_url = usr.display_avatar.url if usr.display_avatar else None
+    if pfp_url:
+        embed.set_thumbnail(url=pfp_url)
+    embed.set_footer(text="🔒 Private Balance Sheet | Powered by Arcie Bot")
+    return embed
+
+
+async def render_user_bonus_history(interaction: discord.Interaction, target_user: Optional[Union[discord.Member, discord.User]] = None) -> discord.Embed:
+    """Renders the last 10 bonus entries transactions with timestamps, types, reasons, and balances."""
+    usr = target_user or interaction.user
+    uid = str(usr.id)
+    prof = get_user_profile_fast(uid, usr)
+
+    bonus_bal = int(prof.get("bonus_entries") or 0)
+    history = prof.get("bonus_transactions", [])
+    if not isinstance(history, list):
+        history = []
+
+    embed = discord.Embed(
+        title="📜 Bonus Entries Transaction History",
+        color=discord.Color.from_rgb(0, 229, 255)
+    )
+    pfp_url = usr.display_avatar.url if usr.display_avatar else None
+    if pfp_url:
+        embed.set_thumbnail(url=pfp_url)
+
+    if not history:
+        embed.description = (
+            f"**User:** {usr.mention} (`{usr.name}`)\n"
+            f"• **Current Available Balance:** **`{bonus_bal}`** 🎟️\n\n"
+            f"*(No bonus entry transactions recorded yet.)*\n\n"
+            f"💡 *Earn bonus entries by participating in server events, winning mini-games, or receiving moderator grants!*"
+        )
+    else:
+        last_10 = list(reversed(history[-10:]))
+        lines = [
+            f"**User:** {usr.mention} (`{usr.name}`)\n"
+            f"• **Current Available Balance:** **`{bonus_bal}`** 🎟️\n\n"
+            f"**Last {len(last_10)} Transactions (Most Recent First):**\n"
+        ]
+        for idx, tx in enumerate(last_10, 1):
+            ts = tx.get("timestamp", "Recent")
+            t_type = tx.get("type", "tx")
+            amt = tx.get("amount", 0)
+            bal_after = tx.get("balance_after", 0)
+            reason = tx.get("reason", "No reason provided")
+            by = tx.get("by", "System")
+
+            if t_type == "grant":
+                badge = f"🟢 **+{abs(amt)} Granted**"
+            elif t_type == "used":
+                badge = f"🔴 **-{abs(amt)} Used**"
+            elif t_type == "refund":
+                badge = f"🔵 **+{abs(amt)} Refunded**"
+            elif t_type == "reduce":
+                badge = f"🟠 **-{abs(amt)} Reduced**"
+            else:
+                badge = f"⚪ **{amt:+d}**"
+
+            lines.append(
+                f"`{idx:02d}.` `{ts}` — {badge}\n"
+                f"    ↳ *{reason}* | By: `{by}` | Balance: `{bal_after}` 🎟️"
+            )
+
+        embed.description = "\n".join(lines)
+
+    embed.set_footer(text="🔒 All actions are private — only you can see your data | ArccDen")
+    return embed
+
+
+def create_profile_panel_embed(bot_instance: commands.Bot, title: Optional[str] = None, description: Optional[str] = None) -> discord.Embed:
+    """Constructs the high-fidelity ArccDen Profile embed with bot avatar thumbnail and electric cyber-lime styling."""
+    embed_title = title or "🛡️ Your ArccDen Profile"
+    embed_desc = description or (
+        "Welcome to the **ArccDen Web3 Profile & Giveaway Hub**!\n"
+        "Manage your crypto addresses, connect your social handles, and check your raffle stats below.\n\n"
+        "• 🛡️ **View Profile:** View your profile, balance & history\n"
+        "• 👛 **Wallets:** Link your Main EVM, FCFS EVM & SOL wallets\n"
+        "• 🐦 **Connect Socials:** Connect your Twitter/X & Telegram handles\n"
+        "• 🎟️ **Bonus Balance:** Check your bonus tickets & role multipliers\n"
+        "• 📜 **Transaction History:** Review your last 10 bonus entry records\n"
+        "• 🌐 **ArccDen Tracker:** Live on-chain giveaway telemetry & entries\n\n"
+        "⚠️ **All actions are private — only you can see your data!**"
+    )
+    embed = discord.Embed(
+        title=embed_title,
+        description=embed_desc,
+        color=discord.Color.from_rgb(0, 255, 157)
+    )
+    if bot_instance.user and bot_instance.user.display_avatar:
+        embed.set_thumbnail(url=bot_instance.user.display_avatar.url)
+    embed.set_footer(text="Powered by Arcie Bot • ArccDen Web3 Ecosystem")
+    return embed
+
+
+class PersistentProfilePanelView(discord.ui.View):
+    """
+    Persistent Interactive Profile Panel View with timeout=None and static custom_ids.
+    Survives bot reboots and works 24/7 across servers and DMs.
+    """
+    def __init__(self):
+        super().__init__(timeout=None)
+        # Tracker Link Button
+        self.add_item(discord.ui.Button(
+            label="ArccDen Tracker",
+            emoji="🌐",
+            url="https://arcie-giveaway-bot-lb4z.vercel.app/",
+            row=2
+        ))
+
+    @discord.ui.button(
+        label="View Profile",
+        style=discord.ButtonStyle.primary,
+        emoji="🛡️",
+        custom_id="arcc_profile_view_btn",
+        row=0
+    )
+    async def view_profile_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            embed = await render_user_profile_card(interaction)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        except Exception as e:
+            print(f"[PROFILE VIEW ERROR] {e}")
+            await safe_respond(interaction, f"❌ Failed to load profile: {e}", ephemeral=True)
+
+    @discord.ui.button(
+        label="Bonus Balance",
+        style=discord.ButtonStyle.secondary,
+        emoji="🎟️",
+        custom_id="arcc_profile_bonus_btn",
+        row=0
+    )
+    async def bonus_balance_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            embed = await render_user_bonus_balance(interaction)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        except Exception as e:
+            print(f"[BONUS BALANCE ERROR] {e}")
+            await safe_respond(interaction, f"❌ Failed to load bonus balance: {e}", ephemeral=True)
+
+    @discord.ui.button(
+        label="Transaction History",
+        style=discord.ButtonStyle.secondary,
+        emoji="📜",
+        custom_id="arcc_profile_tx_btn",
+        row=1
+    )
+    async def tx_history_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            embed = await render_user_bonus_history(interaction)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        except Exception as e:
+            print(f"[TX HISTORY ERROR] {e}")
+            await safe_respond(interaction, f"❌ Failed to load transaction history: {e}", ephemeral=True)
+
+    @discord.ui.button(
+        label="Wallets",
+        style=discord.ButtonStyle.secondary,
+        emoji="👛",
+        custom_id="arcc_profile_wallets_btn",
+        row=1
+    )
+    async def wallets_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            uid = str(interaction.user.id)
+            prof = get_user_profile_fast(uid, interaction.user)
+            modal = UserWalletsModal()
+            evm_val = str(prof.get("evm_wallet") or "").strip()
+            if evm_val and is_valid_evm_address(evm_val):
+                modal.evm.default = evm_val
+            fcfs_val = str(prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet") or "").strip()
+            if fcfs_val and is_valid_evm_address(fcfs_val):
+                modal.fcfs_evm.default = fcfs_val
+            sol_val = str(prof.get("solana_wallet") or "").strip()
+            if sol_val and is_valid_solana_address(sol_val):
+                modal.solana.default = sol_val
+            await interaction.response.send_modal(modal)
+        except Exception as e:
+            print(f"[WALLETS MODAL ERROR] {e}")
+            await safe_respond(interaction, f"❌ Failed to open wallets modal: {e}", ephemeral=True)
+
+    @discord.ui.button(
+        label="Connect Socials",
+        style=discord.ButtonStyle.secondary,
+        emoji="🐦",
+        custom_id="arcc_profile_socials_btn",
+        row=2
+    )
+    async def socials_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            uid = str(interaction.user.id)
+            prof = get_user_profile_fast(uid, interaction.user)
+            modal = UserSocialsModal()
+            if prof.get("twitter"):
+                modal.twitter.default = str(prof.get("twitter"))
+            if prof.get("telegram"):
+                modal.telegram.default = str(prof.get("telegram"))
+            await interaction.response.send_modal(modal)
+        except Exception as e:
+            print(f"[SOCIALS MODAL ERROR] {e}")
+            await safe_respond(interaction, f"❌ Failed to open socials modal: {e}", ephemeral=True)
+
+
+@bot.tree.command(name="setup-profile-panel", description="Admin: Send persistent ArccDen Profile & Wallet Dashboard panel.")
+@app_commands.describe(
+    channel="Target channel to post the profile panel (default: current channel)",
+    title="Optional custom title for the embed",
+    description="Optional custom description text"
+)
+async def setup_profile_panel_cmd(
+    interaction: discord.Interaction,
+    channel: Optional[discord.TextChannel] = None,
+    title: Optional[str] = None,
+    description: Optional[str] = None
+):
+    uid = str(interaction.user.id)
+    is_admin = is_bot_admin_by_id(uid)
+    has_perm = interaction.permissions and (interaction.permissions.manage_guild or interaction.permissions.administrator)
+    if not (is_admin or has_perm):
+        await safe_respond(interaction, "❌ Admin / Manage Server permission required to deploy the profile panel.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    target_ch = channel or interaction.channel
+    embed = create_profile_panel_embed(bot, title, description)
+    view = PersistentProfilePanelView()
+
+    try:
+        msg = await target_ch.send(embed=embed, view=view)
+        bot.add_view(view, message_id=msg.id)
+        await interaction.followup.send(f"✅ **Persistent Profile Panel** deployed successfully in {target_ch.mention}!", ephemeral=True)
+    except Exception as e:
+        print(f"[SETUP PROFILE PANEL FAIL] {e}")
+        await interaction.followup.send(f"❌ Failed to post profile panel: {e}", ephemeral=True)
+
+
+@bot.tree.command(name="profile-panel", description="Admin: Send persistent ArccDen Profile & Wallet Dashboard panel (alias).")
+@app_commands.describe(
+    channel="Target channel to post the profile panel (default: current channel)",
+    title="Optional custom title for the embed",
+    description="Optional custom description text"
+)
+async def profile_panel_cmd(
+    interaction: discord.Interaction,
+    channel: Optional[discord.TextChannel] = None,
+    title: Optional[str] = None,
+    description: Optional[str] = None
+):
+    await setup_profile_panel_cmd(interaction, channel, title, description)
 
 
 @bot.tree.error
@@ -6568,25 +7174,12 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         pass
 
 
-@bot.tree.command(name="profile", description="Manage your Web3 wallets & social handles for giveaways!")
+@bot.tree.command(name="profile", description="View & manage your ArccDen Web3 profile, wallets, and bonus entries.")
 async def profile_cmd(interaction: discord.Interaction):
     try:
-        uid = str(interaction.user.id)
-        prof = get_user_profile_fast(uid, interaction.user)
-        modal = UserProfileModal()
-        if prof.get("twitter"):
-            modal.twitter.default = str(prof.get("twitter"))
-        if prof.get("telegram"):
-            modal.telegram.default = str(prof.get("telegram"))
-        evm_val = str(prof.get("evm_wallet") or "").strip()
-        if evm_val and is_valid_evm_address(evm_val):
-            modal.evm.default = evm_val
-        fcfs_val = str(prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet") or "").strip()
-        if fcfs_val and is_valid_evm_address(fcfs_val):
-            modal.burner_evm.default = fcfs_val
-        if prof.get("solana_wallet"):
-            modal.solana.default = str(prof.get("solana_wallet"))
-        await interaction.response.send_modal(modal)
+        embed = await render_user_profile_card(interaction)
+        view = PersistentProfilePanelView()
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -6702,6 +7295,14 @@ async def _handle_allow_bonus_entry(interaction: discord.Interaction, user: disc
     current_bonus = int(user_profiles[target_id].get("bonus_entries", 0))
     new_bonus = current_bonus + amount
     user_profiles[target_id]["bonus_entries"] = new_bonus
+    log_bonus_transaction(
+        target_id,
+        t_type="grant",
+        amount=amount,
+        by=f"Admin: {interaction.user.name}",
+        reason=reason or "Admin Grant",
+        balance_after=new_bonus
+    )
     save_user_profiles()
     if FIREBASE_URL:
         await firebase_put(f"user_profiles/{target_id}", user_profiles[target_id])
@@ -6743,6 +7344,14 @@ async def _handle_reduce_bonus_entries(interaction: discord.Interaction, user: d
     new_bonus = max(0, current_bonus - amount)
     actual_deducted = current_bonus - new_bonus
     user_profiles[target_id]["bonus_entries"] = new_bonus
+    log_bonus_transaction(
+        target_id,
+        t_type="reduce",
+        amount=-actual_deducted,
+        by=f"Admin: {interaction.user.name}",
+        reason=reason or "Admin Deduction",
+        balance_after=new_bonus
+    )
     save_user_profiles()
     if FIREBASE_URL:
         await firebase_put(f"user_profiles/{target_id}", user_profiles[target_id])
@@ -6838,6 +7447,14 @@ async def use_bonus_entries_cmd(interaction: discord.Interaction, amount: int, g
     # Apply entries
     user_profiles[uid]["bonus_entries"] = avail - amount
     entry["bonus_entries_used"] = int(entry.get("bonus_entries_used", 0)) + amount
+    log_bonus_transaction(
+        uid,
+        t_type="used",
+        amount=-amount,
+        by=f"User: {interaction.user.name}",
+        reason=f"Applied to Giveaway: {g.get('title', g_id)}",
+        balance_after=user_profiles[uid]["bonus_entries"]
+    )
     save_user_profiles()
     save_giveaway_entries()
     if FIREBASE_URL:
@@ -6913,6 +7530,14 @@ async def _handle_remove_bonus_entries(interaction: discord.Interaction, amount:
     new_bal = current_bal + to_remove
     prof["bonus_entries"] = new_bal
     user_profiles[uid] = prof
+    log_bonus_transaction(
+        uid,
+        t_type="refund",
+        amount=to_remove,
+        by=f"User: {interaction.user.name}",
+        reason=f"Refunded from Giveaway: {g.get('title', g_id)}",
+        balance_after=new_bal
+    )
 
     save_user_profiles()
     save_giveaway_entries()
@@ -8665,13 +9290,14 @@ async def on_ready():
     if ga_restored:
         print(f"[GIVEAWAY RESTORE] Registered persistent views for {ga_restored} giveaway(s).")
 
-    # 3b. Register persistent ticket views across restarts
+    # 3b. Register persistent ticket & profile views across restarts
     try:
         bot.add_view(TicketLaunchView())
         bot.add_view(TicketControlView())
-        print("[TICKETS RESTORE] Registered persistent TicketLaunchView and TicketControlView.")
+        bot.add_view(PersistentProfilePanelView())
+        print("[VIEWS RESTORE] Registered persistent TicketLaunchView, TicketControlView, and PersistentProfilePanelView.")
     except Exception as t_err:
-        print(f"[TICKETS RESTORE ERROR] {t_err}")
+        print(f"[VIEWS RESTORE ERROR] {t_err}")
 
     # 4. Launch continuous background channel sync & giveaway poster loop (ONCE ONLY)
     global _bg_poster_task_started
@@ -9916,6 +10542,15 @@ async def start_health_server():
         # Add to entry
         entry["bonus_entries_used"] = int(entry.get("bonus_entries_used", 0)) + amount
         
+        log_bonus_transaction(
+            uid,
+            t_type="used",
+            amount=-amount,
+            by=f"Web Dashboard: {user.get('username', uid)}",
+            reason=f"Applied to Giveaway: {g.get('title', g_id)}",
+            balance_after=prof["bonus_entries"]
+        )
+
         save_user_profiles()
         save_giveaway_entries()
 
@@ -9990,6 +10625,15 @@ async def start_health_server():
         current_bal = int(prof.get("bonus_entries") or 0)
         prof["bonus_entries"] = current_bal + to_remove
         user_profiles[uid] = prof
+
+        log_bonus_transaction(
+            uid,
+            t_type="refund",
+            amount=to_remove,
+            by=f"Web Dashboard: {user.get('username', uid)}",
+            reason=f"Refunded from Giveaway: {g.get('title', g_id)}",
+            balance_after=prof["bonus_entries"]
+        )
 
         save_user_profiles()
         save_giveaway_entries()
