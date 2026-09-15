@@ -7563,22 +7563,297 @@ async def _handle_remove_bonus_entries(interaction: discord.Interaction, amount:
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="remove-bonus-entries", description="Remove your bonus entries from a giveaway and refund them back to your balance.")
-@app_commands.describe(
-    amount="Number of bonus entries to withdraw (leave empty to withdraw ALL bonus entries applied)",
-    giveaway_id="Optional Giveaway ID (defaults to active giveaway in this channel)"
-)
-async def remove_bonus_entries_cmd(interaction: discord.Interaction, amount: Optional[int] = None, giveaway_id: Optional[str] = None):
-    await _handle_remove_bonus_entries(interaction, amount, giveaway_id)
+async def _handle_admin_remove_bonus_entries(
+    interaction: discord.Interaction,
+    target_user: discord.User,
+    amount: Optional[int] = None,
+    giveaway_id: Optional[str] = None
+):
+    """Admin tool: Deducts bonus entries from any participant's giveaway entry and refunds them back to their balance."""
+    admin_uid = str(interaction.user.id)
+    is_admin = is_bot_admin_by_id(admin_uid)
+    has_perm = interaction.permissions and (interaction.permissions.manage_guild or interaction.permissions.administrator)
+    if not (is_admin or has_perm):
+        await safe_respond(interaction, "❌ You do not have permission to modify participant bonus entries (Admin / Manage Server required).", ephemeral=True)
+        return
+
+    # Resolve giveaway
+    g = None
+    if giveaway_id:
+        g = await resolve_giveaway_by_identifier(giveaway_id)
+    else:
+        ch_id = str(interaction.channel_id)
+        for g_obj in giveaways.values():
+            if str(g_obj.get("channel_id")) == ch_id and g_obj.get("is_active"):
+                g = g_obj
+                break
+
+    if not g:
+        await safe_respond(interaction, "❌ Giveaway not found. Please specify the Giveaway ID or run this command in the giveaway channel.", ephemeral=True)
+        return
+
+    if not g.get("is_active") or g.get("winners_drawn") or g.get("is_done"):
+        await safe_respond(interaction, "❌ This giveaway has ended! Bonus entries cannot be modified on concluded giveaways.", ephemeral=True)
+        return
+
+    g_id = g.get("id")
+    target_uid = str(target_user.id)
+    entries = giveaway_entries.get(g_id, [])
+    entry = next((e for e in entries if isinstance(e, dict) and str(e.get("user_id")) == target_uid), None)
+    if not entry:
+        await safe_respond(interaction, f"❌ {target_user.mention} has not joined **{g.get('title', 'this giveaway')}**!", ephemeral=True)
+        return
+
+    used = int(entry.get("bonus_entries_used") or 0)
+    if used <= 0:
+        await safe_respond(interaction, f"❌ {target_user.mention} currently has **0 bonus entries** applied to **{g.get('title', 'this giveaway')}**.", ephemeral=True)
+        return
+
+    if amount is None:
+        to_remove = used
+    else:
+        if amount <= 0:
+            await safe_respond(interaction, "❌ Amount to remove must be at least 1.", ephemeral=True)
+            return
+        if amount > used:
+            await safe_respond(interaction, f"❌ {target_user.mention} only has **{used}** bonus entries applied to this giveaway. You cannot remove more than that.", ephemeral=True)
+            return
+        to_remove = amount
+
+    # Apply refund to target user
+    entry["bonus_entries_used"] = used - to_remove
+    prof = get_user_profile_fast(target_uid, target_user)
+    current_bal = int(prof.get("bonus_entries") or 0)
+    new_bal = current_bal + to_remove
+    prof["bonus_entries"] = new_bal
+    user_profiles[target_uid] = prof
+
+    log_bonus_transaction(
+        target_uid,
+        t_type="refund",
+        amount=to_remove,
+        by=f"Admin: {interaction.user.name}",
+        reason=f"Admin removed bonus from Giveaway: {g.get('title', g_id)}",
+        balance_after=new_bal
+    )
+
+    save_user_profiles()
+    save_giveaway_entries()
+
+    if FIREBASE_URL:
+        await firebase_put(f"user_profiles/{target_uid}", prof)
+        await firebase_put(f"giveaway_entries/{g_id}", entries)
+
+    base_mult = int(entry.get("multiplier") or 1)
+    new_total_tickets = base_mult + entry["bonus_entries_used"]
+
+    embed = discord.Embed(
+        title="🎟️ Participant Bonus Entries Removed",
+        description=(
+            f"Successfully removed **{to_remove}** bonus entries from {target_user.mention} on **{g.get('title')}**!\n\n"
+            f"• **Target User:** {target_user.mention} (`{target_user.name}`)\n"
+            f"• **Bonus Entries Removed & Refunded:** `-{to_remove}` 🎟️\n"
+            f"• **Remaining Bonus on Giveaway:** `+{entry['bonus_entries_used']}` 🎟️\n"
+            f"• **User's Current Winning Weight:** **{new_total_tickets}x Entries**\n"
+            f"• **User's Updated Available Balance:** `{new_bal}` 🎟️"
+        ),
+        color=discord.Color.from_rgb(0, 255, 157)
+    )
+    embed.set_footer(text=f"Action performed by Admin: {interaction.user.name}")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="remove_bonus_entries", description="Remove your bonus entries from a giveaway (alias).")
+async def _handle_admin_remove_entry(
+    interaction: discord.Interaction,
+    target_user: discord.User,
+    giveaway_id: Optional[str] = None
+):
+    """Admin tool: Completely removes a user's entry from a giveaway, automatically refunding any used bonus entries."""
+    admin_uid = str(interaction.user.id)
+    is_admin = is_bot_admin_by_id(admin_uid)
+    has_perm = interaction.permissions and (interaction.permissions.manage_guild or interaction.permissions.administrator)
+    if not (is_admin or has_perm):
+        await safe_respond(interaction, "❌ You do not have permission to remove participant entries (Admin / Manage Server required).", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    # Resolve giveaway
+    g = None
+    if giveaway_id:
+        g = await resolve_giveaway_by_identifier(giveaway_id)
+    else:
+        ch_id = str(interaction.channel_id)
+        for g_obj in giveaways.values():
+            if str(g_obj.get("channel_id")) == ch_id and g_obj.get("is_active"):
+                g = g_obj
+                break
+
+    if not g:
+        await interaction.followup.send("❌ Giveaway not found. Please specify the Giveaway ID or run this command in the giveaway channel.", ephemeral=True)
+        return
+
+    if not g.get("is_active") or g.get("winners_drawn") or g.get("is_done"):
+        await interaction.followup.send("❌ This giveaway has ended! Entries cannot be removed from completed giveaways.", ephemeral=True)
+        return
+
+    g_id = g.get("id")
+    target_uid = str(target_user.id)
+
+    # Merge with Firebase if needed to ensure fresh entries
+    local_entries = giveaway_entries.get(g_id, [])
+    if FIREBASE_URL:
+        fb_entries = await firebase_get(f"giveaway_entries/{g_id}")
+        if fb_entries and isinstance(fb_entries, (dict, list)):
+            fb_list = list(fb_entries.values()) if isinstance(fb_entries, dict) else fb_entries
+            local_entries = merge_giveaway_entries(local_entries, fb_list)
+    giveaway_entries[g_id] = local_entries
+
+    entry = next((e for e in local_entries if isinstance(e, dict) and str(e.get("user_id")) == target_uid), None)
+    if not entry:
+        await interaction.followup.send(f"❌ {target_user.mention} is not entered in **{g.get('title', 'this giveaway')}**!", ephemeral=True)
+        return
+
+    # Refund bonus entries if any were used
+    bonus_refunded = int(entry.get("bonus_entries_used") or 0)
+    if bonus_refunded > 0:
+        prof = get_user_profile_fast(target_uid, target_user)
+        cur_bal = int(prof.get("bonus_entries") or 0)
+        new_bal = cur_bal + bonus_refunded
+        prof["bonus_entries"] = new_bal
+        user_profiles[target_uid] = prof
+        log_bonus_transaction(
+            target_uid,
+            t_type="refund",
+            amount=bonus_refunded,
+            by=f"Admin: {interaction.user.name}",
+            reason=f"Entry removed from Giveaway: {g.get('title', g_id)}",
+            balance_after=new_bal
+        )
+        save_user_profiles()
+        if FIREBASE_URL:
+            await firebase_put(f"user_profiles/{target_uid}", prof)
+
+    # Remove entry
+    filtered_entries = [e for e in local_entries if str(e.get("user_id")) != target_uid]
+    giveaway_entries[g_id] = filtered_entries
+    save_giveaway_entries()
+
+    # Update giveaway count
+    g["entries_count"] = len(filtered_entries)
+    save_giveaways()
+
+    if FIREBASE_URL:
+        await firebase_put(f"giveaway_entries/{g_id}", filtered_entries)
+        await firebase_put(f"giveaways/{g_id}", g)
+
+    # Update Discord message embed counter
+    await update_giveaway_discord_message(g_id)
+
+    embed = discord.Embed(
+        title="🗑️ Participant Entry Removed",
+        description=(
+            f"Successfully removed {target_user.mention} (`{target_user.name}`) from **{g.get('title')}**!\n\n"
+            f"• **User ID:** `{target_uid}`\n"
+            f"• **Bonus Entries Refunded:** `{bonus_refunded}` 🎟️\n"
+            f"• **Total Remaining Participants:** **`{len(filtered_entries)}`**\n"
+        ),
+        color=discord.Color.from_rgb(255, 68, 68)
+    )
+    embed.set_footer(text=f"Removed by Admin: {interaction.user.name}")
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="remove-bonus-entry", description="Admin: Remove/refund bonus entries for any user from a giveaway.")
 @app_commands.describe(
-    amount="Number of bonus entries to withdraw (leave empty to withdraw ALL bonus entries applied)",
+    user="The target participant whose bonus entries to remove",
+    amount="Number of bonus entries to remove (leave blank to remove ALL bonus entries)",
     giveaway_id="Optional Giveaway ID (defaults to active giveaway in this channel)"
 )
-async def remove_bonus_entries_underscore_cmd(interaction: discord.Interaction, amount: Optional[int] = None, giveaway_id: Optional[str] = None):
-    await _handle_remove_bonus_entries(interaction, amount, giveaway_id)
+async def remove_bonus_entry_cmd(
+    interaction: discord.Interaction,
+    user: discord.User,
+    amount: Optional[int] = None,
+    giveaway_id: Optional[str] = None
+):
+    await _handle_admin_remove_bonus_entries(interaction, user, amount, giveaway_id)
+
+
+@bot.tree.command(name="remove_bonus_entry", description="Admin: Remove/refund bonus entries for any user from a giveaway (alias).")
+@app_commands.describe(
+    user="The target participant whose bonus entries to remove",
+    amount="Number of bonus entries to remove (leave blank to remove ALL bonus entries)",
+    giveaway_id="Optional Giveaway ID (defaults to active giveaway in this channel)"
+)
+async def remove_bonus_entry_underscore_cmd(
+    interaction: discord.Interaction,
+    user: discord.User,
+    amount: Optional[int] = None,
+    giveaway_id: Optional[str] = None
+):
+    await _handle_admin_remove_bonus_entries(interaction, user, amount, giveaway_id)
+
+
+@bot.tree.command(name="remove-entry", description="Admin: Completely remove a participant's entry from a giveaway.")
+@app_commands.describe(
+    user="The participant to remove from the giveaway",
+    giveaway_id="Optional Giveaway ID (defaults to active giveaway in this channel)"
+)
+async def remove_entry_cmd(
+    interaction: discord.Interaction,
+    user: discord.User,
+    giveaway_id: Optional[str] = None
+):
+    await _handle_admin_remove_entry(interaction, user, giveaway_id)
+
+
+@bot.tree.command(name="remove_entry", description="Admin: Completely remove a participant's entry from a giveaway (alias).")
+@app_commands.describe(
+    user="The participant to remove from the giveaway",
+    giveaway_id="Optional Giveaway ID (defaults to active giveaway in this channel)"
+)
+async def remove_entry_underscore_cmd(
+    interaction: discord.Interaction,
+    user: discord.User,
+    giveaway_id: Optional[str] = None
+):
+    await _handle_admin_remove_entry(interaction, user, giveaway_id)
+
+
+@bot.tree.command(name="remove-bonus-entries", description="Remove bonus entries from a giveaway and refund them back to balance.")
+@app_commands.describe(
+    amount="Number of bonus entries to withdraw (leave empty to withdraw ALL bonus entries applied)",
+    giveaway_id="Optional Giveaway ID (defaults to active giveaway in this channel)",
+    user="Optional target user (Admin only - defaults to yourself)"
+)
+async def remove_bonus_entries_cmd(
+    interaction: discord.Interaction,
+    amount: Optional[int] = None,
+    giveaway_id: Optional[str] = None,
+    user: Optional[discord.User] = None
+):
+    if user and user != interaction.user:
+        await _handle_admin_remove_bonus_entries(interaction, user, amount, giveaway_id)
+    else:
+        await _handle_remove_bonus_entries(interaction, amount, giveaway_id)
+
+
+@bot.tree.command(name="remove_bonus_entries", description="Remove bonus entries from a giveaway (alias).")
+@app_commands.describe(
+    amount="Number of bonus entries to withdraw (leave empty to withdraw ALL bonus entries applied)",
+    giveaway_id="Optional Giveaway ID (defaults to active giveaway in this channel)",
+    user="Optional target user (Admin only - defaults to yourself)"
+)
+async def remove_bonus_entries_underscore_cmd(
+    interaction: discord.Interaction,
+    amount: Optional[int] = None,
+    giveaway_id: Optional[str] = None,
+    user: Optional[discord.User] = None
+):
+    if user and user != interaction.user:
+        await _handle_admin_remove_bonus_entries(interaction, user, amount, giveaway_id)
+    else:
+        await _handle_remove_bonus_entries(interaction, amount, giveaway_id)
 
 
 @bot.tree.command(name="withdraw-bonus-entries", description="Withdraw bonus entries from a giveaway back to your balance (alias).")
@@ -10261,6 +10536,26 @@ async def start_health_server():
                 giveaway_entries[g_id] = fetched
 
         entries = giveaway_entries.get(g_id, [])
+        target_entry = next((e for e in entries if isinstance(e, dict) and str(e.get("user_id", "")) == str(target_uid)), None)
+        bonus_refunded = 0
+        if target_entry:
+            bonus_refunded = int(target_entry.get("bonus_entries_used") or 0)
+            if bonus_refunded > 0:
+                prof = user_profiles.get(str(target_uid), {})
+                prof["bonus_entries"] = int(prof.get("bonus_entries") or 0) + bonus_refunded
+                user_profiles[str(target_uid)] = prof
+                log_bonus_transaction(
+                    str(target_uid),
+                    t_type="refund",
+                    amount=bonus_refunded,
+                    by=f"Admin (Web Dashboard): {user.get('username', 'Admin')}",
+                    reason=f"Entry removed from giveaway {g_id}",
+                    balance_after=prof["bonus_entries"]
+                )
+                save_user_profiles()
+                if FIREBASE_URL:
+                    await firebase_put(f"user_profiles/{target_uid}", prof)
+
         filtered_entries = [e for e in entries if str(e.get("user_id", "")) != str(target_uid)]
         giveaway_entries[g_id] = filtered_entries
 
@@ -10274,7 +10569,7 @@ async def start_health_server():
             await firebase_put(f"giveaways/{g_id}", g)
             await update_giveaway_discord_message(g_id)
 
-        return web.json_response({"success": True, "entries_count": len(filtered_entries)})
+        return web.json_response({"success": True, "entries_count": len(filtered_entries), "bonus_refunded": bonus_refunded})
 
     async def draw_winners_handler(request):
         user = get_session_user(request)
