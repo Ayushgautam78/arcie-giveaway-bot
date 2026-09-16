@@ -154,6 +154,16 @@ function resetCreateForm() {
   if (taskContainer) taskContainer.innerHTML = '';
   const createManualFields = document.getElementById('gHostManualWrap');
   if (createManualFields) createManualFields.style.display = 'none';
+  const previewBox = document.getElementById('gBannerPreview');
+  if (previewBox) {
+    previewBox.style.display = 'none';
+    const pImg = previewBox.querySelector('img');
+    if (pImg) pImg.src = '';
+  }
+  const bInp = document.getElementById('gBanner');
+  if (bInp) bInp.value = '';
+  const fInp = document.getElementById('gBannerFile');
+  if (fInp) fInp.value = '';
 }
 
 function escapeHtml(str) {
@@ -1086,9 +1096,15 @@ function renderGiveaways(highlightedGiveaway = null) {
       statusHtml = `<span class="g-card-status-tag status-live"><span class="live-dot" style="margin-right:2px;"></span>Live</span>`;
     }
 
-    const hasBanner = g.banner_url && typeof g.banner_url === 'string' && g.banner_url.trim() && !g.banner_url.includes('undefined') && !g.banner_url.startsWith('/static/uploads/') && g.banner_url.trim() !== '/static/banners/kredoos_banner.jpg';
+    const hasBanner = !!(g.banner_url && typeof g.banner_url === 'string' && g.banner_url.trim() && !g.banner_url.includes('undefined') && g.banner_url.trim() !== '/static/banners/kredoos_banner.jpg');
     const isKredoos = g.id === 'g_1789137936158' || (g.title && g.title.toLowerCase().includes('kredoos'));
-    const bannerSrc = isKredoos ? '/static/banners/kredoos_banner.jpg' : (hasBanner ? g.banner_url.trim() : '/static/logo.png');
+    let bannerSrc = '/static/logo.png';
+    if (isKredoos) {
+      bannerSrc = '/static/banners/kredoos_banner.jpg';
+    } else if (hasBanner) {
+      const rawUrl = g.banner_url.trim();
+      bannerSrc = (rawUrl.startsWith('/') && !rawUrl.startsWith('//')) ? apiUrl(rawUrl) : rawUrl;
+    }
     const isLogo = !isKredoos && !hasBanner;
 
     return `
@@ -1269,37 +1285,13 @@ function getDynamicTasksPayload() {
   return tasks;
 }
 
-// Helper to handle banner image file uploads (saves to backend upload folder or Data URL fallback)
+// Helper to handle banner image file uploads (optimizes directly to persistent Data URL)
 async function handleBannerFileUpload(inputElement, targetUrlInputId, previewContainerId) {
   const file = inputElement.files[0];
   if (!file) return;
 
-  const formData = new FormData();
-  formData.append('image', file);
+  showToast('Processing banner image...', 'info');
 
-  showToast('Uploading image...', 'info');
-  try {
-    const res = await fetch(apiUrl('/api/upload'), {
-      method: 'POST',
-      credentials: 'include',
-      body: formData
-    });
-    const data = await res.json();
-    if (res.ok && data.url) {
-      document.getElementById(targetUrlInputId).value = data.url;
-      const previewBox = document.getElementById(previewContainerId);
-      if (previewBox) {
-        previewBox.style.display = 'block';
-        previewBox.querySelector('img').src = data.url;
-      }
-      showToast('Banner image uploaded successfully', 'success');
-      return;
-    }
-  } catch (err) {
-    console.warn('Backend upload API unavailable, using local file reader preview:', err);
-  }
-
-  // Local fallback: read file & optimize on canvas as Data URL
   const reader = new FileReader();
   reader.onload = (e) => {
     const img = new Image();
@@ -1318,14 +1310,14 @@ async function handleBannerFileUpload(inputElement, targetUrlInputId, previewCon
       canvas.height = h;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, w, h);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
       document.getElementById(targetUrlInputId).value = dataUrl;
       const previewBox = document.getElementById(previewContainerId);
       if (previewBox) {
         previewBox.style.display = 'block';
         previewBox.querySelector('img').src = dataUrl;
       }
-      showToast('Banner image attached', 'success');
+      showToast('Banner image attached successfully', 'success');
     };
     img.onerror = () => {
       const rawDataUrl = e.target.result;
@@ -1335,9 +1327,12 @@ async function handleBannerFileUpload(inputElement, targetUrlInputId, previewCon
         previewBox.style.display = 'block';
         previewBox.querySelector('img').src = rawDataUrl;
       }
-      showToast('Image loaded successfully', 'success');
+      showToast('Banner image attached', 'success');
     };
     img.src = e.target.result;
+  };
+  reader.onerror = () => {
+    showToast('Failed to read image file', 'error');
   };
   reader.readAsDataURL(file);
 }
@@ -1887,9 +1882,12 @@ function openEditModal(giveawayId) {
   if (previewBox) {
     if (g.banner_url) {
       previewBox.style.display = 'block';
-      previewBox.querySelector('img').src = g.banner_url;
+      const rawUrl = g.banner_url.trim();
+      previewBox.querySelector('img').src = (rawUrl.startsWith('/') && !rawUrl.startsWith('//')) ? apiUrl(rawUrl) : rawUrl;
     } else {
       previewBox.style.display = 'none';
+      const pImg = previewBox.querySelector('img');
+      if (pImg) pImg.src = '';
     }
   }
 
@@ -2242,9 +2240,15 @@ async function openDetailModal(giveawayId) {
   const detailHostName = g.host_name || g.hosted_by || 'Admin';
   const detailHostAvatar = g.host_avatar || g.author_avatar || getDiscordAvatar(g.host_id, null, detailHostName);
 
-    const hasDetailBanner = g.banner_url && typeof g.banner_url === 'string' && g.banner_url.trim() && !g.banner_url.includes('undefined') && !g.banner_url.startsWith('/static/uploads/') && g.banner_url.trim() !== '/static/banners/kredoos_banner.jpg';
+    const hasDetailBanner = !!(g.banner_url && typeof g.banner_url === 'string' && g.banner_url.trim() && !g.banner_url.includes('undefined') && g.banner_url.trim() !== '/static/banners/kredoos_banner.jpg');
     const isKredoosDetail = g.id === 'g_1789137936158' || (g.title && g.title.toLowerCase().includes('kredoos'));
-    const detailBannerSrc = isKredoosDetail ? '/static/banners/kredoos_banner.jpg' : (hasDetailBanner ? g.banner_url.trim() : '/static/logo.png');
+    let detailBannerSrc = '/static/logo.png';
+    if (isKredoosDetail) {
+      detailBannerSrc = '/static/banners/kredoos_banner.jpg';
+    } else if (hasDetailBanner) {
+      const rawUrl = g.banner_url.trim();
+      detailBannerSrc = (rawUrl.startsWith('/') && !rawUrl.startsWith('//')) ? apiUrl(rawUrl) : rawUrl;
+    }
     const isDetailLogo = !isKredoosDetail && !hasDetailBanner;
 
     content.innerHTML = `
@@ -2350,10 +2354,13 @@ async function openDetailModal(giveawayId) {
       const myEntry = (allPublicEntries || []).find(e => String(e.user_id) === String(currentUser.id));
       const availBonus = currentUser.bonus_entries || 0;
       if (myEntry && !isEnded) {
+        const myMult = parseInt(myEntry.multiplier, 10) || 1;
+        const myBonus = parseInt(myEntry.bonus_entries_used, 10) || 0;
+        const myTotal = myMult + myBonus;
         bonusContainer.innerHTML = `
           <div style="background: rgba(234, 179, 8, 0.08); border: 1px solid rgba(234, 179, 8, 0.25); border-radius: var(--radius-sm); padding: 0.85rem 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
             <div>
-              <div style="font-weight: 700; color: #fbbf24; font-size: 0.9rem;">Your Entries: ${myEntry.multiplier || 1}x ${myEntry.bonus_entries_used ? `(+${myEntry.bonus_entries_used} Bonus = ${(myEntry.multiplier || 1) + myEntry.bonus_entries_used}x Total)` : ''}</div>
+              <div style="font-weight: 700; color: #fbbf24; font-size: 0.92rem;">Your Total Tickets: ${myTotal}x Chances ${myBonus ? `(${myMult}x Multiplier + ${myBonus} Bonus)` : (myMult > 1 ? `(${myMult}x Role Multiplier)` : '')}</div>
               <div style="font-size: 0.8rem; color: var(--text-muted);">Available Bonus Entries in Profile: <b>${availBonus}</b></div>
             </div>
             <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
@@ -2370,10 +2377,13 @@ async function openDetailModal(giveawayId) {
           </div>
         `;
       } else if (myEntry && isEnded) {
+        const myMult = parseInt(myEntry.multiplier, 10) || 1;
+        const myBonus = parseInt(myEntry.bonus_entries_used, 10) || 0;
+        const myTotal = myMult + myBonus;
         bonusContainer.innerHTML = `
           <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.75rem 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
             <div>
-              <div style="font-weight: 700; color: var(--text-main); font-size: 0.9rem;">Your Final Entries: ${myEntry.multiplier || 1}x ${myEntry.bonus_entries_used ? `(+${myEntry.bonus_entries_used} Bonus = ${(myEntry.multiplier || 1) + myEntry.bonus_entries_used}x Total)` : ''}</div>
+              <div style="font-weight: 700; color: var(--text-main); font-size: 0.92rem;">Your Final Tickets: ${myTotal}x Chances ${myBonus ? `(${myMult}x Multiplier + ${myBonus} Bonus)` : (myMult > 1 ? `(${myMult}x Role Multiplier)` : '')}</div>
               <div style="font-size: 0.8rem; color: var(--accent-gold); font-family: var(--font-mono);">🔒 Giveaway Ended — Bonus entries locked</div>
             </div>
           </div>
@@ -2573,9 +2583,19 @@ function renderPublicParticipantsTable(entries, walletField, winnersText = '') {
       statusBadge = '<span class="tier-badge tier-badge-gtd font-mono">Winner</span>';
     }
 
-    const mult = e.multiplier || 1;
-    const bonusUsed = e.bonus_entries_used || 0;
-    const ticketText = `${mult}x${bonusUsed ? ` (+${bonusUsed})` : ''}`;
+    const mult = parseInt(e.multiplier, 10) || 1;
+    const bonusUsed = parseInt(e.bonus_entries_used, 10) || 0;
+    const totalTickets = mult + bonusUsed;
+    let ticketText = '';
+    if (bonusUsed > 0 && mult > 1) {
+      ticketText = `<b>${totalTickets} Total</b> (${mult}x + ${bonusUsed} Bonus)`;
+    } else if (bonusUsed > 0 && mult === 1) {
+      ticketText = `<b>${totalTickets} Total</b> (1x + ${bonusUsed} Bonus)`;
+    } else if (bonusUsed === 0 && mult > 1) {
+      ticketText = `<b>${mult}x</b> (Role Boost)`;
+    } else {
+      ticketText = '1x Standard';
+    }
 
     const walletPill = (wallet && wallet !== 'Not provided')
       ? `<span class="wallet-copy-pill" onclick="copyText('${escapeHtml(wallet)}', 'Wallet address')" title="Click to copy">${truncateAddress(wallet)} ${svgCopy()}</span>`
@@ -2809,9 +2829,19 @@ async function loadGiveawayParticipants(giveawayId) {
         : '<span style="color: var(--text-muted);">Participant</span>';
       
       const nameStyle = isWinner ? 'color: #ffd700; font-weight: bold;' : 'font-weight: bold;';
-      const mult = e.multiplier || 1;
-      const bonusUsed = e.bonus_entries_used || 0;
-      const ticketBadge = `<span class="badge" style="background: rgba(234, 179, 8, 0.15); color: #fde047; border: 1px solid rgba(234, 179, 8, 0.3); font-weight: 700; padding: 2px 8px; border-radius: 4px;">${mult}x Tickets${bonusUsed ? ` (+${bonusUsed})` : ''}</span>`;
+      const mult = parseInt(e.multiplier, 10) || 1;
+      const bonusUsed = parseInt(e.bonus_entries_used, 10) || 0;
+      const totalTickets = mult + bonusUsed;
+      let ticketBadge = '';
+      if (bonusUsed > 0 && mult > 1) {
+        ticketBadge = `<span class="badge" style="background: rgba(234, 179, 8, 0.15); color: #fde047; border: 1px solid rgba(234, 179, 8, 0.3); font-weight: 700; padding: 2px 8px; border-radius: 4px;">${totalTickets} Total (${mult}x + ${bonusUsed} Bonus)</span>`;
+      } else if (bonusUsed > 0 && mult === 1) {
+        ticketBadge = `<span class="badge" style="background: rgba(234, 179, 8, 0.15); color: #fde047; border: 1px solid rgba(234, 179, 8, 0.3); font-weight: 700; padding: 2px 8px; border-radius: 4px;">${totalTickets} Total (1x + ${bonusUsed} Bonus)</span>`;
+      } else if (bonusUsed === 0 && mult > 1) {
+        ticketBadge = `<span class="badge" style="background: rgba(234, 179, 8, 0.15); color: #fde047; border: 1px solid rgba(234, 179, 8, 0.3); font-weight: 700; padding: 2px 8px; border-radius: 4px;">${mult}x (Role Boost)</span>`;
+      } else {
+        ticketBadge = `<span class="badge" style="background: rgba(255, 255, 255, 0.05); color: var(--text-muted); border: 1px solid var(--border-subtle); padding: 2px 8px; border-radius: 4px;">1x Standard</span>`;
+      }
 
       return `
         <tr style="${isWinner ? 'background: rgba(255, 215, 0, 0.08);' : ''}">

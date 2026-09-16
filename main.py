@@ -132,8 +132,15 @@ def merge_giveaway_entries(local_list: list, fb_list: list) -> list:
             if uid in merged_map:
                 fb_bonus = int(merged_map[uid].get("bonus_entries_used") or 0)
                 merged_map[uid]["bonus_entries_used"] = max(local_bonus, fb_bonus)
-                # Preserve wallets, socials, multipliers, and verification status
-                for k in ["evm_wallet", "burner_evm_wallet", "fcfs_evm_wallet", "solana_wallet", "twitter", "telegram", "multiplier", "task_status", "winner_type"]:
+                # Preserve maximum multiplier across both sources
+                try:
+                    local_m = int(e.get("multiplier") or 1)
+                    fb_m = int(merged_map[uid].get("multiplier") or 1)
+                    merged_map[uid]["multiplier"] = max(local_m, fb_m)
+                except Exception:
+                    pass
+                # Preserve wallets, socials, and verification status
+                for k in ["evm_wallet", "burner_evm_wallet", "fcfs_evm_wallet", "solana_wallet", "twitter", "telegram", "task_status", "winner_type"]:
                     if e.get(k) and not merged_map[uid].get(k):
                         merged_map[uid][k] = e[k]
             else:
@@ -450,31 +457,136 @@ async def benchmark_all_chains() -> dict:
 
 
 
-def get_entry_weights(entries: list, guild=None, g: Optional[dict] = None) -> list:
-    """Calculate weight for each giveaway entry based on role multipliers and bonus entries.
+def resolve_giveaway_guild(g: Optional[dict] = None) -> Optional[discord.Guild]:
+    """Resolves the Discord Guild for a giveaway using channel_id or active bot guilds."""
+    if g and isinstance(g, dict):
+        ch_id_clean = re.sub(r'[^0-9]', '', str(g.get("channel_id", "")))
+        if ch_id_clean:
+            try:
+                ch = bot.get_channel(int(ch_id_clean))
+                if ch and hasattr(ch, "guild") and ch.guild:
+                    return ch.guild
+            except Exception:
+                pass
+    if bot and getattr(bot, "guilds", None) and len(bot.guilds) > 0:
+        return bot.guilds[0]
+    return None
+
+
+def extract_role_multiplier_lookups(g: Optional[dict] = None) -> Tuple[Dict[str, float], Dict[str, float]]:
+    """Extracts (id_lookup, name_lookup) from giveaway role_multipliers and global ROLE_MULTIPLIERS.
     
-    Total Entry Weight = max(1.0, Role Multiplier) + Bonus Entries Applied.
-    Each bonus entry adds +1 full ticket weight.
-    Example: 0 bonus entries = 1 ticket (1x). 10 bonus entries = 11 tickets (11x chance).
+    Supports both numerical Role IDs and case-insensitive Role Names.
     """
-    giveaway_role_mults = {}
+    id_lookup: Dict[str, float] = {}
+    name_lookup: Dict[str, float] = {}
+    
+    # 1. Global ROLE_MULTIPLIERS
+    if ROLE_MULTIPLIERS:
+        for k, v in ROLE_MULTIPLIERS.items():
+            k_str = str(k).strip()
+            try:
+                val = float(v)
+            except Exception:
+                val = 1.0
+            if k_str.isdigit():
+                id_lookup[k_str] = val
+            else:
+                name_lookup[k_str.lower()] = val
+                
+    # 2. Giveaway specific role_multipliers (takes precedence)
     if g and isinstance(g, dict):
         raw_mults = g.get("role_multipliers")
         if isinstance(raw_mults, list):
             for rm in raw_mults:
                 if isinstance(rm, dict):
                     rid = str(rm.get("id") or "").strip()
-                    mult = float(rm.get("multiplier") or rm.get("entries") or 1.0)
-                    if rid:
-                        giveaway_role_mults[rid] = mult
+                    rname = str(rm.get("name") or "").strip()
+                    try:
+                        mult = float(rm.get("multiplier") or rm.get("entries") or 1.0)
+                    except Exception:
+                        mult = 1.0
+                    if rid and rid.isdigit():
+                        id_lookup[rid] = mult
+                    elif rid:
+                        name_lookup[rid.lower()] = mult
+                    if rname:
+                        name_lookup[rname.lower()] = mult
         elif isinstance(raw_mults, dict):
-            giveaway_role_mults = {str(k): float(v) for k, v in raw_mults.items()}
+            for k, v in raw_mults.items():
+                k_str = str(k).strip()
+                try:
+                    val = float(v)
+                except Exception:
+                    val = 1.0
+                if k_str.isdigit():
+                    id_lookup[k_str] = val
+                else:
+                    name_lookup[k_str.lower()] = val
+                    
+    return id_lookup, name_lookup
+
+
+def update_entries_role_multipliers(entries: list, g: dict, guild=None) -> bool:
+    """Updates the multiplier field on entries in-place based on active role multipliers."""
+    if not entries or not g:
+        return False
+    resolved_guild = guild or resolve_giveaway_guild(g)
+    id_lookup, name_lookup = extract_role_multiplier_lookups(g)
+    if not id_lookup and not name_lookup:
+        return False
+
+    changed = False
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        uid = str(entry.get("user_id") or "")
+        try:
+            cur_mult = float(entry.get("multiplier") or 1.0)
+        except Exception:
+            cur_mult = 1.0
+        matched_mult = cur_mult
+        if resolved_guild and uid:
+            try:
+                member = resolved_guild.get_member(int(uid))
+                if member and hasattr(member, "roles"):
+                    matching = []
+                    for r in member.roles:
+                        r_id = str(r.id)
+                        r_name = r.name.lower()
+                        if r_id in id_lookup:
+                            matching.append(id_lookup[r_id])
+                        if r_name in name_lookup:
+                            matching.append(name_lookup[r_name])
+                    if matching:
+                        matched_mult = max(cur_mult, max(matching))
+            except Exception:
+                pass
+        new_mult = int(round(matched_mult))
+        if new_mult != int(round(cur_mult)):
+            entry["multiplier"] = new_mult
+            changed = True
+    return changed
+
+
+def get_entry_weights(entries: list, guild=None, g: Optional[dict] = None) -> list:
+    """Calculate weight for each giveaway entry based on role multipliers and bonus entries.
     
-    if not giveaway_role_mults and ROLE_MULTIPLIERS:
-        giveaway_role_mults = ROLE_MULTIPLIERS
+    Total Entry Weight = max(1.0, Role Multiplier) + Bonus Entries Applied.
+    Each bonus entry adds +1 full ticket weight.
+    Example:
+      - 4x multiplier + 1 bonus entry = 5 total tickets (5x chances).
+      - 1x base + 10 bonus entries = 11 total tickets (11x chances).
+      - 5x multiplier + 1 bonus entry = 6 total tickets (6x chances).
+      - 1x base + 0 bonus entries = 1 total ticket (1x chance).
+    """
+    resolved_guild = guild or resolve_giveaway_guild(g)
+    id_lookup, name_lookup = extract_role_multiplier_lookups(g)
 
     weights = []
     for entry in entries:
+        if not isinstance(entry, dict):
+            continue
         uid = str(entry.get("user_id") or "")
         try:
             base_mult = float(entry.get("multiplier") or 1.0)
@@ -486,16 +598,24 @@ def get_entry_weights(entries: list, guild=None, g: Optional[dict] = None) -> li
         except Exception:
             bonus = 0.0
 
-        if guild and uid and giveaway_role_mults:
+        if resolved_guild and uid and (id_lookup or name_lookup):
             try:
-                member = guild.get_member(int(uid))
-                if member:
-                    matching = [giveaway_role_mults[str(r.id)] for r in member.roles if str(r.id) in giveaway_role_mults]
+                member = resolved_guild.get_member(int(uid))
+                if member and hasattr(member, "roles"):
+                    matching = []
+                    for r in member.roles:
+                        r_id = str(r.id)
+                        r_name = r.name.lower()
+                        if r_id in id_lookup:
+                            matching.append(id_lookup[r_id])
+                        if r_name in name_lookup:
+                            matching.append(name_lookup[r_name])
                     if matching:
-                        base_mult = max(matching)
+                        base_mult = max(base_mult, max(matching))
             except Exception:
                 pass
         
+        entry["multiplier"] = int(round(base_mult))
         total_weight = max(1.0, base_mult) + max(0.0, bonus)
         weights.append(total_weight)
     return weights
@@ -837,7 +957,7 @@ def firebase_put_sync(path: str, data):
             def sanitize(obj):
                 if isinstance(obj, dict):
                     for k, v in list(obj.items()):
-                        if k == "banner_url" and isinstance(v, str) and v.startswith("data:image") and len(v) > 500000:
+                        if k == "banner_url" and isinstance(v, str) and v.startswith("data:image") and len(v) > 2500000:
                             obj[k] = ""
                         else:
                             sanitize(v)
@@ -1007,7 +1127,9 @@ if os.path.exists(GIVEAWAYS_FILE):
         print(f"[GIVEAWAYS ERROR] Failed to load giveaways: {e}")
 
 def save_banner_image_if_data_url(g_data: dict) -> str:
-    """If banner_url is a Base64 data:image string, save it to static/uploads/ and return relative path."""
+    """If banner_url is a Base64 data:image string, save a cached local copy to static/uploads/
+    while preserving the Data URL in g_data so it remains 100% self-contained, visible everywhere
+    (Vercel, custom domains, local), and never disappears on refresh."""
     if not isinstance(g_data, dict):
         return ""
     banner = str(g_data.get("banner_url", "")).strip()
@@ -1032,12 +1154,11 @@ def save_banner_image_if_data_url(g_data: dict) -> str:
         with open(filepath, "wb") as f:
             f.write(img_bytes)
         
-        rel_url = f"/static/uploads/{filename}"
-        g_data["banner_url"] = rel_url
-        print(f"[BANNER SAVE SUCCESS] Saved base64 banner to {rel_url}")
-        return rel_url
+        print(f"[BANNER CACHE SUCCESS] Cached base64 banner locally to {filepath}")
+        # Retain the original Data URL in g_data["banner_url"] so it never breaks on remote hosts or page refresh
+        return banner
     except Exception as e:
-        print(f"[BANNER SAVE ERROR] {e}")
+        print(f"[BANNER CACHE ERROR] {e}")
         return banner
 
 DELETED_GIVEAWAYS_FILE = "deleted_giveaways.json"
@@ -5027,23 +5148,23 @@ async def register_giveaway_entry(interaction: discord.Interaction, giveaway_id:
     uid = str(interaction.user.id)
     prof = get_user_profile_fast(uid, interaction.user)
 
-    # Determine highest matching Role Multiplier
+    # Determine highest matching Role Multiplier (checking both ID and Name)
     role_mult = 1
-    g_role_mults = g.get("role_multipliers") or []
-    mult_map = {}
-    if isinstance(g_role_mults, list):
-        for rm in g_role_mults:
-            if isinstance(rm, dict):
-                rid = str(rm.get("id", "")).strip()
-                if rid:
-                    mult_map[rid] = int(rm.get("multiplier") or rm.get("entries") or 1)
-    elif isinstance(g_role_mults, dict):
-        mult_map = {str(k): int(v) for k, v in g_role_mults.items()}
-
-    if mult_map and isinstance(interaction.user, discord.Member):
-        matching_mults = [mult_map[str(r.id)] for r in interaction.user.roles if str(r.id) in mult_map]
+    id_lookup, name_lookup = extract_role_multiplier_lookups(g)
+    member = interaction.user
+    if not isinstance(member, discord.Member) and interaction.guild:
+        member = interaction.guild.get_member(interaction.user.id)
+    if member and hasattr(member, "roles") and (id_lookup or name_lookup):
+        matching_mults = []
+        for r in member.roles:
+            r_id = str(r.id)
+            r_name = r.name.lower()
+            if r_id in id_lookup:
+                matching_mults.append(id_lookup[r_id])
+            if r_name in name_lookup:
+                matching_mults.append(name_lookup[r_name])
         if matching_mults:
-            role_mult = max(matching_mults)
+            role_mult = int(round(max(matching_mults)))
 
     fcfs_stored = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", "")
     new_entry = {
@@ -5277,10 +5398,13 @@ async def update_giveaway_discord_message(giveaway_id: str):
                 if file_to_send:
                     kwargs["attachments"] = [file_to_send]
                 await msg.edit(**kwargs)
-                if msg.attachments and file_to_send and getattr(file_to_send, 'filename', '') == 'banner.png':
-                    g["banner_url"] = msg.attachments[0].url
-                    save_giveaways()
-                    await firebase_put(f"giveaways/{giveaway_id}/banner_url", g["banner_url"])
+                # Only update banner_url with attachment URL if not already a self-contained Data URL or external link
+                cur_b = str(g.get("banner_url", "")).strip()
+                if not cur_b.startswith("data:image") and not cur_b.startswith("http"):
+                    if msg.attachments and file_to_send and getattr(file_to_send, 'filename', '') == 'banner.png':
+                        g["banner_url"] = msg.attachments[0].url
+                        save_giveaways()
+                        await firebase_put(f"giveaways/{giveaway_id}/banner_url", g["banner_url"])
                 print(f"[UPDATE EMBED SUCCESS] In-place edited Discord embed for '{g.get('title')}' in #{channel.name} (preserved sent timestamp)")
                 return
             except Exception as edit_err:
@@ -5295,8 +5419,10 @@ async def update_giveaway_discord_message(giveaway_id: str):
 
             g["message_id"] = str(new_msg.id)
             g["channel_id"] = str(channel.id)
-            if new_msg.attachments and file_to_send and getattr(file_to_send, 'filename', '') == 'banner.png':
-                g["banner_url"] = new_msg.attachments[0].url
+            cur_b = str(g.get("banner_url", "")).strip()
+            if not cur_b.startswith("data:image") and not cur_b.startswith("http"):
+                if new_msg.attachments and file_to_send and getattr(file_to_send, 'filename', '') == 'banner.png':
+                    g["banner_url"] = new_msg.attachments[0].url
             giveaways[giveaway_id] = g
             save_giveaways()
             await firebase_put(f"giveaways/{giveaway_id}", g)
@@ -6827,7 +6953,6 @@ async def render_user_profile_card(interaction: discord.Interaction, target_user
         description=(
             f"**Member:** {usr.mention} (`{usr.name}`)\n\n"
             f"• Available Bonus Entries: **{bonus_bal}**\n\n"
-            f"• Role Multiplier Boost: **{role_mult:g}x**\n\n"
             f"• Giveaways Entered: **{joined_count}** (Active in live raffles: **{bonus_in_use}**)\n"
         ),
         color=discord.Color.from_rgb(0, 255, 157)
@@ -6868,15 +6993,12 @@ async def render_user_profile_card(interaction: discord.Interaction, target_user
 
 
 async def render_user_bonus_balance(interaction: discord.Interaction, target_user: Optional[Union[discord.Member, discord.User]] = None) -> discord.Embed:
-    """Renders the bonus tickets balance and odds boost breakdown embed with generous spacing."""
+    """Renders the bonus tickets balance card with clean spacing and minimal emojis."""
     usr = target_user or interaction.user
     uid = str(usr.id)
     prof = get_user_profile_fast(uid, usr)
 
     bonus_bal = int(prof.get("bonus_entries") or 0)
-    guild = interaction.guild
-    member = guild.get_member(usr.id) if guild else (usr if isinstance(usr, discord.Member) else None)
-    role_mult = get_user_role_multiplier(guild, member)
 
     # Calculate active bonus entries used across live giveaways
     active_bonus_used = 0
@@ -6892,16 +7014,14 @@ async def render_user_bonus_balance(interaction: discord.Interaction, target_use
                         active_bonus_used += used
 
     embed = discord.Embed(
-        title="Bonus Balance & Boosts",
+        title="Bonus Balance",
         description=(
             f"**Member:** {usr.mention} (`{usr.name}`)\n\n"
             f"• Available Bonus Entries: **{bonus_bal}**\n\n"
             f"• Active in Live Raffles: **{active_bonus_used}**\n\n"
-            f"• Base Role Multiplier: **{role_mult:g}x**\n\n"
             f"• Total Lifetime Used: **{total_bonus_used_lifetime}**\n\n"
-            f"**How It Works**\n\n"
-            f"Each bonus entry adds +1 ticket to your raffle entry weight. "
-            f"For example, with a **{role_mult:g}x** multiplier and **3 bonus entries**, your winning weight becomes **{role_mult + 3:g}x**.\n\n"
+            f"**How Bonus Entries Work**\n\n"
+            f"Each bonus entry adds +1 full ticket to your raffle entry weight, boosting your chance of winning.\n\n"
             f"Apply bonus entries inside any active giveaway via [View Your Entry] or `/use-bonus-entries`."
         ),
         color=discord.Color.from_rgb(0, 255, 157)
@@ -9260,15 +9380,10 @@ async def sync_and_post_giveaways():
                         # Preserve local banner_url if Firebase has empty banner_url
                         if not g_data.get("banner_url") and giveaways.get(g_id, {}).get("banner_url"):
                             g_data["banner_url"] = giveaways[g_id]["banner_url"]
-                        # Convert any base64 banner images from Firebase into local files
+                        # Cache any base64 banner images locally to disk without overwriting the Data URL in Firebase
                         banner = str(g_data.get("banner_url", "")).strip()
                         if banner.startswith("data:image"):
                             save_banner_image_if_data_url(g_data)
-                            # Update Firebase with local file path instead of base64
-                            try:
-                                await firebase_put(f"giveaways/{g_id}/banner_url", g_data.get("banner_url", ""))
-                            except Exception:
-                                pass
 
                         # Preserve local active state if currently drawing in memory
                         if g_id in _drawing_giveaways:
@@ -9358,16 +9473,7 @@ async def auto_draw_giveaway_winners(g_id: str):
             return
 
         # Resolve guild for weighted raffle role multipliers
-        guild = None
-        ch_id_str = str(g.get("channel_id", "")).strip()
-        if ch_id_str:
-            try:
-                ch = bot.get_channel(int(ch_id_str))
-                if ch:
-                    guild = ch.guild
-            except Exception:
-                pass
-
+        guild = resolve_giveaway_guild(g)
         entries, winner_summary_lines = select_giveaway_winners(entries, g, guild)
 
         g["winners_text"] = "\n".join(winner_summary_lines)
@@ -10096,7 +10202,7 @@ async def start_health_server():
 
         giveaway_entries[g_id] = entries
 
-        # Live sync with user_profiles if giveaway is NOT marked done (locked)
+        # Live sync with user_profiles and role multipliers if giveaway is NOT marked done (locked)
         if not g.get("is_done"):
             entries_changed = False
             for entry in entries:
@@ -10126,6 +10232,13 @@ async def start_health_server():
                     if sol and entry.get("solana_wallet") != sol:
                         entry["solana_wallet"] = sol
                         entries_changed = True
+            
+            # Live sync role multipliers for participants
+            if g.get("role_multipliers") or ROLE_MULTIPLIERS:
+                guild = resolve_giveaway_guild(g)
+                if update_entries_role_multipliers(entries, g, guild):
+                    entries_changed = True
+
             if entries_changed:
                 giveaway_entries[g_id] = entries
                 save_giveaway_entries()
@@ -10390,7 +10503,14 @@ async def start_health_server():
         if "max_per_user" in body: g["max_per_user"] = int(body["max_per_user"])
         if "tasks" in body: g["tasks"] = body["tasks"]
         if "spot_tiers" in body: g["spot_tiers"] = body["spot_tiers"]
-        if "role_multipliers" in body: g["role_multipliers"] = body.get("role_multipliers", [])
+        if "role_multipliers" in body:
+            g["role_multipliers"] = body.get("role_multipliers", [])
+            entries = giveaway_entries.get(g_id, [])
+            guild = resolve_giveaway_guild(g)
+            if entries and update_entries_role_multipliers(entries, g, guild):
+                save_giveaway_entries()
+                if FIREBASE_URL:
+                    asyncio.create_task(firebase_put(f"giveaway_entries/{g_id}", entries))
         if "mention_role" in body: g["mention_role"] = body["mention_role"]
         if "winner_channel_id" in body: g["winner_channel_id"] = str(body["winner_channel_id"])
         if "social_links" in body or "twitter_link" in body:
@@ -10498,12 +10618,26 @@ async def start_health_server():
                         break
                     f.write(chunk)
 
+            # Convert uploaded image to Data URL as well so frontend can store a self-contained URL
+            data_url = ""
+            try:
+                with open(file_path, "rb") as rf:
+                    raw_b = rf.read()
+                    mime = "image/png"
+                    if ext in [".jpg", ".jpeg"]: mime = "image/jpeg"
+                    elif ext == ".webp": mime = "image/webp"
+                    elif ext == ".gif": mime = "image/gif"
+                    b64_str = base64.b64encode(raw_b).decode("utf-8")
+                    data_url = f"data:{mime};base64,{b64_str}"
+            except Exception:
+                pass
+
             port = os.getenv("PORT", "2025")
             app_url = (os.getenv("PUBLIC_SITE_URL") or os.getenv("APP_URL") or f"http://localhost:{port}").rstrip("/")
             if "nexcloud" in app_url:
                 app_url = "https://arcie-giveaway-bot-lb4z.vercel.app"
-            image_url = f"{app_url}/static/uploads/{safe_name}"
-            return web.json_response({"success": True, "url": image_url})
+            image_url = data_url or f"{app_url}/static/uploads/{safe_name}"
+            return web.json_response({"success": True, "url": image_url, "relative_url": f"/static/uploads/{safe_name}"})
         except Exception as e:
             print(f"[IMAGE UPLOAD ERROR] {e}")
             return web.json_response({"error": str(e)}, status=500)
@@ -10584,16 +10718,7 @@ async def start_health_server():
                 return web.json_response({"error": "No entries to draw from"}, status=400)
 
             # Resolve guild for weighted raffle role multipliers
-            guild = None
-            ch_id_str = str(g.get("channel_id", "")).strip()
-            if ch_id_str:
-                try:
-                    ch = bot.get_channel(int(ch_id_str))
-                    if ch:
-                        guild = ch.guild
-                except Exception:
-                    pass
-
+            guild = resolve_giveaway_guild(g)
             entries, winner_summary_lines = select_giveaway_winners(entries, g, guild)
 
             g["is_active"] = False
@@ -10643,16 +10768,7 @@ async def start_health_server():
                 return web.json_response({"error": "No entries available"}, status=400)
 
             # Resolve guild for weighted raffle role multipliers
-            guild = None
-            ch_id_str = str(g.get("channel_id", "")).strip()
-            if ch_id_str:
-                try:
-                    ch = bot.get_channel(int(ch_id_str))
-                    if ch:
-                        guild = ch.guild
-                except Exception:
-                    pass
-
+            guild = resolve_giveaway_guild(g)
             new_winner_count, winner_summary_lines = redraw_giveaway_winners(entries, g, guild)
 
             g["is_active"] = False
