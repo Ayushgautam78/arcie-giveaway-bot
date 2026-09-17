@@ -82,12 +82,20 @@ if _env_rm:
     except Exception as _rm_err:
         print(f"[ROLE_MULTIPLIERS] Failed to parse env override: {_rm_err}")
 
+# Exponent for super-linear raffle weighting (default 2.5).
+# Effective Raffle Weight = (Total Tickets) ** RAFFLE_WEIGHT_EXPONENT.
+# Guarantees that total entries (role multiplier + bonus entries) are the decisive factor in winning:
+# e.g., 6 tickets = ~15.6x advantage over 2 tickets, 7 tickets = ~22.9x advantage, 14 tickets = ~129.5x advantage.
+try:
+    RAFFLE_WEIGHT_EXPONENT: float = float(os.getenv("RAFFLE_WEIGHT_EXPONENT", "2.5"))
+except Exception:
+    RAFFLE_WEIGHT_EXPONENT = 2.5
+
 
 def weighted_sample_without_replacement(population: list, weights: list, k: int) -> list:
     """Weighted random sampling WITHOUT replacement using exact index selection.
     
-    Guarantees that an entry with 10 bonus entries has 10x+ higher probability of being chosen
-    on every spot draw compared to an entry with 0 bonus entries.
+    Draws participants according to their decisive effective raffle weights.
     """
     if not population or k <= 0:
         return []
@@ -570,15 +578,22 @@ def update_entries_role_multipliers(entries: list, g: dict, guild=None) -> bool:
 
 
 def get_entry_weights(entries: list, guild=None, g: Optional[dict] = None) -> list:
-    """Calculate weight for each giveaway entry based on role multipliers and bonus entries.
+    """Calculate effective raffle weight for each giveaway entry based on role multipliers and bonus entries.
     
-    Total Entry Weight = max(1.0, Role Multiplier) + Bonus Entries Applied.
-    Each bonus entry adds +1 full ticket weight.
-    Example:
-      - 4x multiplier + 1 bonus entry = 5 total tickets (5x chances).
-      - 1x base + 10 bonus entries = 11 total tickets (11x chances).
-      - 5x multiplier + 1 bonus entry = 6 total tickets (6x chances).
-      - 1x base + 0 bonus entries = 1 total ticket (1x chance).
+    Total Tickets = max(1.0, Role Multiplier) + Bonus Entries Applied.
+    Effective Raffle Weight = (Total Tickets) ** RAFFLE_WEIGHT_EXPONENT (default 2.5).
+    
+    Super-linear power scaling ensures that participants with high total tickets (e.g. 6-15 entries)
+    have a decisive mathematical advantage, preventing low-ticket entries from diluting the winning spots.
+    Example with power 2.5:
+      - 1 ticket  -> weight: 1.000
+      - 2 tickets -> weight: 5.657 (baseline 1.0x)
+      - 3 tickets -> weight: 15.588 (2.8x advantage)
+      - 4 tickets -> weight: 32.000 (5.7x advantage)
+      - 6 tickets -> weight: 88.182 (15.6x advantage)
+      - 7 tickets -> weight: 129.642 (22.9x advantage)
+      - 10 tickets -> weight: 316.228 (55.9x advantage)
+      - 14 tickets -> weight: 733.218 (129.5x advantage)
     """
     resolved_guild = guild or resolve_giveaway_guild(g)
     id_lookup, name_lookup = extract_role_multiplier_lookups(g)
@@ -616,8 +631,10 @@ def get_entry_weights(entries: list, guild=None, g: Optional[dict] = None) -> li
                 pass
         
         entry["multiplier"] = int(round(base_mult))
-        total_weight = max(1.0, base_mult) + max(0.0, bonus)
-        weights.append(total_weight)
+        total_tickets = max(1.0, base_mult) + max(0.0, bonus)
+        # Apply decisive super-linear power scaling
+        effective_weight = round(float(total_tickets) ** RAFFLE_WEIGHT_EXPONENT, 4)
+        weights.append(effective_weight)
     return weights
 
 
@@ -677,6 +694,12 @@ def select_giveaway_winners(entries: list, g: dict, guild=None) -> Tuple[List[di
 
     # Weighted sampling for regular participants based on Discord role multipliers + bonus entries
     reg_weights = get_entry_weights(reg_pool, guild, g)
+    g_title = g.get("title", "Giveaway") if isinstance(g, dict) else "Giveaway"
+    g_id_str = g.get("id", "") if isinstance(g, dict) else ""
+    print(f"[DRAW DIAGNOSTICS] Drawing for '{g_title}' ({g_id_str}) | Participants={len(reg_pool)} | Exponent={RAFFLE_WEIGHT_EXPONENT}")
+    for p_ent, p_w in sorted(zip(reg_pool, reg_weights), key=lambda x: x[1], reverse=True)[:10]:
+        tot_t = int(round(float(p_ent.get("multiplier", 1) or 1) + float(p_ent.get("bonus_entries_used", 0) or 0)))
+        print(f"  • User {p_ent.get('user_id')}: {tot_t} tickets (mult={p_ent.get('multiplier', 1)}, bonus={p_ent.get('bonus_entries_used', 0)}) -> Weight={p_w}")
     reg_pool = weighted_sample_without_replacement(reg_pool, reg_weights, len(reg_pool))
 
     spot_tiers = g.get("spot_tiers", [])
@@ -811,6 +834,12 @@ def redraw_giveaway_winners(entries: list, g: dict, guild=None) -> Tuple[int, Li
 
     # Weighted sampling for regular participants based on Discord role multipliers + bonus entries
     reg_weights = get_entry_weights(reg_pool, guild, g)
+    g_title = g.get("title", "Giveaway") if isinstance(g, dict) else "Giveaway"
+    g_id_str = g.get("id", "") if isinstance(g, dict) else ""
+    print(f"[REDRAW DIAGNOSTICS] Redrawing for '{g_title}' ({g_id_str}) | Participants={len(reg_pool)} | Exponent={RAFFLE_WEIGHT_EXPONENT}")
+    for p_ent, p_w in sorted(zip(reg_pool, reg_weights), key=lambda x: x[1], reverse=True)[:10]:
+        tot_t = int(round(float(p_ent.get("multiplier", 1) or 1) + float(p_ent.get("bonus_entries_used", 0) or 0)))
+        print(f"  • User {p_ent.get('user_id')}: {tot_t} tickets (mult={p_ent.get('multiplier', 1)}, bonus={p_ent.get('bonus_entries_used', 0)}) -> Weight={p_w}")
     reg_pool = weighted_sample_without_replacement(reg_pool, reg_weights, len(reg_pool))
 
 
