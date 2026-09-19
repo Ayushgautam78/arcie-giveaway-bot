@@ -404,6 +404,17 @@
                 </div>
               </div>
               <div class="form-group">
+                <label class="form-label">Thumbnail Image (Upload or Paste URL)</label>
+                <input type="file" id="gThumbnailFile" accept="image/*" class="form-input" style="padding: 6px; margin-bottom: 6px;" onchange="handleBannerFileUpload(this, 'gThumbnail', 'gThumbnailPreview')">
+                <input type="url" id="gThumbnail" class="form-input" placeholder="https://i.imgur.com/thumb.png or uploaded URL">
+                <div id="gThumbnailPreview" style="margin-top: 6px; display: none;">
+                  <img src="" style="max-height: 80px; border-radius: var(--radius-xs); border: 1px solid var(--border-subtle);" alt="preview">
+                </div>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
                 <label class="form-label">Network / Blockchain Name</label>
                 <input type="text" id="gNetwork" class="form-input" placeholder="e.g. Ethereum, Solana, Zcash, Arc, Robinhood" value="Ethereum" required>
                 <div style="display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap;">
@@ -750,6 +761,17 @@
                   <img src="" style="max-height: 100px; border-radius: var(--radius-xs); border: 1px solid var(--border-subtle);" alt="preview">
                 </div>
               </div>
+              <div class="form-group">
+                <label class="form-label">Thumbnail Image (Upload or Paste URL)</label>
+                <input type="file" id="editGThumbnailFile" accept="image/*" class="form-input" style="padding: 6px; margin-bottom: 6px;" onchange="handleBannerFileUpload(this, 'editGThumbnail', 'editGThumbnailPreview')">
+                <input type="url" id="editGThumbnail" class="form-input" placeholder="https://i.imgur.com/thumb.png or uploaded URL">
+                <div id="editGThumbnailPreview" style="margin-top: 6px; display: none;">
+                  <img src="" style="max-height: 80px; border-radius: var(--radius-xs); border: 1px solid var(--border-subtle);" alt="preview">
+                </div>
+              </div>
+            </div>
+
+            <div class="form-row">
               <div class="form-group">
                 <label class="form-label">Network / Blockchain Name</label>
                 <input type="text" id="editGNetwork" class="form-input" placeholder="e.g. Ethereum, Solana, Zcash, Arc, Robinhood" value="Ethereum" required>

@@ -1227,6 +1227,41 @@ def save_banner_image_if_data_url(g_data: dict) -> str:
         print(f"[BANNER CACHE ERROR] {e}")
         return banner
 
+
+def save_thumbnail_image_if_data_url(g_data: dict) -> str:
+    """If thumbnail_url is a Base64 data:image string, save a cached local copy to static/uploads/
+    while preserving the Data URL in g_data."""
+    if not isinstance(g_data, dict):
+        return ""
+    thumb = str(g_data.get("thumbnail_url", "")).strip()
+    if not thumb or not thumb.startswith("data:image"):
+        return thumb
+
+    try:
+        header, encoded = thumb.split(",", 1)
+        ext = ".png"
+        if "jpeg" in header or "jpg" in header: ext = ".jpg"
+        elif "gif" in header: ext = ".gif"
+        elif "webp" in header: ext = ".webp"
+
+        img_bytes = base64.b64decode(encoded)
+        gid = g_data.get("id", f"thumb_{int(time.time())}")
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        uploads_dir = os.path.join(base_dir, "static", "uploads")
+        os.makedirs(uploads_dir, exist_ok=True)
+
+        filename = f"thumb_{gid}{ext}"
+        filepath = os.path.join(uploads_dir, filename)
+        with open(filepath, "wb") as f:
+            f.write(img_bytes)
+
+        print(f"[THUMBNAIL CACHE SUCCESS] Cached base64 thumbnail locally to {filepath}")
+        return thumb
+    except Exception as e:
+        print(f"[THUMBNAIL CACHE ERROR] {e}")
+        return thumb
+
+
 DELETED_GIVEAWAYS_FILE = "deleted_giveaways.json"
 deleted_giveaways: set = set()
 
@@ -9209,13 +9244,15 @@ def format_embed_description(raw_desc: str, social_links: Optional[dict] = None)
             formatted += f"\n\n**Official Links:**\n" + " • ".join(link_bullets)
 
 def format_network_display(network_str: Optional[str]) -> str:
-    """Returns chain name with its authentic token/blockchain symbol for Discord embeds."""
+    """Returns chain name with its authentic token/blockchain emoji symbol for Discord embeds."""
     n = (network_str or "Ethereum").strip()
     n_low = n.lower()
 
     # Check if the bot has access to any matching server custom emoji
     target_names = []
-    if "eth" in n_low:
+    if "robinhood" in n_low:
+        target_names = ["robinhood", "rh"]
+    elif "eth" in n_low:
         target_names = ["ethereum", "eth", "ether"]
     elif "sol" in n_low:
         target_names = ["solana", "sol"]
@@ -9223,28 +9260,30 @@ def format_network_display(network_str: Optional[str]) -> str:
         target_names = ["zcash", "zec"]
     elif n_low == "arc":
         target_names = ["arc", "arcium"]
-    elif "robinhood" in n_low:
-        target_names = ["robinhood", "rh"]
+    elif "btc" in n_low or "bitcoin" in n_low:
+        target_names = ["bitcoin", "btc"]
+    elif "polygon" in n_low or "matic" in n_low:
+        target_names = ["polygon", "matic"]
 
     for ename in target_names:
         emoji_obj = discord.utils.get(bot.emojis, name=ename)
         if emoji_obj:
             return f"{emoji_obj} {n}"
 
-    if "eth" in n_low:
-        return f"⟠ {n}"
-    elif "sol" in n_low:
-        return f"◎ {n}"
-    elif "zec" in n_low or "zcash" in n_low:
-        return f"ⓩ {n}"
-    elif n_low == "arc":
-        return f"▲ {n}"
-    elif "robinhood" in n_low:
+    if "robinhood" in n_low:
         return f"🪶 {n}"
+    elif "eth" in n_low:
+        return f"💎 {n}"
+    elif "sol" in n_low:
+        return f"🟣 {n}"
+    elif "zec" in n_low or "zcash" in n_low:
+        return f"⚡ {n}"
+    elif n_low == "arc":
+        return f"🔷 {n}"
     elif "btc" in n_low or "bitcoin" in n_low:
-        return f"₿ {n}"
+        return f"🪙 {n}"
     elif "polygon" in n_low or "matic" in n_low:
-        return f"⬡ {n}"
+        return f"💜 {n}"
     elif "base" in n_low:
         return f"🔵 {n}"
     elif "arbitrum" in n_low or "arb" in n_low:
@@ -9294,16 +9333,34 @@ def build_giveaway_embed(g_data: dict):
             pass
 
     network_val = g_data.get("network", "Ethereum")
-    chain_icon_name, chain_icon_path = get_chain_icon_info(network_val)
     files_to_send = []
 
-    # 1. Attach and set official blockchain/token icon as the embed thumbnail!
-    if os.path.exists(chain_icon_path):
-        files_to_send.append(discord.File(chain_icon_path, filename=chain_icon_name))
-        embed.set_thumbnail(url=f"attachment://{chain_icon_name}")
-    else:
-        site_url = get_public_site_url()
-        embed.set_thumbnail(url=f"{site_url}/static/chains/{chain_icon_name}")
+    # Optional user-uploaded giveaway thumbnail (only if user provided one)
+    thumbnail_url = str(g_data.get("thumbnail_url", "")).strip()
+    if thumbnail_url:
+        if thumbnail_url.startswith("data:image"):
+            try:
+                header, encoded = thumbnail_url.split(",", 1)
+                img_bytes = base64.b64decode(encoded)
+                fp = io.BytesIO(img_bytes)
+                files_to_send.append(discord.File(fp, filename="thumb.png"))
+                embed.set_thumbnail(url="attachment://thumb.png")
+            except Exception as thumb_e:
+                print(f"[BASE64 THUMBNAIL DECODE ERROR] {thumb_e}")
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            uploads_dir = os.path.join(base_dir, "static", "uploads")
+            filename = os.path.basename(thumbnail_url.split("?")[0])
+            local_path = os.path.join(uploads_dir, filename)
+
+            if filename and os.path.exists(local_path) and os.path.isfile(local_path):
+                files_to_send.append(discord.File(local_path, filename=filename))
+                embed.set_thumbnail(url=f"attachment://{filename}")
+            elif thumbnail_url.startswith("/"):
+                site_url = get_public_site_url()
+                embed.set_thumbnail(url=f"{site_url}{thumbnail_url}")
+            elif (thumbnail_url.startswith("http://") or thumbnail_url.startswith("https://")) and not ("localhost" in thumbnail_url or "127.0.0.1" in thumbnail_url):
+                embed.set_thumbnail(url=thumbnail_url)
 
     if host_avatar and host_avatar.startswith(("http://", "https://")):
         embed.set_author(name=f"Hosted by {host_name}", icon_url=host_avatar)
@@ -9311,7 +9368,7 @@ def build_giveaway_embed(g_data: dict):
         site_url = get_public_site_url()
         embed.set_author(name=f"Hosted by {host_name}", icon_url=f"{site_url}{host_avatar}")
     elif host_name:
-        embed.set_author(name=f"Hosted by {host_name}", icon_url=f"attachment://{chain_icon_name}")
+        embed.set_author(name=f"Hosted by {host_name}")
     
     banner_url = str(g_data.get("banner_url", "")).strip()
     if banner_url:
@@ -9487,8 +9544,7 @@ def build_giveaway_embed(g_data: dict):
     embed.add_field(name="Total Entries", value=f"**{entries_count}** Users Joined", inline=True)
 
     embed.set_footer(
-        text=f"Network: {network_val} • Click [Join Giveaway] below to participate | Powered by Arcie Bot",
-        icon_url=f"attachment://{chain_icon_name}"
+        text=f"Network: {network_val} • Click [Join Giveaway] below to participate | Powered by Arcie Bot"
     )
 
     return embed, files_to_send
@@ -10769,6 +10825,7 @@ async def start_health_server():
             "title": body.get("title", "NFT Giveaway"),
             "description": body.get("description", ""),
             "banner_url": body.get("banner_url", ""),
+            "thumbnail_url": body.get("thumbnail_url", ""),
             "channel_id": str(body.get("channel_id", "")),
             "winner_channel_id": str(body.get("winner_channel_id", "")),
             "mention_role": body.get("mention_role", ""),
@@ -10795,6 +10852,7 @@ async def start_health_server():
 
         giveaways[g_id] = g_data
         save_banner_image_if_data_url(g_data)
+        save_thumbnail_image_if_data_url(g_data)
         save_giveaways()
 
         # Post Embed in Discord IMMEDIATELY on creation via unified update_giveaway_discord_message under lock
@@ -10831,6 +10889,9 @@ async def start_health_server():
         if "banner_url" in body:
             g["banner_url"] = body["banner_url"]
             save_banner_image_if_data_url(g)
+        if "thumbnail_url" in body:
+            g["thumbnail_url"] = body["thumbnail_url"]
+            save_thumbnail_image_if_data_url(g)
         if "network" in body: g["network"] = body["network"]
         if "min_per_user" in body: g["min_per_user"] = int(body["min_per_user"])
         if "max_per_user" in body: g["max_per_user"] = int(body["max_per_user"])

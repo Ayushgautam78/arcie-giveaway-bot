@@ -211,6 +211,17 @@ function resetCreateForm() {
   if (bInp) bInp.value = '';
   const fInp = document.getElementById('gBannerFile');
   if (fInp) fInp.value = '';
+
+  const thumbPreviewBox = document.getElementById('gThumbnailPreview');
+  if (thumbPreviewBox) {
+    thumbPreviewBox.style.display = 'none';
+    const tImg = thumbPreviewBox.querySelector('img');
+    if (tImg) tImg.src = '';
+  }
+  const tInp = document.getElementById('gThumbnail');
+  if (tInp) tInp.value = '';
+  const tfInp = document.getElementById('gThumbnailFile');
+  if (tfInp) tfInp.value = '';
 }
 
 function escapeHtml(str) {
@@ -1656,6 +1667,7 @@ async function submitCreateGiveaway() {
     const title = document.getElementById('gTitle').value.trim();
     const description = document.getElementById('gDesc').value.trim();
     const banner_url = document.getElementById('gBanner').value.trim();
+    const thumbnail_url = document.getElementById('gThumbnail') ? document.getElementById('gThumbnail').value.trim() : '';
     const channelSelect = document.getElementById('gChannel').value;
     const channelManual = document.getElementById('gChannelManual') ? document.getElementById('gChannelManual').value.trim() : '';
     const channel_id = channelManual || channelSelect || 'auto';
@@ -1703,6 +1715,7 @@ async function submitCreateGiveaway() {
       title,
       description,
       banner_url,
+      thumbnail_url,
       channel_id: channel_id || 'general',
       winner_channel_id,
       mention_role,
@@ -1898,6 +1911,7 @@ function openEditModal(giveawayId) {
   document.getElementById('editGTitle').value = g.title || '';
   document.getElementById('editGDesc').value = g.description || '';
   document.getElementById('editGBanner').value = g.banner_url || '';
+  document.getElementById('editGThumbnail').value = g.thumbnail_url || '';
   document.getElementById('editGNetwork').value = g.network || 'Ethereum';
 
   const editHostName = g.host_name || g.hosted_by || (currentUser ? (currentUser.display_name || currentUser.username) : 'Admin');
@@ -1938,6 +1952,19 @@ function openEditModal(giveawayId) {
       previewBox.style.display = 'none';
       const pImg = previewBox.querySelector('img');
       if (pImg) pImg.src = '';
+    }
+  }
+
+  const thumbPreviewBox = document.getElementById('editGThumbnailPreview');
+  if (thumbPreviewBox) {
+    if (g.thumbnail_url) {
+      thumbPreviewBox.style.display = 'block';
+      const rawUrl = g.thumbnail_url.trim();
+      thumbPreviewBox.querySelector('img').src = (rawUrl.startsWith('/') && !rawUrl.startsWith('//')) ? apiUrl(rawUrl) : rawUrl;
+    } else {
+      thumbPreviewBox.style.display = 'none';
+      const tImg = thumbPreviewBox.querySelector('img');
+      if (tImg) tImg.src = '';
     }
   }
 
@@ -2028,6 +2055,7 @@ async function submitEditGiveaway() {
     const title = document.getElementById('editGTitle').value.trim();
     const description = document.getElementById('editGDesc').value.trim();
     const banner_url = document.getElementById('editGBanner').value.trim();
+    const thumbnail_url = document.getElementById('editGThumbnail') ? document.getElementById('editGThumbnail').value.trim() : '';
     const network = document.getElementById('editGNetwork').value.trim() || 'Ethereum';
     const mention_role = document.getElementById('editGMentionRole').value;
     const channelSelect = document.getElementById('editGChannel') ? document.getElementById('editGChannel').value : '';
@@ -2061,6 +2089,7 @@ async function submitEditGiveaway() {
     g.title = title;
     g.description = description;
     g.banner_url = banner_url;
+    g.thumbnail_url = thumbnail_url;
     g.network = network;
     g.mention_role = mention_role;
     g.winner_channel_id = winner_channel_id;
