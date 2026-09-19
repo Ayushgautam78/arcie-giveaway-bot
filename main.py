@@ -7701,6 +7701,168 @@ async def _handle_reduce_bonus_entries(interaction: discord.Interaction, user: d
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+@bot.tree.command(name="bonus-history", description="Admin: View full bonus entries transaction history for any user (visible only to you).")
+@app_commands.describe(user="The member to view bonus entries history for", user_id="Or search by username or Discord User ID")
+async def bonus_history_cmd(interaction: discord.Interaction, user: Optional[discord.User] = None, user_id: Optional[str] = None):
+    await _handle_admin_bonus_history(interaction, user, user_id)
+
+
+@bot.tree.command(name="bonus_history", description="Admin: View full bonus entries transaction history for any user (alias).")
+@app_commands.describe(user="The member to view bonus entries history for", user_id="Or search by username or Discord User ID")
+async def bonus_history_underscore_cmd(interaction: discord.Interaction, user: Optional[discord.User] = None, user_id: Optional[str] = None):
+    await _handle_admin_bonus_history(interaction, user, user_id)
+
+
+@bot.tree.command(name="bonus-entries-history", description="Admin: View full bonus entries history for any user (alias).")
+@app_commands.describe(user="The member to view bonus entries history for", user_id="Or search by username or Discord User ID")
+async def bonus_entries_history_cmd(interaction: discord.Interaction, user: Optional[discord.User] = None, user_id: Optional[str] = None):
+    await _handle_admin_bonus_history(interaction, user, user_id)
+
+
+@bot.tree.command(name="bonus_entries_history", description="Admin: View full bonus entries history for any user (alias).")
+@app_commands.describe(user="The member to view bonus entries history for", user_id="Or search by username or Discord User ID")
+async def bonus_entries_history_underscore_cmd(interaction: discord.Interaction, user: Optional[discord.User] = None, user_id: Optional[str] = None):
+    await _handle_admin_bonus_history(interaction, user, user_id)
+
+
+async def _handle_admin_bonus_history(interaction: discord.Interaction, user: Optional[discord.User] = None, user_id: Optional[str] = None):
+    uid = str(interaction.user.id)
+    is_admin = is_bot_admin_by_id(uid)
+    has_perm = interaction.permissions and (interaction.permissions.manage_guild or interaction.permissions.administrator)
+    if not (is_admin or has_perm):
+        await safe_respond(interaction, "❌ You do not have permission to view member bonus history (Admin / Manage Guild required).", ephemeral=True)
+        return
+
+    target_user = user
+    target_uid = None
+
+    if not target_user and user_id:
+        clean_query = user_id.strip().lstrip("@")
+        if clean_query.isdigit():
+            target_uid = clean_query
+            try:
+                target_user = bot.get_user(int(clean_query)) or await bot.fetch_user(int(clean_query))
+            except Exception:
+                pass
+        if not target_user:
+            clean_low = clean_query.lower()
+            for p_id, p_data in user_profiles.items():
+                if isinstance(p_data, dict):
+                    p_u = str(p_data.get("username", "")).lower()
+                    p_d = str(p_data.get("display_name", "")).lower()
+                    if clean_low in (p_u, p_d) or (clean_query.isdigit() and p_id == clean_query):
+                        target_uid = p_id
+                        try:
+                            target_user = bot.get_user(int(p_id)) or await bot.fetch_user(int(p_id))
+                        except Exception:
+                            pass
+                        break
+
+    if target_user:
+        target_uid = str(target_user.id)
+    elif not target_uid:
+        await safe_respond(interaction, "❌ Please specify a user or enter a user ID/username to view bonus history.", ephemeral=True)
+        return
+
+    prof = user_profiles.get(target_uid, {})
+    if target_user:
+        prof = get_user_profile_fast(target_uid, target_user)
+
+    bal = int(prof.get("bonus_entries") or 0)
+    history = prof.get("bonus_transactions", [])
+    if not isinstance(history, list):
+        history = []
+
+    # Check active giveaways where bonus entries are currently applied
+    active_giveaways_info = []
+    total_active_bonus = 0
+    for gid, entries in giveaway_entries.items():
+        g = giveaways.get(gid)
+        if g and g.get("is_active") and not g.get("is_done") and not g.get("winners_drawn"):
+            ent = next((e for e in entries if str(e.get("user_id")) == target_uid), None)
+            if ent:
+                used = int(ent.get("bonus_entries_used") or 0)
+                if used > 0:
+                    total_active_bonus += used
+                    g_title = g.get("title", gid)[:30]
+                    active_giveaways_info.append(f"• **{g_title}**: `+{used}` 🎟️")
+
+    user_name = target_user.name if target_user else prof.get("username") or prof.get("display_name") or f"User {target_uid}"
+    user_mention = target_user.mention if target_user else f"<@{target_uid}>"
+
+    embed = discord.Embed(
+        title="📜 Bonus Entries History & Balance",
+        color=discord.Color.from_rgb(0, 255, 157)
+    )
+    if target_user and target_user.display_avatar:
+        embed.set_thumbnail(url=target_user.display_avatar.url)
+
+    desc_lines = [
+        f"**Target Member:** {user_mention} (`{user_name}`)",
+        f"**User ID:** `{target_uid}`",
+        f"• **Available Balance:** **`{bal}`** Bonus Entries 🎟️",
+    ]
+    if total_active_bonus > 0:
+        desc_lines.append(f"• **Currently Applied in Active Giveaways:** **`+{total_active_bonus}`** 🎟️")
+
+    embed.description = "\n".join(desc_lines)
+
+    if active_giveaways_info:
+        embed.add_field(
+            name="🎟️ Active Giveaway Allocations",
+            value="\n".join(active_giveaways_info[:6]),
+            inline=False
+        )
+
+    if not history:
+        embed.add_field(
+            name="Transaction Log",
+            value="*No bonus transactions recorded for this user yet.*",
+            inline=False
+        )
+    else:
+        last_txs = list(reversed(history[-15:]))
+        tx_lines = []
+        for idx, tx in enumerate(last_txs, 1):
+            ts = tx.get("timestamp", "Recent")
+            t_type = tx.get("type", "tx")
+            amt = tx.get("amount", 0)
+            bal_after = tx.get("balance_after", 0)
+            reason = tx.get("reason", "No details")
+            by = tx.get("by", "System")
+
+            if t_type == "grant":
+                badge = f"🟢 +{abs(amt)} Granted"
+            elif t_type == "used":
+                badge = f"🔵 -{abs(amt)} Used"
+            elif t_type == "refund":
+                badge = f"🟡 +{abs(amt)} Refunded"
+            elif t_type == "reduce":
+                badge = f"🔴 -{abs(amt)} Deducted"
+            else:
+                badge = f"⚪ {amt:+d}"
+
+            tx_lines.append(
+                f"**{idx}.** `{ts}` — **{badge}**\n"
+                f"↳ *{reason}* (By: `{by}`) • Balance: `{bal_after}`"
+            )
+
+        chunk = ""
+        field_count = 1
+        for line in tx_lines:
+            if len(chunk) + len(line) + 2 > 950:
+                embed.add_field(name=f"Transaction History (Part {field_count})" if field_count > 1 else "Transaction History", value=chunk.strip(), inline=False)
+                chunk = line + "\n\n"
+                field_count += 1
+            else:
+                chunk += line + "\n\n"
+        if chunk:
+            embed.add_field(name=f"Transaction History (Part {field_count})" if field_count > 1 else "Transaction History", value=chunk.strip(), inline=False)
+
+    embed.set_footer(text=f"Requested by Admin {interaction.user.name} | Only visible to you")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 @bot.tree.command(name="view-bonus-entries", description="Check how many bonus giveaway entries you have left (visible only to you).")
 @app_commands.describe(user="Optional member to check balance for (defaults to yourself)")
 async def view_bonus_entries_cmd(interaction: discord.Interaction, user: Optional[discord.User] = None):
