@@ -33,7 +33,7 @@ window.selectQuickNetwork = function(chainName, isEdit = false) {
   const solCb = document.getElementById(isEdit ? 'editReqSolana' : 'reqSolana');
   const zecCb = document.getElementById(isEdit ? 'editReqZcash' : 'reqZcash');
 
-  const cLow = (chainName || '').toLowerCase();
+  const cLow = (chainName || '').toLowerCase().trim();
   if (cLow === 'zcash' || cLow === 'zec') {
     if (zecCb) zecCb.checked = true;
     if (evmCb) evmCb.checked = false;
@@ -43,12 +43,33 @@ window.selectQuickNetwork = function(chainName, isEdit = false) {
     if (evmCb) evmCb.checked = false;
     if (zecCb) zecCb.checked = false;
   } else {
-    // Default EVM compatible chains (Ethereum, Base, Arbitrum, Polygon, etc.)
+    // Default EVM compatible chains (Ethereum, Arc, Robinhood, etc.)
     if (evmCb) evmCb.checked = true;
     if (solCb) solCb.checked = false;
     if (zecCb) zecCb.checked = false;
   }
 };
+
+// Authentic vector logo / symbol for blockchains
+function getChainSymbolSvg(network, size = 14) {
+  const n = (network || '').toLowerCase().trim();
+  if (n === 'ethereum' || n === 'eth') {
+    return `<svg width="${size}" height="${size}" viewBox="0 0 784.37 1277.39" fill="currentColor" style="vertical-align: -2px; display: inline-block; flex-shrink: 0;"><polygon fill="#8A92B2" points="392.07,0 383.5,29.11 383.5,873.74 392.07,882.29 784.13,650.54"/><polygon fill="#62688F" points="392.07,0 0,650.54 392.07,882.29 392.07,472.33"/><polygon fill="#454A75" points="392.07,956.52 387.24,962.41 387.24,1263.28 392.07,1277.38 784.37,724.89"/><polygon fill="#454A75" points="392.07,1277.38 392.07,956.52 0,724.89"/><polygon fill="#1B1E36" points="392.07,882.29 784.13,650.54 392.07,472.33"/><polygon fill="#2E335B" points="0,650.54 392.07,882.29 392.07,472.33"/></svg>`;
+  }
+  if (n === 'solana' || n === 'sol') {
+    return `<svg width="${size}" height="${Math.round(size * 0.85)}" viewBox="0 0 397.7 311.7" fill="none" style="vertical-align: -1px; display: inline-block; flex-shrink: 0;"><defs><linearGradient id="solGradApp" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#00FFA3"/><stop offset="100%" stop-color="#DC1FFF"/></linearGradient></defs><path fill="url(#solGradApp)" d="M64.6 237.9c2.4-2.4 5.7-3.8 9.2-3.8h317.4c5.8 0 8.7 7 4.6 11.1l-62.7 62.7c-2.4 2.4-5.7 3.8-9.2 3.8H6.5c-5.8 0-8.7-7-4.6-11.1l62.7-62.7zM64.6 3.8C67 1.4 70.3 0 73.8 0h317.4c5.8 0 8.7 7 4.6 11.1l-62.7 62.7c-2.4 2.4-5.7 3.8-9.2 3.8H6.5c-5.8 0-8.7-7-4.6-11.1L64.6 3.8zm268.5 115.1c-2.4-2.4-5.7-3.8-9.2-3.8H6.5c-5.8 0-8.7 7-4.6 11.1l62.7 62.7c2.4 2.4 5.7 3.8 9.2 3.8h317.4c5.8 0 8.7-7 4.6-11.1l-62.7-62.7z"/></svg>`;
+  }
+  if (n === 'zcash' || n === 'zec') {
+    return `<svg width="${size}" height="${size}" viewBox="0 0 32 32" fill="none" style="vertical-align: -2px; display: inline-block; flex-shrink: 0;"><circle cx="16" cy="16" r="15" fill="#F4B728" stroke="#D49A15" stroke-width="1.5"/><path d="M16 5v3m0 16v3M11 11h10l-10 10h10" stroke="#1E1E1E" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  }
+  if (n === 'arc') {
+    return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; display: inline-block; flex-shrink: 0;"><path d="M12 2a10 10 0 0 1 10 10c0 4.42-2.87 8.17-6.84 9.5"/><path d="M12 6a6 6 0 0 1 6 6"/><circle cx="12" cy="12" r="2.5" fill="#38bdf8"/></svg>`;
+  }
+  if (n === 'robinhood') {
+    return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="#00c805" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; display: inline-block; flex-shrink: 0;"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/><line x1="16" y1="8" x2="2" y2="22"/><line x1="17.5" y1="15" x2="9" y2="15"/></svg>`;
+  }
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; display: inline-block; flex-shrink: 0;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
+}
 
 // ==========================================================================
 // CORE SVG ICONS & SHARED UTILITY HELPERS
@@ -1148,7 +1169,7 @@ function renderGiveaways(highlightedGiveaway = null) {
               <img src="${escapeHtml(hostAvatar)}" class="g-host-avatar" alt="${escapeHtml(hostName)}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
               <span class="g-host-name">${escapeHtml(hostName)}</span>
             </div>
-            <span class="g-card-network-badge">${escapeHtml(g.network || 'Ethereum')}</span>
+            <span class="g-card-network-badge" style="display: inline-flex; align-items: center; gap: 5px;">${getChainSymbolSvg(g.network, 13)} ${escapeHtml(g.network || 'Ethereum')}</span>
           </div>
 
           <h3 class="g-card-title">${escapeHtml(g.title)}</h3>
@@ -2310,7 +2331,7 @@ async function openDetailModal(giveawayId) {
             ` : ''}
             <div class="tessera-chip">
               <span class="tessera-chip-label">Network</span>
-              <span class="tessera-chip-val">${escapeHtml(g.network || 'Ethereum')}</span>
+              <span class="tessera-chip-val" style="display: inline-flex; align-items: center; gap: 5px;">${getChainSymbolSvg(g.network, 14)} ${escapeHtml(g.network || 'Ethereum')}</span>
             </div>
             <div class="tessera-chip">
               <span class="tessera-chip-label">Raffle ID</span>
@@ -3496,6 +3517,14 @@ function openModal(id) {
       input.value = '';
     });
     if (id === 'createModal') {
+      // Ensure EVM is ticked by default, while Solana and Zcash remain unticked
+      const reqEvmEl = document.getElementById('reqEvm');
+      if (reqEvmEl) reqEvmEl.checked = true;
+      const reqSolEl = document.getElementById('reqSolana');
+      if (reqSolEl) reqSolEl.checked = false;
+      const reqZecEl = document.getElementById('reqZcash');
+      if (reqZecEl) reqZecEl.checked = false;
+
       filterChannelSelect('gChannel', '');
       filterChannelSelect('gWinnerChannel', '');
       filterRoleSelect('gMentionRole', '');

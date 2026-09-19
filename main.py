@@ -9207,7 +9207,30 @@ def format_embed_description(raw_desc: str, social_links: Optional[dict] = None)
         if link_bullets:
             formatted += f"\n\n**Official Links:**\n" + " • ".join(link_bullets)
 
-    return formatted
+def format_network_display(network_str: Optional[str]) -> str:
+    """Returns chain name with its authentic token/blockchain symbol for Discord embeds."""
+    n = (network_str or "Ethereum").strip()
+    n_low = n.lower()
+    if "eth" in n_low:
+        return f"⟠ {n}"
+    elif "sol" in n_low:
+        return f"◎ {n}"
+    elif "zec" in n_low or "zcash" in n_low:
+        return f"ⓩ {n}"
+    elif n_low == "arc":
+        return f"▲ {n}"
+    elif "robinhood" in n_low:
+        return f"🪶 {n}"
+    elif "btc" in n_low or "bitcoin" in n_low:
+        return f"₿ {n}"
+    elif "polygon" in n_low or "matic" in n_low:
+        return f"⬡ {n}"
+    elif "base" in n_low:
+        return f"🔵 {n}"
+    elif "arbitrum" in n_low or "arb" in n_low:
+        return f"🔷 {n}"
+    return f"🌐 {n}"
+
 
 def build_giveaway_embed(g_data: dict):
     """Build a rich Discord Embed object with full markdown & clickable link support for giveaway descriptions."""
@@ -9285,7 +9308,7 @@ def build_giveaway_embed(g_data: dict):
         embed.add_field(name="🎙️ Hosted By", value=f"<@{host_id}>", inline=True)
     elif host_name:
         embed.add_field(name="🎙️ Hosted By", value=f"**{host_name}**", inline=True)
-    embed.add_field(name="Network", value=g_data.get("network", "Ethereum"), inline=True)
+    embed.add_field(name="Network", value=format_network_display(g_data.get("network", "Ethereum")), inline=True)
     embed.add_field(name="Ends At", value=f"<t:{int(g_data.get('ends_at', time.time()))}:R>", inline=True)
 
     # 1. Parse & Render Prominent Role Requirement Field (🛡️ ROLE REQUIREMENT)
