@@ -5539,7 +5539,10 @@ async def update_giveaway_discord_message(giveaway_id: str):
             return
 
         domain = get_public_site_url()
-        embed, file_to_send = build_giveaway_embed(g)
+        embed, files_to_send = build_giveaway_embed(g)
+        if not isinstance(files_to_send, list):
+            files_to_send = [files_to_send] if files_to_send else []
+
         view = GiveawayView(giveaway_id, domain)
         mention_text = format_role_mention(g.get("mention_role")) if g.get("is_active") else None
 
@@ -5555,16 +5558,18 @@ async def update_giveaway_discord_message(giveaway_id: str):
         if msg:
             try:
                 kwargs = {"content": mention_text, "embed": embed, "view": view}
-                if file_to_send:
-                    kwargs["attachments"] = [file_to_send]
+                if files_to_send:
+                    kwargs["attachments"] = files_to_send
                 await msg.edit(**kwargs)
                 # Only update banner_url with attachment URL if not already a self-contained Data URL or external link
                 cur_b = str(g.get("banner_url", "")).strip()
                 if not cur_b.startswith("data:image") and not cur_b.startswith("http"):
-                    if msg.attachments and file_to_send and getattr(file_to_send, 'filename', '') == 'banner.png':
-                        g["banner_url"] = msg.attachments[0].url
-                        save_giveaways()
-                        await firebase_put(f"giveaways/{giveaway_id}/banner_url", g["banner_url"])
+                    for att in msg.attachments:
+                        if att.filename == 'banner.png':
+                            g["banner_url"] = att.url
+                            save_giveaways()
+                            await firebase_put(f"giveaways/{giveaway_id}/banner_url", g["banner_url"])
+                            break
                 print(f"[UPDATE EMBED SUCCESS] In-place edited Discord embed for '{g.get('title')}' in #{channel.name} (preserved sent timestamp)")
                 return
             except Exception as edit_err:
@@ -5572,8 +5577,8 @@ async def update_giveaway_discord_message(giveaway_id: str):
 
         # Post fresh message if old message was missing or failed to edit
         try:
-            if file_to_send:
-                new_msg = await channel.send(content=mention_text, embed=embed, view=view, file=file_to_send)
+            if files_to_send:
+                new_msg = await channel.send(content=mention_text, embed=embed, view=view, files=files_to_send)
             else:
                 new_msg = await channel.send(content=mention_text, embed=embed, view=view)
 
@@ -9207,6 +9212,25 @@ def format_network_display(network_str: Optional[str]) -> str:
     """Returns chain name with its authentic token/blockchain symbol for Discord embeds."""
     n = (network_str or "Ethereum").strip()
     n_low = n.lower()
+
+    # Check if the bot has access to any matching server custom emoji
+    target_names = []
+    if "eth" in n_low:
+        target_names = ["ethereum", "eth", "ether"]
+    elif "sol" in n_low:
+        target_names = ["solana", "sol"]
+    elif "zec" in n_low or "zcash" in n_low:
+        target_names = ["zcash", "zec"]
+    elif n_low == "arc":
+        target_names = ["arc", "arcium"]
+    elif "robinhood" in n_low:
+        target_names = ["robinhood", "rh"]
+
+    for ename in target_names:
+        emoji_obj = discord.utils.get(bot.emojis, name=ename)
+        if emoji_obj:
+            return f"{emoji_obj} {n}"
+
     if "eth" in n_low:
         return f"⟠ {n}"
     elif "sol" in n_low:
@@ -9226,6 +9250,23 @@ def format_network_display(network_str: Optional[str]) -> str:
     elif "arbitrum" in n_low or "arb" in n_low:
         return f"🔷 {n}"
     return f"🌐 {n}"
+
+
+def get_chain_icon_info(network_str: Optional[str]) -> tuple[str, str]:
+    """Returns (filename, icon_path) for the given blockchain network."""
+    n = (network_str or "Ethereum").strip().lower()
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    if "eth" in n:
+        return "ethereum.png", os.path.join(base_dir, "static", "chains", "ethereum.png")
+    elif "sol" in n:
+        return "solana.png", os.path.join(base_dir, "static", "chains", "solana.png")
+    elif "zec" in n or "zcash" in n:
+        return "zcash.png", os.path.join(base_dir, "static", "chains", "zcash.png")
+    elif n == "arc":
+        return "arc.png", os.path.join(base_dir, "static", "chains", "arc.png")
+    elif "robinhood" in n:
+        return "robinhood.png", os.path.join(base_dir, "static", "chains", "robinhood.png")
+    return "logo.png", os.path.join(base_dir, "static", "logo.png")
 
 
 def build_giveaway_embed(g_data: dict):
@@ -9252,17 +9293,27 @@ def build_giveaway_embed(g_data: dict):
         except Exception:
             pass
 
+    network_val = g_data.get("network", "Ethereum")
+    chain_icon_name, chain_icon_path = get_chain_icon_info(network_val)
+    files_to_send = []
+
+    # 1. Attach and set official blockchain/token icon as the embed thumbnail!
+    if os.path.exists(chain_icon_path):
+        files_to_send.append(discord.File(chain_icon_path, filename=chain_icon_name))
+        embed.set_thumbnail(url=f"attachment://{chain_icon_name}")
+    else:
+        site_url = get_public_site_url()
+        embed.set_thumbnail(url=f"{site_url}/static/chains/{chain_icon_name}")
+
     if host_avatar and host_avatar.startswith(("http://", "https://")):
         embed.set_author(name=f"Hosted by {host_name}", icon_url=host_avatar)
     elif host_avatar and host_avatar.startswith("/"):
         site_url = get_public_site_url()
         embed.set_author(name=f"Hosted by {host_name}", icon_url=f"{site_url}{host_avatar}")
     elif host_name:
-        embed.set_author(name=f"Hosted by {host_name}")
+        embed.set_author(name=f"Hosted by {host_name}", icon_url=f"attachment://{chain_icon_name}")
     
     banner_url = str(g_data.get("banner_url", "")).strip()
-    file_to_send = None
-
     if banner_url:
         if banner_url.startswith("data:image"):
             # Handle Base64 Data URL images uploaded via browser
@@ -9270,7 +9321,7 @@ def build_giveaway_embed(g_data: dict):
                 header, encoded = banner_url.split(",", 1)
                 img_bytes = base64.b64decode(encoded)
                 fp = io.BytesIO(img_bytes)
-                file_to_send = discord.File(fp, filename="banner.png")
+                files_to_send.append(discord.File(fp, filename="banner.png"))
                 embed.set_image(url="attachment://banner.png")
             except Exception as img_e:
                 print(f"[BASE64 IMAGE DECODE ERROR] {img_e}")
@@ -9282,23 +9333,13 @@ def build_giveaway_embed(g_data: dict):
             local_path = os.path.join(uploads_dir, filename)
 
             if filename and os.path.exists(local_path) and os.path.isfile(local_path):
-                file_to_send = discord.File(local_path, filename=filename)
+                files_to_send.append(discord.File(local_path, filename=filename))
                 embed.set_image(url=f"attachment://{filename}")
             elif banner_url.startswith("/"):
                 site_url = get_public_site_url()
                 embed.set_image(url=f"{site_url}{banner_url}")
             elif (banner_url.startswith("http://") or banner_url.startswith("https://")) and not ("localhost" in banner_url or "127.0.0.1" in banner_url):
                 embed.set_image(url=banner_url)
-    else:
-        # User has NOT attached any image: use our official logo!
-        site_url = get_public_site_url()
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        logo_path = os.path.join(base_dir, "static", "logo.png")
-        if os.path.exists(logo_path):
-            file_to_send = discord.File(logo_path, filename="logo.png")
-            embed.set_thumbnail(url="attachment://logo.png")
-        else:
-            embed.set_thumbnail(url=f"{site_url}/static/logo.png")
 
     if host_id and host_id.isdigit():
         embed.add_field(name="🎙️ Hosted By", value=f"<@{host_id}>", inline=True)
@@ -9445,9 +9486,12 @@ def build_giveaway_embed(g_data: dict):
     g_data["entries_count"] = entries_count
     embed.add_field(name="Total Entries", value=f"**{entries_count}** Users Joined", inline=True)
 
-    embed.set_footer(text="Click [Join Giveaway] below to participate | Powered by Arcie Bot")
+    embed.set_footer(
+        text=f"Network: {network_val} • Click [Join Giveaway] below to participate | Powered by Arcie Bot",
+        icon_url=f"attachment://{chain_icon_name}"
+    )
 
-    return embed, file_to_send
+    return embed, files_to_send
 
 
 def format_role_mention(mention_str) -> Optional[str]:
