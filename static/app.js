@@ -693,7 +693,7 @@ function renderCreateRoleMultipliers() {
   }
   container.innerHTML = createRoleMultipliers.map((rm, idx) => `
     <span class="role-badge-chip" style="background: rgba(234, 179, 8, 0.15); border-color: rgba(234, 179, 8, 0.35); color: #fde047;">
-      @${escapeHtml(rm.name || rm.id)} — <b>${rm.multiplier}x ${rm.multiplier === 1 ? 'Entry' : 'Entries'}</b>
+      @${escapeHtml(rm.name || rm.id)} — <b>${rm.multiplier}x</b>
       <span class="remove-btn" onclick="removeRoleMultiplier(${idx})" title="Remove multiplier">×</span>
     </span>
   `).join('');
@@ -750,7 +750,7 @@ function renderEditRoleMultipliers() {
   }
   container.innerHTML = editRoleMultipliers.map((rm, idx) => `
     <span class="role-badge-chip" style="background: rgba(234, 179, 8, 0.15); border-color: rgba(234, 179, 8, 0.35); color: #fde047;">
-      @${escapeHtml(rm.name || rm.id)} — <b>${rm.multiplier}x ${rm.multiplier === 1 ? 'Entry' : 'Entries'}</b>
+      @${escapeHtml(rm.name || rm.id)} — <b>${rm.multiplier}x</b>
       <span class="remove-btn" onclick="removeEditRoleMultiplier(${idx})" title="Remove multiplier">×</span>
     </span>
   `).join('');

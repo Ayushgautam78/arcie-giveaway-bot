@@ -9669,7 +9669,7 @@ def build_giveaway_embed(g_data: dict):
                 rid = str(rm.get("id", "")).strip()
                 rname = rm.get("name") or rid
                 count = int(rm.get("multiplier") or rm.get("entries") or 1)
-                count_str = f"{count}x {'Entry' if count == 1 else 'Entries'}"
+                count_str = f"{count}x"
                 if rid.isdigit():
                     mult_lines.append(f"• <@&{rid}> ➔ **{count_str}**")
                 elif rid in ("@everyone", "@here"):
