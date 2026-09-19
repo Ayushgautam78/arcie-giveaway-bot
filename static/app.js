@@ -24,6 +24,32 @@ let currentGiveaways = [];
 let currentFilter = 'active';
 let activeDetailGiveaway = null;
 
+// Quick Chain / Network selector helper for Create and Edit Giveaway modals
+window.selectQuickNetwork = function(chainName, isEdit = false) {
+  const netInput = document.getElementById(isEdit ? 'editGNetwork' : 'gNetwork');
+  if (netInput) netInput.value = chainName;
+
+  const evmCb = document.getElementById(isEdit ? 'editReqEvm' : 'reqEvm');
+  const solCb = document.getElementById(isEdit ? 'editReqSolana' : 'reqSolana');
+  const zecCb = document.getElementById(isEdit ? 'editReqZcash' : 'reqZcash');
+
+  const cLow = (chainName || '').toLowerCase();
+  if (cLow === 'zcash' || cLow === 'zec') {
+    if (zecCb) zecCb.checked = true;
+    if (evmCb) evmCb.checked = false;
+    if (solCb) solCb.checked = false;
+  } else if (cLow === 'solana' || cLow === 'sol') {
+    if (solCb) solCb.checked = true;
+    if (evmCb) evmCb.checked = false;
+    if (zecCb) zecCb.checked = false;
+  } else {
+    // Default EVM compatible chains (Ethereum, Base, Arbitrum, Polygon, etc.)
+    if (evmCb) evmCb.checked = true;
+    if (solCb) solCb.checked = false;
+    if (zecCb) zecCb.checked = false;
+  }
+};
+
 // ==========================================================================
 // CORE SVG ICONS & SHARED UTILITY HELPERS
 // ==========================================================================
@@ -1086,6 +1112,7 @@ function renderGiveaways(highlightedGiveaway = null) {
     }
     if (g.tasks?.require_evm) reqBadges.push(`<span class="g-tag"><span class="bracket">[</span>EVM<span class="bracket">]</span></span>`);
     if (g.tasks?.require_solana) reqBadges.push(`<span class="g-tag"><span class="bracket">[</span>Solana<span class="bracket">]</span></span>`);
+    if (g.tasks?.require_zcash) reqBadges.push(`<span class="g-tag" style="border-color: rgba(245, 158, 11, 0.4); color: #fbbf24;"><span class="bracket">[</span>Zcash<span class="bracket">]</span></span>`);
 
     let statusHtml = '';
     if (g.is_done) {
@@ -1631,6 +1658,7 @@ async function submitCreateGiveaway() {
     const dynamic_tasks = getDynamicTasksPayload();
     const require_evm = document.getElementById('reqEvm').checked;
     const require_solana = document.getElementById('reqSolana').checked;
+    const require_zcash = document.getElementById('reqZcash') ? document.getElementById('reqZcash').checked : false;
 
     const twitter_link = document.getElementById('gTwitterLink')?.value.trim() || '';
     const discord_link = document.getElementById('gDiscordLink')?.value.trim() || '';
@@ -1680,6 +1708,7 @@ async function submitCreateGiveaway() {
         dynamic_tasks,
         require_evm,
         require_solana,
+        require_zcash,
         roles: selectedRoles
       }
     };
@@ -1945,6 +1974,9 @@ function openEditModal(giveawayId) {
 
   document.getElementById('editReqEvm').checked = !!g.tasks?.require_evm;
   document.getElementById('editReqSolana').checked = !!g.tasks?.require_solana;
+  if (document.getElementById('editReqZcash')) {
+    document.getElementById('editReqZcash').checked = !!g.tasks?.require_zcash;
+  }
 
   // Social Links
   if (document.getElementById('editGTwitterLink')) document.getElementById('editGTwitterLink').value = g.social_links?.twitter_link || '';
@@ -1993,6 +2025,7 @@ async function submitEditGiveaway() {
     const dynamic_tasks = getEditDynamicTasksPayload();
     const require_evm = document.getElementById('editReqEvm').checked;
     const require_solana = document.getElementById('editReqSolana').checked;
+    const require_zcash = document.getElementById('editReqZcash') ? document.getElementById('editReqZcash').checked : false;
 
     const twitter_link = document.getElementById('editGTwitterLink')?.value.trim() || '';
     const discord_link = document.getElementById('editGDiscordLink')?.value.trim() || '';
@@ -2034,6 +2067,7 @@ async function submitEditGiveaway() {
       dynamic_tasks,
       require_evm,
       require_solana,
+      require_zcash,
       roles: editSelectedRoles
     };
 
@@ -2502,6 +2536,7 @@ function copyShareLink(giveawayId) {
 function getWalletFieldForNetwork(network) {
   const n = (network || '').toLowerCase().trim();
   if (n === 'solana' || n === 'sol') return { field: 'solana_wallet', label: 'Solana Wallet' };
+  if (n === 'zcash' || n === 'zec') return { field: 'zcash_wallet', label: 'Zcash Wallet' };
   // All EVM-compatible chains
   return { field: 'evm_wallet', label: 'Wallet Address' };
 }
@@ -2564,7 +2599,7 @@ function renderPublicParticipantsTable(entries, walletField, winnersText = '') {
 
   tbody.innerHTML = entries.map((e, idx) => {
     if (!e) return '';
-    const wallet = e[walletField] || e.evm_wallet || e.solana_wallet || 'Not provided';
+    const wallet = e[walletField] || e.evm_wallet || e.solana_wallet || e.zcash_wallet || 'Not provided';
     const uid = String(e.user_id || '');
     const uname = e.username || e.display_name || 'User';
     const rankNum = String(idx + 1).padStart(2, '0');
@@ -2632,7 +2667,7 @@ function filterPublicParticipants(query) {
     if (!e) return false;
     const uname = String(e.username || e.display_name || '').toLowerCase();
     const uid = String(e.user_id || '').toLowerCase();
-    const wallet = String(e[currentPublicWalletField] || e.evm_wallet || e.solana_wallet || '').toLowerCase();
+    const wallet = String(e[currentPublicWalletField] || e.evm_wallet || e.solana_wallet || e.zcash_wallet || '').toLowerCase();
     const wType = String(e.winner_type || '').toLowerCase();
     return uname.includes(q) || uid.includes(q) || wallet.includes(q) || wType.includes(q);
   });
@@ -2859,6 +2894,7 @@ async function loadGiveawayParticipants(giveawayId) {
           <td><code>${escapeHtml(e.evm_wallet || 'None')}</code></td>
           <td><code>${escapeHtml(e.fcfs_evm_wallet || e.burner_evm_wallet || 'None')}</code></td>
           <td><code>${escapeHtml(e.solana_wallet || 'None')}</code></td>
+          <td><code>${escapeHtml(e.zcash_wallet || 'None')}</code></td>
           <td>
             <span style="font-size: 0.8rem;">
               Twitter: ${escapeHtml(e.twitter || '-')}<br>
@@ -3051,14 +3087,14 @@ async function exportAllEntriesCSV(giveawayId) {
       return;
     }
 
-    let csv = '\uFEFFDiscord Username,Discord ID,Twitter Handle,Telegram Handle,Main EVM Wallet,FCFS EVM Wallet,Solana Wallet,Entries (Tickets),Bonus Entries Used,Task Status,Winner Status\n';
+    let csv = '\uFEFFDiscord Username,Discord ID,Twitter Handle,Telegram Handle,Main EVM Wallet,FCFS EVM Wallet,Solana Wallet,Zcash Wallet,Entries (Tickets),Bonus Entries Used,Task Status,Winner Status\n';
     entries.forEach(e => {
       if (!e) return;
       const winnerStatus = e.winner_type ? `WINNER (${String(e.winner_type).toUpperCase()})` : 'Participant';
       const tickets = `${e.multiplier || 1}x`;
       const bonusUsed = e.bonus_entries_used || 0;
       const fcfsWallet = e.fcfs_evm_wallet || e.burner_evm_wallet || '';
-      csv += `"${(e.username || e.display_name || 'User').replace(/"/g, '""')}","${e.user_id || ''}","${(e.twitter || '').replace(/"/g, '""')}","${(e.telegram || '').replace(/"/g, '""')}","${e.evm_wallet || ''}","${fcfsWallet}","${e.solana_wallet || ''}","${tickets}","${bonusUsed}","${e.task_status || 'verified'}","${winnerStatus}"\n`;
+      csv += `"${(e.username || e.display_name || 'User').replace(/"/g, '""')}","${e.user_id || ''}","${(e.twitter || '').replace(/"/g, '""')}","${(e.telegram || '').replace(/"/g, '""')}","${e.evm_wallet || ''}","${fcfsWallet}","${e.solana_wallet || ''}","${e.zcash_wallet || ''}","${tickets}","${bonusUsed}","${e.task_status || 'verified'}","${winnerStatus}"\n`;
     });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -3111,10 +3147,10 @@ async function exportWinnersCSV(giveawayId) {
       return;
     }
 
-    let csv = '\uFEFFDiscord Username,Discord ID,Spot Type,Main EVM Wallet,FCFS EVM Wallet,Solana Wallet,Entries (Tickets),Twitter Handle,Telegram Handle,Task Status\n';
+    let csv = '\uFEFFDiscord Username,Discord ID,Spot Type,Main EVM Wallet,FCFS EVM Wallet,Solana Wallet,Zcash Wallet,Entries (Tickets),Twitter Handle,Telegram Handle,Task Status\n';
     winners.forEach(w => {
       const fcfsWallet = w.fcfs_evm_wallet || w.burner_evm_wallet || '';
-      csv += `"${(w.username || w.display_name || 'User').replace(/"/g, '""')}","${w.user_id || ''}","${String(w.winner_type).toUpperCase()}","${w.evm_wallet || ''}","${fcfsWallet}","${w.solana_wallet || ''}","${w.multiplier || 1}x","${(w.twitter || '').replace(/"/g, '""')}","${(w.telegram || '').replace(/"/g, '""')}","${w.task_status || 'verified'}"\n`;
+      csv += `"${(w.username || w.display_name || 'User').replace(/"/g, '""')}","${w.user_id || ''}","${String(w.winner_type).toUpperCase()}","${w.evm_wallet || ''}","${fcfsWallet}","${w.solana_wallet || ''}","${w.zcash_wallet || ''}","${w.multiplier || 1}x","${(w.twitter || '').replace(/"/g, '""')}","${(w.telegram || '').replace(/"/g, '""')}","${w.task_status || 'verified'}"\n`;
     });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -3146,6 +3182,8 @@ function openProfileModal() {
   const burnerInp = document.getElementById('profBurnerEvm');
   if (burnerInp) burnerInp.value = currentUser.fcfs_evm_wallet || currentUser.burner_evm_wallet || '';
   document.getElementById('profSolana').value = currentUser.solana_wallet || '';
+  const zcashInp = document.getElementById('profZcash');
+  if (zcashInp) zcashInp.value = currentUser.zcash_wallet || '';
   openModal('profileModal');
 }
 
@@ -3155,6 +3193,7 @@ async function submitSaveProfile() {
   const evm_wallet = document.getElementById('profEvm').value.trim();
   const fcfs_evm_wallet = document.getElementById('profBurnerEvm') ? document.getElementById('profBurnerEvm').value.trim() : '';
   const solana_wallet = document.getElementById('profSolana').value.trim();
+  const zcash_wallet = document.getElementById('profZcash') ? document.getElementById('profZcash').value.trim() : '';
 
   const evmRegex = /^0x[a-fA-F0-9]{40}$/;
   if (!evm_wallet || !evmRegex.test(evm_wallet)) {
@@ -3164,6 +3203,13 @@ async function submitSaveProfile() {
   if (!fcfs_evm_wallet || !evmRegex.test(fcfs_evm_wallet)) {
     showToast('FCFS EVM Wallet is mandatory (valid 0x address).', 'error');
     return;
+  }
+  if (zcash_wallet) {
+    const zecRegex = /^(t[13][a-km-zA-HJ-NP-Z1-9]{33}|zs1[a-zA-Z0-9]{75,76}|u1[a-zA-Z0-9_]{50,1500}|zc[a-km-zA-HJ-NP-Z1-9]{93})$/;
+    if (!zecRegex.test(zcash_wallet)) {
+      showToast('Invalid Zcash address format (must start with t1, t3, zs1, or u1).', 'error');
+      return;
+    }
   }
 
   try {
@@ -3177,7 +3223,8 @@ async function submitSaveProfile() {
         evm_wallet,
         fcfs_evm_wallet,
         burner_evm_wallet: fcfs_evm_wallet,
-        solana_wallet
+        solana_wallet,
+        zcash_wallet
       })
     });
     if (res.ok) {
@@ -3606,6 +3653,7 @@ async function loadBonusLeaderboard(forceRefresh = false) {
           giveaways_entered: gwCount,
           evm_wallet: prof.evm_wallet || '',
           solana_wallet: prof.solana_wallet || '',
+          zcash_wallet: prof.zcash_wallet || '',
           fcfs_wallet: prof.fcfs_evm_wallet || prof.burner_evm_wallet || '',
           twitter: prof.twitter || ''
         });
@@ -3708,13 +3756,19 @@ function renderBonusLeaderboard(list) {
       </div>
     ` : '';
 
+    const zec = item.zcash_wallet ? `
+      <div style="font-family: var(--font-mono); font-size: 0.74rem; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; background: rgba(245, 158, 11, 0.08); padding: 2px 6px; border-radius: var(--radius-xs); border: 1px solid rgba(245, 158, 11, 0.2);" onclick="copyToClipboard('${item.zcash_wallet}', this)" title="Click to copy Zcash">
+        <span style="color: #fbbf24; font-weight: 700;">ZEC:</span> ${item.zcash_wallet.slice(0, 6)}...${item.zcash_wallet.slice(-4)}
+      </div>
+    ` : '';
+
     const fcfs = item.fcfs_wallet ? `
       <div style="font-family: var(--font-mono); font-size: 0.74rem; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; background: rgba(16, 185, 129, 0.08); padding: 2px 6px; border-radius: var(--radius-xs); border: 1px solid rgba(16, 185, 129, 0.2);" onclick="copyToClipboard('${item.fcfs_wallet}', this)" title="Click to copy FCFS">
         <span style="color: #34d399; font-weight: 700;">FCFS:</span> ${item.fcfs_wallet.slice(0, 6)}...${item.fcfs_wallet.slice(-4)}
       </div>
     ` : '';
 
-    const walletsHtml = (evm || sol || fcfs) ? `<div class="wallet-badge-cell">${evm}${sol}${fcfs}</div>` : `<span style="color: var(--text-faint); font-family: var(--font-mono); font-size: 0.75rem;">None registered</span>`;
+    const walletsHtml = (evm || sol || zec || fcfs) ? `<div class="wallet-badge-cell">${evm}${sol}${zec}${fcfs}</div>` : `<span style="color: var(--text-faint); font-family: var(--font-mono); font-size: 0.75rem;">None registered</span>`;
 
     return `
       <tr>
@@ -3773,7 +3827,8 @@ function filterBonusLeaderboard(query) {
     const uid = (item.user_id || '').toLowerCase();
     const evm = (item.evm_wallet || '').toLowerCase();
     const sol = (item.solana_wallet || '').toLowerCase();
-    return uName.includes(q) || dName.includes(q) || uid.includes(q) || evm.includes(q) || sol.includes(q);
+    const zec = (item.zcash_wallet || '').toLowerCase();
+    return uName.includes(q) || dName.includes(q) || uid.includes(q) || evm.includes(q) || sol.includes(q) || zec.includes(q);
   });
 
   // Spotlight card for the closest matched participant
@@ -3852,7 +3907,8 @@ async function handleGlobalEntrySearch(query) {
         const d = (prof.display_name || '').toLowerCase();
         const evm = (prof.evm_wallet || '').toLowerCase();
         const sol = (prof.solana_wallet || '').toLowerCase();
-        if (uid === q || u === q || d === q || u.includes(q) || d.includes(q) || evm === q || sol === q) {
+        const zec = (prof.zcash_wallet || '').toLowerCase();
+        if (uid === q || u === q || d === q || u.includes(q) || d.includes(q) || evm === q || sol === q || zec === q) {
           matchedProfile = { uid, ...prof };
           break;
         }
@@ -3930,7 +3986,7 @@ async function handleGlobalEntrySearch(query) {
               const multiplier = e.multiplier || 1;
               const bonusUsed = e.bonus_entries_used || 0;
               const totalTickets = multiplier + bonusUsed;
-              const wallet = e.evm_wallet || e.solana_wallet || 'No wallet registered';
+              const wallet = e.zcash_wallet || e.evm_wallet || e.solana_wallet || 'No wallet registered';
               const isEnded = !g.is_active || (g.ends_at && g.ends_at <= Math.floor(Date.now() / 1000));
               return `
                 <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; padding: 0.75rem 1rem; background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-xs);">

@@ -405,7 +405,15 @@
               </div>
               <div class="form-group">
                 <label class="form-label">Network / Blockchain Name</label>
-                <input type="text" id="gNetwork" class="form-input" placeholder="e.g. Ethereum, Solana, Base" value="Ethereum" required>
+                <input type="text" id="gNetwork" class="form-input" placeholder="e.g. Ethereum, Solana, Zcash, Base" value="Ethereum" required>
+                <div style="display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap;">
+                  <button type="button" class="btn btn-outline btn-xs" onclick="selectQuickNetwork('Ethereum', false)" style="padding: 2px 8px; font-size: 0.75rem;">💎 Ethereum</button>
+                  <button type="button" class="btn btn-outline btn-xs" onclick="selectQuickNetwork('Solana', false)" style="padding: 2px 8px; font-size: 0.75rem;">🟣 Solana</button>
+                  <button type="button" class="btn btn-outline btn-xs" onclick="selectQuickNetwork('Zcash', false)" style="padding: 2px 8px; font-size: 0.75rem; border-color: rgba(245, 158, 11, 0.4); color: #fbbf24;">⚡ Zcash</button>
+                  <button type="button" class="btn btn-outline btn-xs" onclick="selectQuickNetwork('Base', false)" style="padding: 2px 8px; font-size: 0.75rem;">🔵 Base</button>
+                  <button type="button" class="btn btn-outline btn-xs" onclick="selectQuickNetwork('Arbitrum', false)" style="padding: 2px 8px; font-size: 0.75rem;">🔷 Arbitrum</button>
+                  <button type="button" class="btn btn-outline btn-xs" onclick="selectQuickNetwork('Polygon', false)" style="padding: 2px 8px; font-size: 0.75rem;">💜 Polygon</button>
+                </div>
               </div>
             </div>
           </div>
@@ -582,6 +590,9 @@
               <label style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem; cursor: pointer; color: var(--text-main);">
                 <input type="checkbox" id="reqSolana" style="accent-color: var(--accent-violet);"> Require Solana Wallet
               </label>
+              <label style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem; cursor: pointer; color: var(--text-main);">
+                <input type="checkbox" id="reqZcash" style="accent-color: #fbbf24;"> Require Zcash Wallet
+              </label>
             </div>
           </div>
 
@@ -728,6 +739,14 @@
               <div class="form-group">
                 <label class="form-label">Network / Blockchain Name</label>
                 <input type="text" id="editGNetwork" class="form-input" value="Ethereum" required>
+                <div style="display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap;">
+                  <button type="button" class="btn btn-outline btn-xs" onclick="selectQuickNetwork('Ethereum', true)" style="padding: 2px 8px; font-size: 0.75rem;">💎 Ethereum</button>
+                  <button type="button" class="btn btn-outline btn-xs" onclick="selectQuickNetwork('Solana', true)" style="padding: 2px 8px; font-size: 0.75rem;">🟣 Solana</button>
+                  <button type="button" class="btn btn-outline btn-xs" onclick="selectQuickNetwork('Zcash', true)" style="padding: 2px 8px; font-size: 0.75rem; border-color: rgba(245, 158, 11, 0.4); color: #fbbf24;">⚡ Zcash</button>
+                  <button type="button" class="btn btn-outline btn-xs" onclick="selectQuickNetwork('Base', true)" style="padding: 2px 8px; font-size: 0.75rem;">🔵 Base</button>
+                  <button type="button" class="btn btn-outline btn-xs" onclick="selectQuickNetwork('Arbitrum', true)" style="padding: 2px 8px; font-size: 0.75rem;">🔷 Arbitrum</button>
+                  <button type="button" class="btn btn-outline btn-xs" onclick="selectQuickNetwork('Polygon', true)" style="padding: 2px 8px; font-size: 0.75rem;">💜 Polygon</button>
+                </div>
               </div>
             </div>
           </div>
@@ -899,6 +918,9 @@
               <label style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem; cursor: pointer; color: var(--text-main);">
                 <input type="checkbox" id="editReqSolana" style="accent-color: var(--accent-violet);"> Require Solana Wallet
               </label>
+              <label style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem; cursor: pointer; color: var(--text-main);">
+                <input type="checkbox" id="editReqZcash" style="accent-color: #fbbf24;"> Require Zcash Wallet
+              </label>
             </div>
           </div>
 
@@ -1014,6 +1036,7 @@
                   <th>Main EVM</th>
                   <th>FCFS EVM</th>
                   <th>Solana</th>
+                  <th>Zcash</th>
                   <th>Socials</th>
                   <th>Verification</th>
                 </tr>
@@ -1067,6 +1090,10 @@
           <div class="form-group">
             <label class="form-label">Solana Wallet Address</label>
             <input type="text" id="profSolana" class="form-input" placeholder="Solana Public Key">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Zcash Wallet Address</label>
+            <input type="text" id="profZcash" class="form-input" placeholder="Zcash Address (t1..., zs1..., u1...)">
           </div>
         </form>
       </div>

@@ -148,7 +148,7 @@ def merge_giveaway_entries(local_list: list, fb_list: list) -> list:
                 except Exception:
                     pass
                 # Preserve wallets, socials, and verification status
-                for k in ["evm_wallet", "burner_evm_wallet", "fcfs_evm_wallet", "solana_wallet", "twitter", "telegram", "task_status", "winner_type"]:
+                for k in ["evm_wallet", "burner_evm_wallet", "fcfs_evm_wallet", "solana_wallet", "zcash_wallet", "twitter", "telegram", "task_status", "winner_type"]:
                     if e.get(k) and not merged_map[uid].get(k):
                         merged_map[uid][k] = e[k]
             else:
@@ -171,6 +171,28 @@ def is_valid_solana_address(addr: str) -> bool:
     if not addr or not isinstance(addr, str):
         return False
     return bool(re.match(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$", addr.strip()))
+
+
+def is_valid_zcash_address(addr: str) -> bool:
+    """
+    Validates a Zcash address:
+    - Transparent (t-addr): starts with 't1' or 't3', 35 characters Base58
+    - Sapling shielded (z-addr): starts with 'zs1', ~78 characters bech32
+    - Unified address (UA): starts with 'u1', 50 to 300 characters bech32m
+    - Sprout legacy: starts with 'zc', 95 characters
+    """
+    if not addr or not isinstance(addr, str):
+        return False
+    a = addr.strip()
+    if re.match(r"^t[13][a-km-zA-HJ-NP-Z1-9]{33}$", a):
+        return True
+    if re.match(r"^zs1[0-9a-z]{75,76}$", a, re.IGNORECASE):
+        return True
+    if re.match(r"^u1[0-9a-z_]{50,1500}$", a, re.IGNORECASE):
+        return True
+    if re.match(r"^zc[a-km-zA-HJ-NP-Z1-9]{93}$", a):
+        return True
+    return False
 
 
 def get_eth_rpc_url() -> str:
@@ -239,6 +261,19 @@ SUPPORTED_CHAINS_CONFIG = [
         "explorer": "https://solscan.io",
         "icon": "🟣",
         "type": "SVM"
+    },
+    {
+        "id": "zcash",
+        "name": "Zcash Mainnet",
+        "symbol": "ZEC",
+        "rpc_env": "ZCASH_RPC_URL",
+        "default_rpc": "https://zcash.blockpi.network/v1/rpc/public",
+        "method": "getblockchaininfo",
+        "params": [],
+        "provider": "BlockPI Public RPC",
+        "explorer": "https://zcashblockexplorer.com",
+        "icon": "⚡",
+        "type": "UTXO / Shielded"
     },
     {
         "id": "base",
@@ -350,7 +385,9 @@ async def benchmark_single_chain(session: aiohttp.ClientSession, chain: dict) ->
 
             res = data.get("result")
             block_num = None
-            if isinstance(res, str) and res.startswith("0x"):
+            if isinstance(res, dict):
+                block_num = res.get("blocks") or res.get("block_height") or res.get("height")
+            elif isinstance(res, str) and res.startswith("0x"):
                 try:
                     block_num = int(res, 16)
                 except Exception:
@@ -1254,7 +1291,7 @@ def get_user_profile_fast(uid: str, usr: Optional[discord.User] = None) -> dict:
         if isinstance(entries, list):
             for e in entries:
                 if isinstance(e, dict) and str(e.get("user_id")) == uid_str:
-                    if e.get("evm_wallet") or e.get("solana_wallet") or e.get("twitter") or e.get("telegram"):
+                    if e.get("evm_wallet") or e.get("solana_wallet") or e.get("zcash_wallet") or e.get("twitter") or e.get("telegram"):
                         display_name = getattr(usr, 'display_name', None) or e.get("display_name") or uid_str
                         username = getattr(usr, 'name', None) or e.get("username") or uid_str
                         raw_evm = str(e.get("evm_wallet") or "").strip()
@@ -1269,6 +1306,7 @@ def get_user_profile_fast(uid: str, usr: Optional[discord.User] = None) -> dict:
                             "fcfs_evm_wallet": fcfs_clean,
                             "burner_evm_wallet": fcfs_clean,
                             "solana_wallet": str(e.get("solana_wallet") or "").strip(),
+                            "zcash_wallet": str(e.get("zcash_wallet") or "").strip(),
                             "twitter": str(e.get("twitter") or "").strip(),
                             "telegram": str(e.get("telegram") or "").strip()
                         }
@@ -1284,7 +1322,7 @@ async def get_or_fetch_user_profile(uid: str, usr: Optional[discord.User] = None
 
 async def sync_user_profile_to_unlocked_giveaways(uid: str):
     """
-    Syncs updated user profile (Main EVM, FCFS EVM / Burner EVM, Twitter, Telegram, Solana)
+    Syncs updated user profile (Main EVM, FCFS EVM / Burner EVM, Twitter, Telegram, Solana, Zcash)
     to all giveaways that are NOT marked as 'done'.
     If a giveaway is marked done (g.get('is_done') == True), its participant list
     and wallet addresses are permanently frozen and will NOT be modified.
@@ -1298,6 +1336,7 @@ async def sync_user_profile_to_unlocked_giveaways(uid: str):
         evm = prof.get("evm_wallet", "")
         fcfs = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", "")
         sol = prof.get("solana_wallet", "")
+        zec = prof.get("zcash_wallet", "")
         tw = prof.get("twitter", "")
         tg = prof.get("telegram", "")
 
@@ -1326,6 +1365,9 @@ async def sync_user_profile_to_unlocked_giveaways(uid: str):
                         g_changed = True
                     if sol and entry.get("solana_wallet") != sol:
                         entry["solana_wallet"] = sol
+                        g_changed = True
+                    if zec and entry.get("zcash_wallet") != zec:
+                        entry["zcash_wallet"] = zec
                         g_changed = True
                     if tw and entry.get("twitter") != tw:
                         entry["twitter"] = tw
@@ -4710,15 +4752,95 @@ class ApplyBonusEntriesDiscordView(discord.ui.View):
 
 
 class JoinGiveawayModal(discord.ui.Modal, title="Giveaway Profile & Wallet Setup"):
-    twitter = discord.ui.TextInput(label="Twitter Handle", placeholder="@yourhandle", required=False)
-    telegram = discord.ui.TextInput(label="Telegram Handle", placeholder="@username", required=False)
-    evm_wallet = discord.ui.TextInput(label="Main EVM Wallet Address (0x...)", placeholder="0x1234...5678", required=False)
-    burner_evm_wallet = discord.ui.TextInput(label="FCFS EVM Wallet Address (0x...)", placeholder="0xabcd...ef01", required=False)
-    solana_wallet = discord.ui.TextInput(label="Solana Wallet Address", placeholder="Solana Wallet Public Key", required=False)
-
-    def __init__(self, giveaway_id: str):
+    def __init__(self, giveaway_id: str, req_evm: bool = False, req_solana: bool = False, req_zcash: bool = False, prof: dict = None):
         super().__init__()
         self.giveaway_id = giveaway_id
+        self.prof = prof or {}
+        self.req_evm = req_evm
+        self.req_solana = req_solana
+        self.req_zcash = req_zcash
+
+        # Discord modals allow at most 5 items. Prioritize required wallets!
+        # 1. Zcash if required
+        self.zcash_input = None
+        if req_zcash:
+            self.zcash_input = discord.ui.TextInput(
+                label="Zcash Wallet Address",
+                placeholder="Transparent (t1...) or Shielded (zs1... / u1...)",
+                required=True,
+                default=self.prof.get("zcash_wallet", ""),
+                max_length=1500
+            )
+            self.add_item(self.zcash_input)
+
+        # 2. EVM wallets if required (or if neither solana nor zcash required)
+        self.evm_input = None
+        self.fcfs_evm_input = None
+        if req_evm or (not req_solana and not req_zcash):
+            self.evm_input = discord.ui.TextInput(
+                label="Main EVM Wallet Address (0x...)",
+                placeholder="0x1234...5678",
+                required=bool(req_evm),
+                default=self.prof.get("evm_wallet", ""),
+                max_length=64
+            )
+            self.add_item(self.evm_input)
+
+            fcfs_val = self.prof.get("fcfs_evm_wallet") or self.prof.get("burner_evm_wallet", "")
+            self.fcfs_evm_input = discord.ui.TextInput(
+                label="FCFS EVM Wallet Address (0x...)",
+                placeholder="0xabcd...ef01",
+                required=bool(req_evm and self.giveaway_id != "g_1786106868032"),
+                default=fcfs_val,
+                max_length=64
+            )
+            self.add_item(self.fcfs_evm_input)
+
+        # 3. Solana if required (or if room permits and not zcash-specific)
+        self.solana_input = None
+        if req_solana or (len(self.children) < 4 and not req_zcash):
+            self.solana_input = discord.ui.TextInput(
+                label="Solana Wallet Address",
+                placeholder="Solana Wallet Public Key",
+                required=bool(req_solana),
+                default=self.prof.get("solana_wallet", ""),
+                max_length=64
+            )
+            self.add_item(self.solana_input)
+
+        # 4. If Zcash was not required, but user already has one or room permits and user requested it:
+        if not req_zcash and len(self.children) < 5 and self.prof.get("zcash_wallet"):
+            self.zcash_input = discord.ui.TextInput(
+                label="Zcash Wallet Address",
+                placeholder="Transparent (t1...) or Shielded (zs1... / u1...)",
+                required=False,
+                default=self.prof.get("zcash_wallet", ""),
+                max_length=1500
+            )
+            self.add_item(self.zcash_input)
+
+        # 5. Social inputs (Twitter / Telegram) if room permits (Discord limit: 5)
+        self.twitter_input = None
+        if len(self.children) < 5:
+            self.twitter_input = discord.ui.TextInput(
+                label="Twitter Handle",
+                placeholder="@yourhandle",
+                required=False,
+                default=self.prof.get("twitter", ""),
+                max_length=64
+            )
+            self.add_item(self.twitter_input)
+
+        self.telegram_input = None
+        if len(self.children) < 5:
+            self.telegram_input = discord.ui.TextInput(
+                label="Telegram Handle",
+                placeholder="@username",
+                required=False,
+                default=self.prof.get("telegram", ""),
+                max_length=64
+            )
+            self.add_item(self.telegram_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         uid = str(interaction.user.id)
@@ -4729,15 +4851,26 @@ class JoinGiveawayModal(discord.ui.Modal, title="Giveaway Profile & Wallet Setup
                 "username": interaction.user.name,
                 "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
             }
-        
-        if self.twitter.value: user_profiles[uid]["twitter"] = self.twitter.value.strip()
-        if self.telegram.value: user_profiles[uid]["telegram"] = self.telegram.value.strip()
-        if self.evm_wallet.value: user_profiles[uid]["evm_wallet"] = self.evm_wallet.value.strip()
-        if self.burner_evm_wallet.value:
-            fcfs_addr = self.burner_evm_wallet.value.strip()
+
+        if self.twitter_input and self.twitter_input.value:
+            user_profiles[uid]["twitter"] = self.twitter_input.value.strip()
+        if self.telegram_input and self.telegram_input.value:
+            user_profiles[uid]["telegram"] = self.telegram_input.value.strip()
+        if self.evm_input and self.evm_input.value:
+            user_profiles[uid]["evm_wallet"] = self.evm_input.value.strip()
+        if self.fcfs_evm_input and self.fcfs_evm_input.value:
+            fcfs_addr = self.fcfs_evm_input.value.strip()
             user_profiles[uid]["burner_evm_wallet"] = fcfs_addr
             user_profiles[uid]["fcfs_evm_wallet"] = fcfs_addr
-        if self.solana_wallet.value: user_profiles[uid]["solana_wallet"] = self.solana_wallet.value.strip()
+        if self.solana_input and self.solana_input.value:
+            user_profiles[uid]["solana_wallet"] = self.solana_input.value.strip()
+        if self.zcash_input and self.zcash_input.value:
+            zc = self.zcash_input.value.strip()
+            if not is_valid_zcash_address(zc):
+                await safe_respond(interaction, "❌ **Zcash Wallet** must be a valid transparent (t1/t3) or shielded/unified address.", ephemeral=True)
+                return
+            user_profiles[uid]["zcash_wallet"] = zc
+
         save_user_profiles()
         if FIREBASE_URL:
             await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
@@ -4757,6 +4890,9 @@ class JoinGiveawayModal(discord.ui.Modal, title="Giveaway Profile & Wallet Setup
                     return
             if tasks.get("require_solana") and not user_profiles[uid].get("solana_wallet"):
                 await safe_respond(interaction, "❌ **Solana Wallet Address is required** to join this giveaway! Please fill in your Solana wallet.", ephemeral=True)
+                return
+            if tasks.get("require_zcash") and not user_profiles[uid].get("zcash_wallet"):
+                await safe_respond(interaction, "❌ **Zcash Wallet Address is required** to join this giveaway! Please fill in your Zcash wallet.", ephemeral=True)
                 return
 
         await register_giveaway_entry(interaction, self.giveaway_id)
@@ -5052,6 +5188,7 @@ class GiveawayView(discord.ui.View):
         tasks = g.get("tasks", {})
         req_evm = tasks.get("require_evm", False)
         req_solana = tasks.get("require_solana", False)
+        req_zcash = tasks.get("require_zcash", False)
 
         if g_id == "g_1786106868032":
             missing_evm = req_evm and not prof.get("evm_wallet")
@@ -5059,16 +5196,12 @@ class GiveawayView(discord.ui.View):
             fcfs_wallet = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet")
             missing_evm = req_evm and (not prof.get("evm_wallet") or not fcfs_wallet)
         missing_solana = req_solana and not prof.get("solana_wallet")
+        missing_zcash = req_zcash and not prof.get("zcash_wallet")
         fcfs_wallet_val = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet")
-        has_profile = bool(prof.get("evm_wallet") or fcfs_wallet_val or prof.get("solana_wallet") or prof.get("twitter") or prof.get("telegram"))
+        has_profile = bool(prof.get("evm_wallet") or fcfs_wallet_val or prof.get("solana_wallet") or prof.get("zcash_wallet") or prof.get("twitter") or prof.get("telegram"))
 
-        if missing_evm or missing_solana or not has_profile:
-            modal = JoinGiveawayModal(g_id)
-            if prof.get("twitter"): modal.twitter.default = prof.get("twitter")
-            if prof.get("telegram"): modal.telegram.default = prof.get("telegram")
-            if prof.get("evm_wallet"): modal.evm_wallet.default = prof.get("evm_wallet")
-            if fcfs_wallet_val: modal.burner_evm_wallet.default = fcfs_wallet_val
-            if prof.get("solana_wallet"): modal.solana_wallet.default = prof.get("solana_wallet")
+        if missing_evm or missing_solana or missing_zcash or not has_profile:
+            modal = JoinGiveawayModal(g_id, req_evm=req_evm, req_solana=req_solana, req_zcash=req_zcash, prof=prof)
             await interaction.response.send_modal(modal)
             return
 
@@ -5135,6 +5268,7 @@ class GiveawayView(discord.ui.View):
         fcfs_val = my_entry.get("fcfs_evm_wallet") or my_entry.get("burner_evm_wallet") or "Not provided"
         embed.add_field(name="FCFS EVM Wallet", value=f"`{fcfs_val}`", inline=False)
         embed.add_field(name="Solana Wallet", value=f"`{my_entry.get('solana_wallet') or 'Not provided'}`", inline=False)
+        embed.add_field(name="Zcash Wallet", value=f"`{my_entry.get('zcash_wallet') or 'Not provided'}`", inline=False)
         embed.add_field(name="Twitter", value=my_entry.get("twitter") or "Not provided", inline=True)
         embed.add_field(name="Telegram", value=my_entry.get("telegram") or "Not provided", inline=True)
 
@@ -5204,6 +5338,7 @@ async def register_giveaway_entry(interaction: discord.Interaction, giveaway_id:
         "evm_wallet": prof.get("evm_wallet", ""),
         "burner_evm_wallet": prof.get("burner_evm_wallet", ""),
         "solana_wallet": prof.get("solana_wallet", ""),
+        "zcash_wallet": prof.get("zcash_wallet", ""),
         "twitter": prof.get("twitter", ""),
         "telegram": prof.get("telegram", ""),
         "task_status": "verified",
@@ -6804,12 +6939,19 @@ class UserWalletsModal(discord.ui.Modal, title="Update Web3 Wallets"):
         required=False,
         max_length=64
     )
+    zcash = discord.ui.TextInput(
+        label="Zcash Wallet Address",
+        placeholder="Transparent (t1/t3) or Shielded (zs1/u1)...",
+        required=False,
+        max_length=1500
+    )
 
     async def on_submit(self, interaction: discord.Interaction):
         uid = str(interaction.user.id)
         evm_val = self.evm.value.strip() if self.evm.value else ""
         fcfs_val = self.fcfs_evm.value.strip() if self.fcfs_evm.value else ""
         sol_val = self.solana.value.strip() if self.solana.value else ""
+        zec_val = self.zcash.value.strip() if self.zcash.value else ""
 
         if evm_val and not is_valid_evm_address(evm_val):
             await safe_respond(
@@ -6835,6 +6977,14 @@ class UserWalletsModal(discord.ui.Modal, title="Update Web3 Wallets"):
             )
             return
 
+        if zec_val and not is_valid_zcash_address(zec_val):
+            await safe_respond(
+                interaction,
+                "❌ **Zcash Wallet** must be a valid transparent (t1/t3) or shielded/unified address.",
+                ephemeral=True
+            )
+            return
+
         prof = get_user_profile_fast(uid, interaction.user)
         if uid not in user_profiles:
             user_profiles[uid] = {
@@ -6853,6 +7003,7 @@ class UserWalletsModal(discord.ui.Modal, title="Update Web3 Wallets"):
         prof["fcfs_evm_wallet"] = fcfs_val
         prof["burner_evm_wallet"] = fcfs_val
         prof["solana_wallet"] = sol_val
+        prof["zcash_wallet"] = zec_val
 
         save_user_profiles()
         if FIREBASE_URL:
@@ -6867,6 +7018,7 @@ class UserWalletsModal(discord.ui.Modal, title="Update Web3 Wallets"):
         embed.add_field(name="Main EVM Wallet", value=f"`{evm_val}`" if evm_val else "*Not set*", inline=False)
         embed.add_field(name="FCFS EVM Wallet", value=f"`{fcfs_val}`" if fcfs_val else "*Not set*", inline=False)
         embed.add_field(name="Solana Wallet", value=f"`{sol_val}`" if sol_val else "*Not set*", inline=False)
+        embed.add_field(name="Zcash Wallet", value=f"`{zec_val}`" if zec_val else "*Not set*", inline=False)
         embed.set_footer(text="All actions are private — only you can see your data")
         await safe_respond(interaction, embed=embed, ephemeral=True)
 
@@ -6957,6 +7109,7 @@ async def render_user_profile_card(interaction: discord.Interaction, target_user
     evm = prof.get("evm_wallet") or ""
     fcfs = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet") or ""
     sol = prof.get("solana_wallet") or ""
+    zec = prof.get("zcash_wallet") or ""
     tw = prof.get("twitter") or ""
     tg = prof.get("telegram") or ""
 
@@ -7004,6 +7157,11 @@ async def render_user_profile_card(interaction: discord.Interaction, target_user
     embed.add_field(
         name="Solana Wallet",
         value=f"`{sol}`" if sol else "*Not linked*",
+        inline=False
+    )
+    embed.add_field(
+        name="Zcash Wallet",
+        value=f"`{zec}`" if zec else "*Not linked*",
         inline=False
     )
     embed.add_field(
@@ -7222,6 +7380,9 @@ class PersistentProfilePanelView(discord.ui.View):
             sol_val = str(prof.get("solana_wallet") or "").strip()
             if sol_val and is_valid_solana_address(sol_val):
                 modal.solana.default = sol_val
+            zec_val = str(prof.get("zcash_wallet") or "").strip()
+            if zec_val and is_valid_zcash_address(zec_val):
+                modal.zcash.default = zec_val
             await interaction.response.send_modal(modal)
         except Exception as e:
             print(f"[WALLETS MODAL ERROR] {e}")
@@ -8020,6 +8181,28 @@ async def set_solana_wallet_cmd(interaction: discord.Interaction, address: str):
     await interaction.response.send_message(f"✅ **Solana Wallet Updated!**\nAddress: `{address.strip()}`", ephemeral=True)
 
 
+@bot.tree.command(name="set-zcash-wallet", description="Set your Zcash wallet address.")
+@app_commands.describe(address="Zcash Wallet Address (Transparent t1/t3 or Shielded zs1/u1)")
+async def set_zcash_wallet_cmd(interaction: discord.Interaction, address: str):
+    clean_addr = address.strip()
+    if not is_valid_zcash_address(clean_addr):
+        await interaction.response.send_message("❌ **Invalid Zcash address format** (must be transparent t1/t3 or shielded zs1/u1).", ephemeral=True)
+        return
+    uid = str(interaction.user.id)
+    if uid not in user_profiles:
+        user_profiles[uid] = {
+            "display_name": interaction.user.display_name,
+            "username": interaction.user.name,
+            "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        }
+    user_profiles[uid]["zcash_wallet"] = clean_addr
+    save_user_profiles()
+    if FIREBASE_URL:
+        await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
+    await sync_user_profile_to_unlocked_giveaways(uid)
+    await interaction.response.send_message(f"✅ **Zcash Wallet Updated!**\nAddress: `{clean_addr}`", ephemeral=True)
+
+
 @bot.tree.command(name="set-twitter", description="Set your Twitter / X handle.")
 @app_commands.describe(handle="Twitter handle (e.g. @yourhandle)")
 async def set_twitter_cmd(interaction: discord.Interaction, handle: str):
@@ -8168,6 +8351,8 @@ async def user_details_cmd(interaction: discord.Interaction, target: Optional[di
         embed.add_field(name="Main EVM Wallet", value=evm_val, inline=False)
         embed.add_field(name="FCFS EVM Wallet", value=fcfs_evm_val, inline=False)
         embed.add_field(name="Solana Wallet", value=solana_val, inline=False)
+        zcash_val = f"`{prof.get('zcash_wallet')}`" if prof.get("zcash_wallet") else "*Not set by user yet*"
+        embed.add_field(name="Zcash Wallet", value=zcash_val, inline=False)
         embed.add_field(name="🎟️ Bonus Giveaway Entries", value=bonus_val, inline=False)
 
         if is_bot_admin_by_id(uid):
@@ -8505,11 +8690,22 @@ async def edit_announcement_cmd(
     )
 
 
-@bot.tree.command(name="set-wallet", description="Quickly set your EVM or Solana wallet address.")
-@app_commands.describe(evm="EVM Wallet (0x...)", solana="Solana Wallet Address")
-async def set_wallet_cmd(interaction: discord.Interaction, evm: Optional[str] = None, solana: Optional[str] = None):
-    if not evm and not solana:
-        await interaction.response.send_message("Please provide at least one wallet address (evm or solana).", ephemeral=True)
+@bot.tree.command(name="set-wallet", description="Quickly set your Main EVM, FCFS EVM, Solana, or Zcash wallet address.")
+@app_commands.describe(
+    evm="Main EVM Wallet (0x...)",
+    fcfs_evm="FCFS EVM Wallet (0x...)",
+    solana="Solana Wallet Address",
+    zcash="Zcash Wallet Address"
+)
+async def set_wallet_cmd(
+    interaction: discord.Interaction,
+    evm: Optional[str] = None,
+    fcfs_evm: Optional[str] = None,
+    solana: Optional[str] = None,
+    zcash: Optional[str] = None
+):
+    if not evm and not fcfs_evm and not solana and not zcash:
+        await interaction.response.send_message("Please provide at least one wallet address (evm, fcfs_evm, solana, or zcash).", ephemeral=True)
         return
     uid = str(interaction.user.id)
     if uid not in user_profiles:
@@ -8518,8 +8714,27 @@ async def set_wallet_cmd(interaction: discord.Interaction, evm: Optional[str] = 
             "username": interaction.user.name,
             "first_seen": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
         }
-    if evm: user_profiles[uid]["evm_wallet"] = evm.strip()
-    if solana: user_profiles[uid]["solana_wallet"] = solana.strip()
+    if evm:
+        if not is_valid_evm_address(evm.strip()):
+            await interaction.response.send_message("❌ Invalid Main EVM address format (must start with 0x and be 42 characters).", ephemeral=True)
+            return
+        user_profiles[uid]["evm_wallet"] = evm.strip()
+    if fcfs_evm:
+        if not is_valid_evm_address(fcfs_evm.strip()):
+            await interaction.response.send_message("❌ Invalid FCFS EVM address format (must start with 0x and be 42 characters).", ephemeral=True)
+            return
+        user_profiles[uid]["fcfs_evm_wallet"] = fcfs_evm.strip()
+        user_profiles[uid]["burner_evm_wallet"] = fcfs_evm.strip()
+    if solana:
+        if not is_valid_solana_address(solana.strip()):
+            await interaction.response.send_message("❌ Invalid Solana address format (Base58, 32-44 characters).", ephemeral=True)
+            return
+        user_profiles[uid]["solana_wallet"] = solana.strip()
+    if zcash:
+        if not is_valid_zcash_address(zcash.strip()):
+            await interaction.response.send_message("❌ Invalid Zcash address format (must be transparent t1/t3 or shielded zs1/u1).", ephemeral=True)
+            return
+        user_profiles[uid]["zcash_wallet"] = zcash.strip()
     save_user_profiles()
     if FIREBASE_URL:
         await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
@@ -9167,6 +9382,8 @@ def build_giveaway_embed(g_data: dict):
                 task_lines.append("• **Submit Main & FCFS EVM Wallets (0x...)**")
         if tasks.get("require_solana") or g_data.get("require_solana"):
             task_lines.append("• **Submit Solana Wallet**")
+        if tasks.get("require_zcash") or g_data.get("require_zcash"):
+            task_lines.append("• **Submit Zcash Wallet (t1..., zs1..., u1...)**")
 
     if task_lines:
         task_block = "\n".join([f"> {tl}" for tl in task_lines if tl])
@@ -9969,6 +10186,7 @@ async def start_health_server():
             "fcfs_evm_wallet": prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", ""),
             "burner_evm_wallet": prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", ""),
             "solana_wallet": prof.get("solana_wallet", ""),
+            "zcash_wallet": prof.get("zcash_wallet", ""),
             "bonus_entries": prof.get("bonus_entries", 0)
         }
         token = base64.b64encode(os.urandom(24)).decode('utf-8')
@@ -9992,6 +10210,7 @@ async def start_health_server():
         user["fcfs_evm_wallet"] = fcfs_val
         user["burner_evm_wallet"] = fcfs_val
         user["solana_wallet"] = prof.get("solana_wallet", user.get("solana_wallet", ""))
+        user["zcash_wallet"] = prof.get("zcash_wallet", user.get("zcash_wallet", ""))
         user["bonus_entries"] = prof.get("bonus_entries", 0)
         return web.json_response({"authenticated": True, "user": user})
 
@@ -10040,6 +10259,7 @@ async def start_health_server():
                         "fcfs_evm_wallet": prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", ""),
                         "burner_evm_wallet": prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", ""),
                         "solana_wallet": prof.get("solana_wallet", ""),
+                        "zcash_wallet": prof.get("zcash_wallet", ""),
                         "twitter": prof.get("twitter", ""),
                         "bonus_entries": prof.get("bonus_entries", 0)
                     })
@@ -10063,6 +10283,7 @@ async def start_health_server():
                         "fcfs_evm_wallet": prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", ""),
                         "burner_evm_wallet": prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", ""),
                         "solana_wallet": prof.get("solana_wallet", ""),
+                        "zcash_wallet": prof.get("zcash_wallet", ""),
                         "twitter": prof.get("twitter", ""),
                         "bonus_entries": prof.get("bonus_entries", 0)
                     })
@@ -10160,6 +10381,7 @@ async def start_health_server():
                 "giveaways_entered": gw_count,
                 "evm_wallet": prof.get("evm_wallet", ""),
                 "solana_wallet": prof.get("solana_wallet", ""),
+                "zcash_wallet": prof.get("zcash_wallet", ""),
                 "fcfs_wallet": prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet", ""),
                 "twitter": prof.get("twitter", ""),
             })
@@ -10899,6 +11121,11 @@ async def start_health_server():
             prof["burner_evm_wallet"] = fcfs_evm
         if "solana_wallet" in body:
             prof["solana_wallet"] = body.get("solana_wallet", "").strip()
+        zcash_wallet = str(body.get("zcash_wallet", "")).strip()
+        if zcash_wallet and not is_valid_zcash_address(zcash_wallet):
+            return web.json_response({"error": "Zcash Wallet must be a valid transparent (t1/t3) or shielded/unified address."}, status=400)
+        if "zcash_wallet" in body:
+            prof["zcash_wallet"] = zcash_wallet
         save_user_profiles()
         if FIREBASE_URL:
             await firebase_put(f"user_profiles/{uid}", user_profiles[uid])
@@ -10911,6 +11138,7 @@ async def start_health_server():
         user["fcfs_evm_wallet"] = fcfs_evm
         user["burner_evm_wallet"] = fcfs_evm
         user["solana_wallet"] = user_profiles[uid]["solana_wallet"]
+        user["zcash_wallet"] = user_profiles[uid].get("zcash_wallet", "")
         user["bonus_entries"] = user_profiles[uid].get("bonus_entries", 0)
 
         return web.json_response({"success": True, "profile": user_profiles[uid]})
