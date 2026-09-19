@@ -4790,7 +4790,7 @@ class JoinGiveawayModal(discord.ui.Modal, title="Giveaway Profile & Wallet Setup
             self.fcfs_evm_input = discord.ui.TextInput(
                 label="FCFS EVM Wallet Address (0x...)",
                 placeholder="0xabcd...ef01",
-                required=bool(req_evm and self.giveaway_id != "g_1786106868032"),
+                required=bool(req_evm),
                 default=fcfs_val,
                 max_length=64
             )
@@ -4883,9 +4883,8 @@ class JoinGiveawayModal(discord.ui.Modal, title="Giveaway Profile & Wallet Setup
                 if not user_profiles[uid].get("evm_wallet"):
                     await safe_respond(interaction, "❌ **Main EVM Wallet Address is required** to join this giveaway! Please fill in your EVM wallet (0x...).", ephemeral=True)
                     return
-                # Only enforce FCFS EVM wallet if NOT the legacy active giveaway g_1786106868032
                 fcfs_has = user_profiles[uid].get("fcfs_evm_wallet") or user_profiles[uid].get("burner_evm_wallet")
-                if self.giveaway_id != "g_1786106868032" and not fcfs_has:
+                if not fcfs_has:
                     await safe_respond(interaction, "❌ **FCFS EVM Wallet Address is required** to join this giveaway! Please fill in your FCFS EVM wallet (0x...).", ephemeral=True)
                     return
             if tasks.get("require_solana") and not user_profiles[uid].get("solana_wallet"):
@@ -5190,11 +5189,8 @@ class GiveawayView(discord.ui.View):
         req_solana = tasks.get("require_solana", False)
         req_zcash = tasks.get("require_zcash", False)
 
-        if g_id == "g_1786106868032":
-            missing_evm = req_evm and not prof.get("evm_wallet")
-        else:
-            fcfs_wallet = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet")
-            missing_evm = req_evm and (not prof.get("evm_wallet") or not fcfs_wallet)
+        fcfs_wallet = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet")
+        missing_evm = req_evm and (not prof.get("evm_wallet") or not fcfs_wallet)
         missing_solana = req_solana and not prof.get("solana_wallet")
         missing_zcash = req_zcash and not prof.get("zcash_wallet")
         fcfs_wallet_val = prof.get("fcfs_evm_wallet") or prof.get("burner_evm_wallet")
@@ -9399,10 +9395,7 @@ def build_giveaway_embed(g_data: dict):
                 task_lines.append(f"• **Required Role (Any 1):** {' or '.join(r_fmt_list)}")
 
         if tasks.get("require_evm") or g_data.get("require_evm"):
-            if g_data.get("id") == "g_1786106868032":
-                task_lines.append("• **Submit EVM Wallet (0x...)**")
-            else:
-                task_lines.append("• **Submit Main & FCFS EVM Wallets (0x...)**")
+            task_lines.append("• **Submit Main & FCFS EVM Wallets (0x...)**")
         if tasks.get("require_solana") or g_data.get("require_solana"):
             task_lines.append("• **Submit Solana Wallet**")
         if tasks.get("require_zcash") or g_data.get("require_zcash"):
@@ -9718,6 +9711,19 @@ async def auto_draw_giveaway_winners(g_id: str):
         if g.get("winners_announced") or g.get("winners_drawn"):
             return
 
+        ends_at = int(g.get("ends_at", 0))
+        now = int(time.time())
+        # If the giveaway expired more than 48 hours ago (stale giveaway from weeks ago), quietly close it without spamming Discord
+        if ends_at > 0 and (now - ends_at) > 172800:
+            g["is_active"] = False
+            g["winners_drawn"] = True
+            g["winners_announced"] = True
+            save_giveaways()
+            if FIREBASE_URL:
+                await firebase_put(f"giveaways/{g_id}", g)
+            print(f"[AUTO-DRAW STALE] Giveaway '{g.get('title')}' ({g_id}) expired {int((now - ends_at)/3600)}h ago. Closed quietly without spamming Discord.")
+            return
+
         # Mark as inactive immediately in memory to prevent concurrent auto-draws
         g["is_active"] = False
         g["winners_drawn"] = True
@@ -9858,6 +9864,15 @@ async def on_ready():
                 giveaways.update(fb_giveaways)
                 for del_id in list(deleted_giveaways):
                     giveaways.pop(del_id, None)
+                # Permanently purge legacy Red Flags NFT giveaway (g_1786106868032) if present
+                for rflag_id in ["g_1786106868032"]:
+                    giveaways.pop(rflag_id, None)
+                    giveaway_entries.pop(rflag_id, None)
+                    deleted_giveaways.add(rflag_id)
+                    save_deleted_giveaways()
+                    if FIREBASE_URL:
+                        asyncio.create_task(firebase_put(f"giveaways/{rflag_id}", None))
+                        asyncio.create_task(firebase_put(f"giveaway_entries/{rflag_id}", None))
                 save_giveaways()
                 print(f"[FIREBASE] Synced {len(giveaways)} giveaways from Cloud DB.")
 

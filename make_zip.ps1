@@ -6,7 +6,7 @@ if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 
 $zip = [System.IO.Compression.ZipFile]::Open($zipPath, 'Create')
 
-$files = @('main.py','app.py','requirements.txt','discloud.config','squarecloud.app','Dockerfile','vercel.json','.env','temp.png','temp_cutout.png','template.png','user_profiles.json','giveaways.json','giveaway_entries.json')
+$files = @('main.py','app.py','requirements.txt','discloud.config','squarecloud.app','Dockerfile','vercel.json','.env','temp.png','temp_cutout.png','template.png','user_profiles.json','giveaways.json','giveaway_entries.json','deleted_giveaways.json')
 foreach ($f in $files) {
     $fullPath = Join-Path $srcDir $f
     if (Test-Path $fullPath) {
