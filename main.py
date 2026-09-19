@@ -8878,14 +8878,43 @@ async def edit_announcement_cmd(
         ephemeral=True
     )
 
-    # Force delete old Discord embed & post fresh updated embed!
-    await update_giveaway_discord_message(giveaway_id)
 
-    await interaction.followup.send(
-        f"🤫 **Announcement Embed Silently Updated!**\n"
-        f"Giveaway **{g.get('title')}** has been refreshed in Discord.",
-        ephemeral=True
-    )
+@bot.tree.command(name="refresh-giveaway", description="Admin: Re-render and refresh ongoing giveaway embed without affecting entries.")
+@app_commands.describe(giveaway_id="Optional Giveaway ID or Message ID/Link (defaults to active giveaway in this channel)")
+async def refresh_giveaway_cmd(interaction: discord.Interaction, giveaway_id: Optional[str] = None):
+    uid = str(interaction.user.id)
+    is_admin = is_bot_admin_by_id(uid)
+    has_perm = interaction.permissions and (interaction.permissions.manage_guild or interaction.permissions.administrator)
+    if not (is_admin or has_perm):
+        await interaction.response.send_message("❌ Admin permission required.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    g = None
+    if giveaway_id and giveaway_id.strip():
+        g = await resolve_giveaway_by_identifier(giveaway_id.strip())
+
+    if not g:
+        ch_str = str(interaction.channel_id)
+        for cand in giveaways.values():
+            if cand.get("is_active") and str(cand.get("channel_id")) == ch_str:
+                g = cand
+                break
+
+    if not g:
+        for cand in reversed(list(giveaways.values())):
+            if cand.get("is_active") and not cand.get("is_done"):
+                g = cand
+                break
+
+    if not g:
+        await interaction.followup.send("❌ Could not find an active giveaway to refresh.", ephemeral=True)
+        return
+
+    g_id = g.get("id")
+    await update_giveaway_discord_message(g_id)
+    await interaction.followup.send(f"✅ Refreshed giveaway embed for **{g.get('title', g_id)}** without affecting any entries or participants!", ephemeral=True)
 
 
 @bot.tree.command(name="set-wallet", description="Quickly set your Main EVM, FCFS EVM, Solana, or Zcash wallet address.")
@@ -9385,14 +9414,16 @@ def format_task_link(ttype: str, val: str) -> str:
 def format_embed_description(raw_desc: str, social_links: Optional[dict] = None) -> str:
     if not raw_desc:
         raw_desc = ""
-    # Convert plain raw URLs into [Click Here](url) if not already formatted as [label](url)
-    def url_replacer(match):
-        prefix = match.group(1) or ""
-        url = match.group(2)
-        clean_url = url.rstrip(")")
-        return f"{prefix}[Click Here]({clean_url})"
 
-    formatted = re.sub(r'(?<!\]\()((https?://[^\s\)]+))', url_replacer, raw_desc)
+    # Convert bare URLs into [Click Here](url) if not already formatted as [label](url)
+    pattern = r'(\[[^\]]+\]\([^\)]+\))|((?:https?://)[^\s\)]+)'
+    def url_replacer(match):
+        if match.group(1):
+            return match.group(1)
+        url = match.group(2).rstrip(").,")
+        return f"[Click Here]({url})"
+
+    formatted = re.sub(pattern, url_replacer, raw_desc)
 
     # Append Official Links section at the bottom of description
     if social_links and isinstance(social_links, dict):
@@ -9405,52 +9436,12 @@ def format_embed_description(raw_desc: str, social_links: Optional[dict] = None)
         if link_bullets:
             formatted += f"\n\n**Official Links:**\n" + " • ".join(link_bullets)
 
+    return formatted
+
+
 def format_network_display(network_str: Optional[str]) -> str:
-    """Returns chain name with its authentic token/blockchain emoji symbol for Discord embeds."""
-    n = (network_str or "Ethereum").strip()
-    n_low = n.lower()
-
-    # Check if the bot has access to any matching server custom emoji
-    target_names = []
-    if "robinhood" in n_low:
-        target_names = ["robinhood", "rh"]
-    elif "eth" in n_low:
-        target_names = ["ethereum", "eth", "ether"]
-    elif "sol" in n_low:
-        target_names = ["solana", "sol"]
-    elif "zec" in n_low or "zcash" in n_low:
-        target_names = ["zcash", "zec"]
-    elif n_low == "arc":
-        target_names = ["arc", "arcium"]
-    elif "btc" in n_low or "bitcoin" in n_low:
-        target_names = ["bitcoin", "btc"]
-    elif "polygon" in n_low or "matic" in n_low:
-        target_names = ["polygon", "matic"]
-
-    for ename in target_names:
-        emoji_obj = discord.utils.get(bot.emojis, name=ename)
-        if emoji_obj:
-            return f"{emoji_obj} {n}"
-
-    if "robinhood" in n_low:
-        return f"🪶 {n}"
-    elif "eth" in n_low:
-        return f"💎 {n}"
-    elif "sol" in n_low:
-        return f"🟣 {n}"
-    elif "zec" in n_low or "zcash" in n_low:
-        return f"⚡ {n}"
-    elif n_low == "arc":
-        return f"🔷 {n}"
-    elif "btc" in n_low or "bitcoin" in n_low:
-        return f"🪙 {n}"
-    elif "polygon" in n_low or "matic" in n_low:
-        return f"💜 {n}"
-    elif "base" in n_low:
-        return f"🔵 {n}"
-    elif "arbitrum" in n_low or "arb" in n_low:
-        return f"🔷 {n}"
-    return f"🌐 {n}"
+    """Returns clean chain name without emojis."""
+    return (network_str or "Ethereum").strip()
 
 
 def get_chain_icon_info(network_str: Optional[str]) -> tuple[str, str]:
@@ -9561,13 +9552,13 @@ def build_giveaway_embed(g_data: dict):
                 embed.set_image(url=banner_url)
 
     if host_id and host_id.isdigit():
-        embed.add_field(name="🎙️ Hosted By", value=f"<@{host_id}>", inline=True)
+        embed.add_field(name="Hosted By", value=f"<@{host_id}>", inline=True)
     elif host_name:
-        embed.add_field(name="🎙️ Hosted By", value=f"**{host_name}**", inline=True)
+        embed.add_field(name="Hosted By", value=f"**{host_name}**", inline=True)
     embed.add_field(name="Network", value=format_network_display(g_data.get("network", "Ethereum")), inline=True)
     embed.add_field(name="Ends At", value=f"<t:{int(g_data.get('ends_at', time.time()))}:R>", inline=True)
 
-    # 1. Parse & Render Prominent Role Requirement Field (🛡️ ROLE REQUIREMENT)
+    # 1. Parse & Render Prominent Role Requirement Field
     tasks = g_data.get("tasks", {})
     raw_req_roles = (
         (tasks.get("roles") if isinstance(tasks, dict) else None)
@@ -9600,7 +9591,7 @@ def build_giveaway_embed(g_data: dict):
             roles_list_lines = "\n".join(role_pills)
             role_req_desc = f"You must have **at least ONE** of the following roles to enter:\n{roles_list_lines}"
         embed.add_field(
-            name="🛡️ ROLE REQUIREMENT",
+            name="Role Requirement",
             value=role_req_desc,
             inline=False
         )
@@ -9664,12 +9655,12 @@ def build_giveaway_embed(g_data: dict):
     if task_lines:
         task_block = "\n".join([f"> {tl}" for tl in task_lines if tl])
         embed.add_field(
-            name="ENTRY REQUIREMENTS & TASKS",
+            name="Entry Requirements & Tasks",
             value=f"\n{task_block}\n",
             inline=False
         )
 
-    # Render Role Multipliers / Extra Entries with Ticket Emoji (🎟️)
+    # Render Role Multipliers / Extra Entries with single Ticket Emoji (🎟️) in title only
     role_mults = g_data.get("role_multipliers") or []
     if role_mults and isinstance(role_mults, list):
         mult_lines = []
@@ -9680,14 +9671,14 @@ def build_giveaway_embed(g_data: dict):
                 count = int(rm.get("multiplier") or rm.get("entries") or 1)
                 count_str = f"{count}x {'Entry' if count == 1 else 'Entries'}"
                 if rid.isdigit():
-                    mult_lines.append(f"• 🎟️ <@&{rid}> ➔ **{count_str}**")
+                    mult_lines.append(f"• <@&{rid}> ➔ **{count_str}**")
                 elif rid in ("@everyone", "@here"):
-                    mult_lines.append(f"• 🎟️ **{rid}** ➔ **{count_str}**")
+                    mult_lines.append(f"• **{rid}** ➔ **{count_str}**")
                 else:
-                    mult_lines.append(f"• 🎟️ **@{rname.lstrip('@')}** ➔ **{count_str}**")
+                    mult_lines.append(f"• **@{rname.lstrip('@')}** ➔ **{count_str}**")
         if mult_lines:
             embed.add_field(
-                name="🎟️ ROLE ENTRIES / MULTIPLIERS",
+                name="🎟️ Role Multipliers",
                 value="\n".join(mult_lines),
                 inline=False
             )
